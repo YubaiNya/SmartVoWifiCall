@@ -1,4 +1,4 @@
-# SoftVoWiFi 0.3.48 interface configuration evidence
+# VoWiFi Engine 0.3.48 interface configuration evidence
 
 The bundled original engine already supports `iface:<name>`. The observed failure
 of `config-create-validate` does **not** establish lack of interface support:
@@ -95,8 +95,8 @@ differently named socket logic. No UDP header or source-IP patch was applied.
 ## Reproduction and limits
 
 ```powershell
-python D:\NewVowifi\service\tests\engine\test_native_selectors.py
-python D:\NewVowifi\service\tools\engine_iface\inspect_native.py 'vowifi_engine/internal/config.ValidTransport'
+python D:\SmartVoWifiCall\service\tests\engine\test_native_selectors.py
+python D:\SmartVoWifiCall\service\tools\engine_iface\inspect_native.py 'vowifi_engine/internal/config.ValidTransport'
 ```
 
 Result: **290 passing assertions** against the unmodified, hash-locked input:

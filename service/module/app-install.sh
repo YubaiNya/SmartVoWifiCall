@@ -13,7 +13,7 @@ nv_apk_hash() {
 }
 
 nv_installed_apk() {
- nv_listing=$("$NV_PM" path --user 0 com.newvowifi.ims 2>/dev/null) || return 1
+ nv_listing=$("$NV_PM" path --user 0 com.smartvowificall.ims 2>/dev/null) || return 1
  nv_path=
  nv_count=0
  while IFS= read -r nv_line; do
@@ -30,7 +30,7 @@ EOF
 }
 
 nv_install_app() {
- nv_apk="$1/system/priv-app/NewVoWiFi/NewVoWiFi.apk"
+ nv_apk="$1/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk"
  NV_APP_RESULT=APP_APK_MISSING
  [ -s "$nv_apk" ] || return 2
  nv_expected=$(nv_apk_hash "$nv_apk") || { NV_APP_RESULT=APP_APK_HASH_FAILED;return 2; }
@@ -43,7 +43,7 @@ nv_install_app() {
   fi
   # Replacement normally stops the old app process. Defer a live/unknown call
   # until idle (or the next boot), rather than interrupt it during module flashing.
-  nv_idle=$(CLASSPATH="$nv_apk" "$NV_APP_PROCESS" /system/bin com.newvowifi.ims.root.RootIdentityMain install-check 2>/dev/null) || nv_idle=
+  nv_idle=$(CLASSPATH="$nv_apk" "$NV_APP_PROCESS" /system/bin com.smartvowificall.ims.root.RootIdentityMain install-check 2>/dev/null) || nv_idle=
   case "$nv_idle" in *'"ok":true'*) ;; *) NV_APP_RESULT=APP_WAIT_CALL_IDLE;return 10;; esac
  fi
  nv_size=$(wc -c < "$nv_apk") || { NV_APP_RESULT=APP_APK_READ_FAILED;return 2; }

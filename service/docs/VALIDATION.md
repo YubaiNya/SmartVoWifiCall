@@ -24,15 +24,15 @@ CTExcel 已通过独立引擎注册。2026-11-22 04:59:22 的首次成功日志�
 | Root 与 socket | 应用专属 root 授权有效；普通应用域被拒绝的 socket 通过 root 中继连接，hello/getStatus 成功 |
 | 实际网络选择 | 全部内核接口列出；通过 VPN Manager、接口、包名与 UID 复核 FlClash 所有者；选中 tun0 |
 | 英国出口 | 现有 qianlink 配置的英国家庭出口；HTTP 探测返回 loc=GB、colo=LHR |
-| 分卡策略 | 大陆归属卡（当前 subId 16）保持原厂；CTExcel（当前 subId 19）仅 MMTEL 接入 com.newvowifi.ims |
-| 系统实际绑定 | com.android.phone 实际绑定 NewVoWifiImsService，目标槽 feature 为 MMTEL |
+| 分卡策略 | 大陆归属卡（当前 subId 16）保持原厂；CTExcel（当前 subId 19）仅 MMTEL 接入 com.smartvowificall.ims |
+| 系统实际绑定 | com.android.phone 实际绑定 SmartVoWifiImsService，目标槽 feature 为 MMTEL |
 | ePDG / IMS | 独立 IPsec 隧道 CONNECTED，获得 P-CSCF；运营商 REGISTER 返回 200；引擎 REGISTERED |
 | Android 注册 | 系统 API registrationState=2、transportType=2、featureState=2 |
 | 不可用接口 | 选中 DOWN 接口后保留该选择、不替换为别的接口，并恢复目标卡原厂 IMS；更新 APK 后仍保留选择 |
 | 恢复有效接口 | 重新选择 tun0 后重新建立隧道并注册；无需手工改系统绑定 |
 | 停用与重启服务 | 停用后两个卡槽各 feature 的 provider 与安装前一致；自有规则和 XFRM policy 清理完成；再次启用注册成功 |
 | 常驻模块脚本 | 已在当前启动周期运行，观察到唯一 supervisor；本轮没有重启验证开机挂载 |
-| 隔离 | 原 SoftVoWiFi 引擎文件未覆盖；旧 NewVoWiFi 目录未覆盖；新应用数据与日志池独立 |
+| 隔离 | 原 VoWiFi Engine 引擎文件未覆盖；旧 SmartVoWifiCall 目录未覆盖；新应用数据与日志池独立 |
 | 业务限制 | billableAllowed=false；未向实际引擎发送拨号、短信或音频启动操作 |
 | 手机状态 | boot_id 始终一致；飞行模式开启、Wi-Fi 开启；未重启 phone、system_server 或手机 |
 
@@ -75,6 +75,6 @@ CTExcel 已通过独立引擎注册。2026-11-22 04:59:22 的首次成功日志�
 - 本轮未重启，因此持久模块下一次开机的挂载和自动启动尚未实测。当前运行的是已安装的数据分区 APK、实时模块脚本与 root 中继。
 - 复用的完整 IKE/IPsec/SIP 引擎源码不可用；交付的新服务源码不等于完整协议栈源码。
 - 验证模式关闭普通语音和短信能力上报；本轮不承诺系统拨号器已能实际完成收费业务。
-- 私有原始证据在本机 `service/device-private/`，不进入源码包。备份在 `C:\ProjBackup\NewVoWiFi\20261122-031905-no-reboot-install\`，含完整性校验及恢复材料；手机上没有留下部署备份档案。
+- 私有原始证据在本机 `service/device-private/`，不进入源码包。备份在 `C:\ProjBackup\SmartVoWifiCall\20261122-031905-no-reboot-install\`，含完整性校验及恢复材料；手机上没有留下部署备份档案。
 
 主要原始证据：`final-framework-status.json`、`final-service-status.json`、`final-stop-providers.json`、`final-stop-fallback.json`、`invalid-interface-fallback.json`、`engine-after-rule-cleanup.log`、`xfrm-cleanup-results.json`、路由清理前后原生记录、最终交付核对记录。SIM 身份、鉴权材料及完整敏感日志不对外展示。

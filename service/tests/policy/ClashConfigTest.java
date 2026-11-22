@@ -1,4 +1,4 @@
-import com.newvowifi.ims.clash.ClashConfig;
+import com.smartvowificall.ims.clash.ClashConfig;
 import java.util.*;
 
 /** Pure Java Clash config sanitizer tests; no mihomo binary, root, or network executed. */

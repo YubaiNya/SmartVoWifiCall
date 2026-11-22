@@ -7,7 +7,7 @@
 用户要求在模块内直接内置 Clash 内核，**仅全局代理 Wi-Fi Calling 相关流量**，不代理手机其他任何流量，也不在手机开启系统 VPN：
 
 - 专用 TUN 接口名为 **`wfctun0`**，保留接口下拉框兼容其他真实 TUN（如 FlClash `tun0`）。
-- App 内支持输入订阅链接拉取、导入 YAML 文件及切换/测速出口节点，同时保留 `/data/adb/newvowifi_ims/clash/` 目录（编辑 `profile.yaml` 后可一键重载）。
+- App 内支持输入订阅链接拉取、导入 YAML 文件及切换/测速出口节点，同时保留 `/data/adb/smartvowificall_ims/clash/` 目录（编辑 `profile.yaml` 后可一键重载）。
 - 内置 Clash 连接上游代理服务器时直接走手机系统默认路由。
 - 保留 0.2.5 的单卡蜂窝协议栈互斥（`enableModemForSlot`）与禁止普通呼叫 CSFB 回退。
 
@@ -17,10 +17,10 @@
    - 打包官方 `MetaCubeX/mihomo v1.19.34`（`mihomo-android-arm64-v8-v1.19.34.gz`）至模块 `bin/mihomo-arm64`（`0755`），来源与 SHA-256 固化于 `service/deps/mihomo.source.json`，GPL-3.0 许可证保留在 `module/licenses/MIHOMO-GPL-3.0.txt`。
 
 2. **强制隔离配置生成（`ClashConfig` + `RootClashMain`）**
-   - 用户配置写入 `/data/adb/newvowifi_ims/clash/profile.yaml`（`0600`）；每次启动或重载由纯 Java 净化器 [ClashConfig.java](../app/src/main/java/com/newvowifi/ims/clash/ClashConfig.java) 生成 `runtime.yaml`，不修改用户原文件。
+   - 用户配置写入 `/data/adb/smartvowificall_ims/clash/profile.yaml`（`0600`）；每次启动或重载由纯 Java 净化器 [ClashConfig.java](../app/src/main/java/com/smartvowificall/ims/clash/ClashConfig.java) 生成 `runtime.yaml`，不修改用户原文件。
    - 自动剥离原订阅中可能影响系统或其他应用的顶层字段（`port` / `mixed-port` / `socks-port` / `redir-port` / `tproxy-port` / `allow-lan` / `tun` / `dns` / `rules` / `proxy-groups` / `external-controller` / `interface-name` / `routing-mark` 等），强制写入：
      - `port: 0`、`mixed-port: 0`、`socks-port: 0`、`redir-port: 0`、`tproxy-port: 0`、`allow-lan: false`（不开放任何代理端口）。
-     - `external-controller: 127.0.0.1:19090` + 随机 48 位十六进制 `secret`（`/data/adb/newvowifi_ims/clash/controller.secret`，`0600`）。
+     - `external-controller: 127.0.0.1:19090` + 随机 48 位十六进制 `secret`（`/data/adb/smartvowificall_ims/clash/controller.secret`，`0600`）。
      - `tun`: `device: wfctun0`、`inet4-address: [198.19.0.1/30]`、`stack: gvisor`、`auto-route: false`、`auto-redirect: false`、`auto-detect-interface: false`、`dns-hijack: [any:53]`（不创建系统 VPN、不改主路由表、不写 iptables）。
      - `proxy-groups`: 仅生成 `WFC-PROXY`（`type: select`），汇总用户所有真实节点与 `proxy-providers`，严格剔除 `DIRECT` / `REJECT` / `GLOBAL` 等保留目标，防止误走直连；若配置中无任何有效代理节点/provider，直接以 `CLASH_NO_PROXIES` 拒绝启动。
      - `rules`: 仅 `MATCH,WFC-PROXY`（进入 `wfctun0` 的全部流量全局走所选代理节点）。
@@ -47,8 +47,8 @@
 
 ## 真机验证结果（Xiaomi 15 / Android 17，无拨号、无短信）
 
-- `ksud module install` 刷入最终 `0.3.0-dev` 模块包，自动完成随包 APK 覆盖安装（`versionCode=8`、`versionName=0.3.0-dev`），输出 `- NewVoWiFi APK installed/verified; existing configuration retained.`。
-- 实机运行 `/data/adb/modules/newvowifi/bin/mihomo-arm64 -v` 返回 `Mihomo Meta v1.19.34 android arm64 ... Use tags: with_gvisor`。
+- `ksud module install` 刷入最终 `0.3.0-dev` 模块包，自动完成随包 APK 覆盖安装（`versionCode=8`、`versionName=0.3.0-dev`），输出 `- SmartVoWifiCall APK installed/verified; existing configuration retained.`。
+- 实机运行 `/data/adb/modules/smartvowificall/bin/mihomo-arm64 -v` 返回 `Mihomo Meta v1.19.34 android arm64 ... Use tags: with_gvisor`。
 - 真机实测发现 mihomo v1.19 顶层 `tun:` 从 `dns.fake-ip-range` 推导 TUN 网段；补充 `fake-ip-range: 198.19.0.1/16` 后重新打包实测通过：
   - `RootClashMain start` 返回 `{"ok":true,"code":"CLASH_READY","device":"wfctun0"}`。
   - `/sys/class/net/wfctun0/tun_flags` 为 `0x1001`（真实 `IFF_TUN`），地址为 `198.19.0.1/30`（`UP`）。
@@ -72,7 +72,7 @@
 ### 修复方案：独立 Linux Network Namespace 硬件级隔离（无 bind-mount、无根命名空间路由改动）
 
 - **`mihomo-arm64` 保持在根网络命名空间**：其自身出站代理连接直接走手机正常系统路由（Wi-Fi / 蜂窝），零系统 VPN，根网络命名空间零 `ip rule`、零路由表改动、零 iptables 改动。
-- **`wfctun0` 迁入独立网络命名空间（`clash-control.sh`）**：启动后创建一个零 CPU 占用的命名空间锚点进程（`setsid unshare -n -- sleep 2147483647`，以 `<pid> <starttime> <netnsId>` 原子记录于 `/data/adb/newvowifi_ims/clash/netns.owner`，通过 `/proc/<pid>/ns/net` 在 Android/KernelSU 全部挂载命名空间统一可见，避免 per-app mount namespace 下 bind-mount 不可见问题），将 `wfctun0` 移入该命名空间并在其中配置 `lo`、`198.19.0.1/30` 与唯一默认路由 `default dev wfctun0`。
+- **`wfctun0` 迁入独立网络命名空间（`clash-control.sh`）**：启动后创建一个零 CPU 占用的命名空间锚点进程（`setsid unshare -n -- sleep 2147483647`，以 `<pid> <starttime> <netnsId>` 原子记录于 `/data/adb/smartvowificall_ims/clash/netns.owner`，通过 `/proc/<pid>/ns/net` 在 Android/KernelSU 全部挂载命名空间统一可见，避免 per-app mount namespace 下 bind-mount 不可见问题），将 `wfctun0` 移入该命名空间并在其中配置 `lo`、`198.19.0.1/30` 与唯一默认路由 `default dev wfctun0`。
 - **仅 `iface:wfctun0` 引擎进程进入该命名空间（`control.sh`）**：以 `nsenter --net=/proc/<nspid>/ns/net -- unshare -m` 私有重挂 `/sys`（`mount -o private none / && mount -o private none /sys && mount -t sysfs sysfs /sys`，不污染根 `/sys`）后 `exec vowifi-engine-arm64`。实测确认 `AF_QIPCRTR`（QRTR QMI SIM AKA）与跨命名空间文件系统 Unix Socket（`/data/local/tmp/vowifi/*.sock`）均原生工作；`control.sh` 改为按 `/proc/$pid/net/unix` 校验引擎 socket 所有权。外部 TUN（如 FlClash `tun0`）保持原根命名空间路径不变。
 - **`InterfaceParser`、`RootIdentityMain` 与 `RuntimeController` 联动**：列表与 `requireTun("wfctun0")` 在命名空间内复核 `tun_flags`、`198.19.0.1` 与 `default dev wfctun0`；`RuntimeController` 跟踪 `netnsId`，当内置 Clash 停止或重启导致命名空间切换时，在通话空闲下自动重启引擎接入新命名空间。
 
@@ -109,7 +109,7 @@
    - 新增 `FallbackPolicyTest`（44 项断言）通过。
    - 真机验证：当卡槽 1 出口切换为非 TUN 接口 `dummy0` 时，`PolicyService` 立即先清空 `MmTelCapabilities` 并发送 `onDeregistered`，再解绑独立 IMS 并释放蜂窝射频（`status="VoWiFi 暂不可用（所选接口不是 TUN）；已回退蜂窝"`、`radioOff=false`、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=1, featureState=2` 回退至蜂窝）；切回 `wfctun0` 后自动重新关闭单卡蜂窝并恢复 `REGISTERED / WLAN / READY`（`registrationState=2, transportType=2, featureState=2`、`voiceServiceOverride=true`）。
 4. **移除常驻通知**：
-   - `PolicyService` 启动后立即执行 `stopForeground(STOP_FOREGROUND_REMOVE)` 并取消通知；真机 `dumpsys notification | grep -c 'pkg=com.newvowifi.ims'` 返回 `0`。
+   - `PolicyService` 启动后立即执行 `stopForeground(STOP_FOREGROUND_REMOVE)` 并取消通知；真机 `dumpsys notification | grep -c 'pkg=com.smartvowificall.ims'` 返回 `0`。
 
 ## 仍存在的验证边界
 

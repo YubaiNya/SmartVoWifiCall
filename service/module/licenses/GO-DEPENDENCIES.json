@@ -3,12 +3,12 @@
     {
       "licenses": [
         {
-          "path": "modules/github.com/lilyzhaun/softvowifi-swu-go/LICENSE",
+          "path": "swu-go-MIT.txt",
           "sha256": "b053beb685ef0d03c518220cfe95a2d33899ed9e48173e07a4086b2d56bbecc5"
         }
       ],
       "module": "github.com/1239t/swu-go",
-      "resolved": "github.com/lilyzhaun/softvowifi-swu-go",
+      "resolved": "github.com/1239t/swu-go",
       "version": "v0.0.0-20261020141441-ca3e54b3b214"
     },
     {
@@ -44,12 +44,12 @@
     {
       "licenses": [
         {
-          "path": "modules/github.com/lilyzhaun/softvowifi-sipgo/LICENSE",
+          "path": "sipgo-BSD-2-Clause.txt",
           "sha256": "81e1a2bcb702a0103d3ae3c4fc6c3866d227d9effaaa4b7b801f7ffdaf8cee64"
         }
       ],
       "module": "github.com/emiago/sipgo",
-      "resolved": "github.com/lilyzhaun/softvowifi-sipgo",
+      "resolved": "github.com/emiago/sipgo",
       "version": "v0.0.0-20260916002955-f30e2a8e5daa"
     },
     {
@@ -110,16 +110,16 @@
     {
       "licenses": [
         {
-          "path": "modules/github.com/lilyzhaun/softvowifi-netlink/LICENSE",
+          "path": "netlink-Apache-2.0.txt",
           "sha256": "04cf148229e562c643203d1ee8c43aae2022e5130e95ceb8ba8357a27c1a9abe"
         },
         {
-          "path": "modules/github.com/lilyzhaun/softvowifi-netlink/LICENSES/Go-BSD-3-Clause.txt",
+          "path": "netlink-Apache-2.0.txtS/Go-BSD-3-Clause.txt",
           "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
         }
       ],
       "module": "github.com/iniwex5/netlink",
-      "resolved": "github.com/lilyzhaun/softvowifi-netlink",
+      "resolved": "github.com/vishvananda/netlink",
       "version": "v0.0.0-20260915075719-be8893d91893"
     },
     {

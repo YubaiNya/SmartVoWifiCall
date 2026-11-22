@@ -54,7 +54,7 @@ pointer: types base `0x88f4c0` resolves it to `*cipher.cbcDecAble` at `0x8a6ffd`
 That type metadata and name remain unchanged.
 
 The diagnostic-stream wrapper's root now resolves to `/data/adb/nvwims/logs`.
-That still differs from the launcher's explicit `/data/adb/newvowifi_ims/logs`
+That still differs from the launcher's explicit `/data/adb/smartvowificall_ims/logs`
 directory. Do not use its output as evidence of those explicitly relocated
 logs. The correct read-only pool inspection command is **`log-budget`**:
 
@@ -80,7 +80,7 @@ confirmed `log-budget`.
 - Create `/data/adb/nvwims` as a private directory (0700, owned by the engine UID)
   before launch. The engine creates/checks `state/logs` beneath it and derives
   `/data/adb/nvwims/run/locks` for pool/writer locks. The existing original
-  SoftVoWiFi pool and history are not part of this setup.
+  VoWiFi Engine pool and history are not part of this setup.
 - For the standalone revision, also create `/data/adb/nvwims/run` (0700).
   The call-admission lock opens/creates its file but does not create its parent.
   Publish the independently observed network snapshot there at intervals below
@@ -100,8 +100,8 @@ candidate. See `VALIDATION.md` for the device results.
 ## Reproduce and verify
 
 ```powershell
-python D:\NewVowifi\service\tools\isolate_engine_log_pool.py
-python D:\NewVowifi\service\tests\engine\test_isolated_log_pool.py
+python D:\SmartVoWifiCall\service\tools\isolate_engine_log_pool.py
+python D:\SmartVoWifiCall\service\tests\engine\test_isolated_log_pool.py
 ```
 
 Five test groups pass: exact candidate identity/differences; ELF mappings and

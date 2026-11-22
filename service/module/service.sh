@@ -1,7 +1,7 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
-BASE=/data/adb/newvowifi_ims
-APK="$MODDIR/system/priv-app/NewVoWiFi/NewVoWiFi.apk"
+BASE=/data/adb/smartvowificall_ims
+APK="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk"
 . "$MODDIR/app-install.sh"
 while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2;done
 APP_SYNCED=0
@@ -29,21 +29,21 @@ trap 'exit 143' TERM
 trap 'exit 130' INT
 start_publisher() {
  if ! publisher_running; then
-  CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootNetworkMain watch >/dev/null 2>&1 &
+  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootNetworkMain watch >/dev/null 2>&1 &
   network_pid=$!
   network_start=$(proc_start "$network_pid" 2>/dev/null || :)
  fi
 }
 restore_owned() {
  [ -f "$APK" ] || return 1
- CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain ims-restore-all >/dev/null 2>&1 || return 1
+ CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain ims-restore-all >/dev/null 2>&1 || return 1
  for p in "$BASE/run/"*.pid; do
   [ -f "$p" ] || continue
   id=${p##*/};id=${id%.pid}
   sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || return 1
  done
  sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || return 1
- CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
+ CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
  rm -f "$BASE/rollback-pending"
 }
 while :; do
@@ -52,7 +52,7 @@ while :; do
   (umask 077;printf 'RESTORE_REQUIRED\n' > "$BASE/rollback-pending")
   # A call or unknown call state defers rollback. Never kill an engine first.
   if restore_owned; then
-   am stopservice --user 0 -n com.newvowifi.ims/.PolicyService >/dev/null 2>&1
+   am stopservice --user 0 -n com.smartvowificall.ims/.PolicyService >/dev/null 2>&1
    [ -e "$MODDIR/disable" ] || [ -e "$MODDIR/remove" ] || continue
    exit 0
   fi
@@ -70,14 +70,14 @@ while :; do
     continue
    fi
    APP_SYNCED=1
-   pm grant com.newvowifi.ims android.permission.READ_PHONE_STATE >/dev/null 2>&1
-   pm grant com.newvowifi.ims android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
+   pm grant com.smartvowificall.ims android.permission.READ_PHONE_STATE >/dev/null 2>&1
+   pm grant com.smartvowificall.ims android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
   fi
   # The independent producer refreshes every 5 seconds even while lifecycle
   # operations block. The engine rejects observations older than 15 seconds.
   start_publisher
   # START_STICKY alone does not cover a crash loop or a stopped foreground service.
-  cmd activity start-foreground-service --user 0 -n com.newvowifi.ims/.PolicyService >/dev/null 2>&1
+  cmd activity start-foreground-service --user 0 -n com.smartvowificall.ims/.PolicyService >/dev/null 2>&1
   for p in "$BASE/run/"*.pid; do
    [ -f "$p" ] || continue
    id=${p##*/};id=${id%.pid}

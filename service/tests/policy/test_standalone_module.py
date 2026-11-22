@@ -19,7 +19,7 @@ scenario="$2"
 test_module="$test_root/module"
 fixture_base="$test_root/runtime"
 active="$test_root/installed.apk"
-bundled="$test_module/system/priv-app/NewVoWiFi/NewVoWiFi.apk"
+bundled="$test_module/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk"
 NV_PM=pm
 NV_APP_PROCESS=app_process
 BOOTMODE=true
@@ -43,7 +43,7 @@ inc() { n=$(cat "$test_root/$1");printf '%s\n' "$((n+1))" > "$test_root/$1"; }
 pm() {
  case "$1" in
   path)
-   [ "$2 $3 $4" = '--user 0 com.newvowifi.ims' ] || exit 91
+   [ "$2 $3 $4" = '--user 0 com.smartvowificall.ims' ] || exit 91
    [ -f "$active" ] || return 1
    printf 'package:%s\n' "$active"
    ;;
@@ -63,7 +63,7 @@ pm() {
    cp "$test_root/stream.apk" "$active"
    printf 'Success\n'
    ;;
-  grant) [ "$2" = com.newvowifi.ims ] || exit 95;return 0;;
+  grant) [ "$2" = com.smartvowificall.ims ] || exit 95;return 0;;
   *) printf 'Unexpected PackageManager operation\n' >&2;exit 96;;
  esac
 }
@@ -105,12 +105,12 @@ sleep() {
  [ "$(cat "$test_root/retries")" -le 4 ] || exit 99
 }
 cmd() {
- [ "$*" = 'activity start-foreground-service --user 0 -n com.newvowifi.ims/.PolicyService' ] || exit 100
+ [ "$*" = 'activity start-foreground-service --user 0 -n com.smartvowificall.ims/.PolicyService' ] || exit 100
  cmp -s "$active" "$bundled" || exit 101
  inc starts
  touch "$test_module/disable"
 }
-am() { [ "$*" = 'stopservice --user 0 -n com.newvowifi.ims/.PolicyService' ] || exit 102; }
+am() { [ "$*" = 'stopservice --user 0 -n com.smartvowificall.ims/.PolicyService' ] || exit 102; }
 
 rc=0
 case "$scenario" in
@@ -147,11 +147,11 @@ class ModuleInstallTest(unittest.TestCase):
             for name in ['app-install.sh','customize.sh','service.sh','control.sh','clash-control.sh']:
                 shutil.copy2(ROOT/'module'/name,module/name)
             (module/'clash-control.sh').write_text('#!/bin/sh\nprintf \'{"ok":true,"code":"CLASH_STOPPED"}\\n\'\n',encoding='utf8',newline='\n')
-            apk=module/'system/priv-app/NewVoWiFi/NewVoWiFi.apk'
+            apk=module/'system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk'
             apk.parent.mkdir(parents=True)
             apk.write_bytes(b'new-apk-payload\x00\r\n')
             service=(module/'service.sh').read_text().replace('MODDIR=${0%/*}','MODDIR="$test_module"').replace(
-                'BASE=/data/adb/newvowifi_ims','BASE="$fixture_base"').replace('/system/bin/app_process','app_process')
+                'BASE=/data/adb/smartvowificall_ims','BASE="$fixture_base"').replace('/system/bin/app_process','app_process')
             (module/'service-host.sh').write_text(service,encoding='utf8')
             script=root/'test.sh';script.write_text(HARNESS,encoding='utf8')
             result=subprocess.run([str(BASH),str(script),str(root),scenario],capture_output=True,text=True,timeout=15)

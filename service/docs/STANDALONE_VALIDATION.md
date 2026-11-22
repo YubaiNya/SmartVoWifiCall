@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-已完成独立版源码、APK 和模块打包：不再要求安装 SoftVoWiFi 应用或模块。模块自带协议引擎，NewVoWiFi 自己提供当前 SIM 凭据与实时网络快照。
+已完成独立版源码、APK 和模块打包：不再要求安装 VoWiFi Engine 应用或模块。模块自带协议引擎，SmartVoWifiCall 自己提供当前 SIM 凭据与实时网络快照。
 
 **本轮 ADB 设备列表为空，未安装新版本到手机，未做无旧组件条件下的注册测试或重启恢复测试。** 0.1 的成功注册属于历史基线，不能当作 0.2 的真机通过证明。全程没有实际拨号或发送短信。
 
@@ -12,7 +12,7 @@
 
 | 原依赖 | 当前实现与验证 |
 |---|---|
-| 安装器要求 `com.vowifi.sw` | 删除该检查；模拟不存在旧应用的安装环境通过，Android API 限制保留 |
+| 安装器要求 `com.legacy.ims` | 删除该检查；模拟不存在旧应用的安装环境通过，Android API 限制保留 |
 | 旧 APK 的 ProvisioningIdentityMain | 内置 SimCredentials，通过 IPhoneSubInfo 读取当前 IMSI、IMEI、ISIM；新 DEX 无旧包引用 |
 | 原组件生成 `/data/adb/vowifi/run/networks.json` | RootNetworkMain 根据 Android Binder 实时生成自己的 `/data/adb/nvwims/run/networks.json` |
 | 原项目的网络快照、通话锁和日志路径 | 内置引擎四个默认路径迁至 `/data/adb/nvwims`；原件相对差异精确为 16 数据字节，代码和 ELF 布局不变 |
@@ -47,16 +47,16 @@ Java/协议检查合计 **607 项**。这些本地检查不替代 Android 权限
 
 | 文件 | SHA-256 |
 |---|---|
-| NewVoWiFi.apk | `d424490d94fe1f41baf5be26af6066d5d25296dd61557cc89e22e1db45cb280e` |
-| NewVoWiFi-module.zip | `f8ba14db4b08682d1f6b13bdb27ee74eb66b11ec21734c5bcb2f49fca4a60b05` |
+| SmartVoWifiCall.apk | `d424490d94fe1f41baf5be26af6066d5d25296dd61557cc89e22e1db45cb280e` |
+| SmartVoWifiCall-module.zip | `f8ba14db4b08682d1f6b13bdb27ee74eb66b11ec21734c5bcb2f49fca4a60b05` |
 | 模块内引擎 | `f53df163c7731ebeba45ebf913e85cace0af2884647359155ed515e137b479b3` |
 
-完整交付哈希（含源码 ZIP）见 `dist/SHA256.json`。源码包排除签名文件、手机身份、原始日志及一次性实机修复工具。此前 0.1 安装包已备份并核验至 `C:\ProjBackup\NewVoWiFi\20261122-083948-before-standalone-0.2\`。
+完整交付哈希（含源码 ZIP）见 `dist/SHA256.json`。源码包排除签名文件、手机身份、原始日志及一次性实机修复工具。此前 0.1 安装包已备份并核验至 `C:\ProjBackup\SmartVoWifiCall\20261122-083948-before-standalone-0.2\`。
 
 ## 使用前提与待验收项
 
-- 需要已 root 的 Android 17 / arm64 设备及 Qualcomm QRTR SIM 通道。首次仍需授予 NewVoWiFi root、开启接管并选择网络。
-- 需要用户选择的网络已可访问运营商 ePDG；使用 FlClash 时仍由其提供 VPN/出口。本模块无需 SoftVoWiFi，但并不内置 VPN 订阅。
+- 需要已 root 的 Android 17 / arm64 设备及 Qualcomm QRTR SIM 通道。首次仍需授予 SmartVoWifiCall root、开启接管并选择网络。
+- 需要用户选择的网络已可访问运营商 ePDG；使用 FlClash 时仍由其提供 VPN/出口。本模块无需 VoWiFi Engine，但并不内置 VPN 订阅。
 - 协议引擎为随模块打包的派生二进制；完整引擎源码未提供，不能称为全部协议栈重新实现。
 - 手机重连后需验证旧应用/模块停用条件下的配置生成、网络快照持续更新、实际注册、系统 MMTEL 回调、重启自动恢复，以及大陆卡仍保留原厂流程。
 - 普通语音与短信发送默认关闭。后续验收继续遵守不实际拨号、不发送短信的限制。

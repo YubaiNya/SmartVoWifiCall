@@ -1,4 +1,4 @@
-package com.newvowifi.ims.root;
+package com.smartvowificall.ims.root;
 
 /** Pure validators only: main(), Android APIs, subprocesses and config writes are never executed. */
 public final class RootIdentityValidationTest {
@@ -8,10 +8,10 @@ public final class RootIdentityValidationTest {
         if (!value) throw new AssertionError(description);
     }
     public static void main(String[] args) {
-        check(RootIdentityMain.validOutputPath("/data/adb/newvowifi_ims/config/19.json"), "own numeric config allowed");
-        for (String path : new String[]{null, "", "/data/adb/softvowifi/config/19.json", "/data/adb/newvowifi_ims/config/../19.json",
-                "/data/adb/newvowifi_ims/config/.json", "/data/adb/newvowifi_ims/config/1/19.json", "/data/adb/newvowifi_ims/config/19.json/",
-                "/data/adb/newvowifi_ims/config/a.json", "/data/adb/newvowifi_ims/config/１９.json", "/data/adb/newvowifi_ims/config/19.json\n"})
+        check(RootIdentityMain.validOutputPath("/data/adb/smartvowificall_ims/config/19.json"), "own numeric config allowed");
+        for (String path : new String[]{null, "", "/data/adb/other_ims/config/19.json", "/data/adb/smartvowificall_ims/config/../19.json",
+                "/data/adb/smartvowificall_ims/config/.json", "/data/adb/smartvowificall_ims/config/1/19.json", "/data/adb/smartvowificall_ims/config/19.json/",
+                "/data/adb/smartvowificall_ims/config/a.json", "/data/adb/smartvowificall_ims/config/１９.json", "/data/adb/smartvowificall_ims/config/19.json\n"})
             check(!RootIdentityMain.validOutputPath(path), "non-owned or invalid path rejected");
         String iccid = "8900000000000000019";
         check(iccid.equals(RootIdentityMain.normalizeIccid(iccid + "FF")), "ICCID padding normalization");

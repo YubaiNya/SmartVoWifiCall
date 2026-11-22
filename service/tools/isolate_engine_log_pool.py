@@ -1,4 +1,4 @@
-"""Version-locked data-directory isolation for the bundled SoftVoWiFi engine.
+"""Version-locked data-directory isolation for the bundled VoWiFi protocol engine.
 
 Changes four existing equal-length path literals; no pointer, instruction, ELF
 layout, Go metadata, transport, authentication, or protocol code is rewritten.

@@ -1,5 +1,5 @@
-import com.newvowifi.ims.network.EngineNetworkSnapshot;
-import com.newvowifi.ims.engine.JsonCodec;
+import com.smartvowificall.ims.network.EngineNetworkSnapshot;
+import com.smartvowificall.ims.engine.JsonCodec;
 import java.net.InetAddress;
 import java.util.*;
 

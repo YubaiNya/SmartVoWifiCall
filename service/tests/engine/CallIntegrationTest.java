@@ -1,11 +1,11 @@
-package com.newvowifi.ims;
+package com.smartvowificall.ims;
 
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.telephony.ims.*;
 import android.telephony.ims.stub.ImsCallSessionImplBase.State;
-import com.newvowifi.ims.engine.*;
-import com.newvowifi.ims.engine.EngineContractTest.MemoryTransport;
+import com.smartvowificall.ims.engine.*;
+import com.smartvowificall.ims.engine.EngineContractTest.MemoryTransport;
 import java.io.*;
 import java.util.Arrays;
 import java.util.Collections;

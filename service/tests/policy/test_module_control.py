@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory(prefix="module-mock-", dir=HERE) as directory:
     owner = base / "run" / (identity + ".owner")
     owner.write_bytes(b"2147483647 1\n")
     status_script = fixture / "status.sh"
-    status_script.write_text(source.replace("BASE=/data/adb/newvowifi_ims", "BASE='" + base.as_posix() + "'", 1),
+    status_script.write_text(source.replace("BASE=/data/adb/smartvowificall_ims", "BASE='" + base.as_posix() + "'", 1),
                              encoding="utf-8", newline="\n")
     before = {p.relative_to(base).as_posix(): p.read_bytes() for p in base.rglob("*") if p.is_file()}
     status = subprocess.run([str(BASH), status_script.as_posix(), "status", identity], capture_output=True, text=True)
@@ -117,9 +117,9 @@ APP_PROCESS=mock_app_process
 response='{"ok":true,"code":"TUN_EGRESS_CONFIRMED"}'
 helper_exit=0
 mock_app_process() {
- [ "$CLASSPATH" = "$MODDIR/system/priv-app/NewVoWiFi/NewVoWiFi.apk" ] || return 20
+ [ "$CLASSPATH" = "$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" ] || return 20
  [ "$#" = 4 ] && [ "$1" = /system/bin ] &&
- [ "$2" = com.newvowifi.ims.root.RootIdentityMain ] &&
+ [ "$2" = com.smartvowificall.ims.root.RootIdentityMain ] &&
  [ "$3" = check-egress ] && [ "$4" = "$BASE/config/$iccid.json" ] || return 21
  printf '%s\n' "$response"
  return "$helper_exit"

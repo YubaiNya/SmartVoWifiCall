@@ -7,30 +7,30 @@ for name,expected in hashes.items():
  assert hashlib.sha256((dist/name).read_bytes()).hexdigest()==expected,name
 engine=json.loads((root/'deps/engine.source.json').read_text())
 mihomo=json.loads((root/'deps/mihomo.source.json').read_text())
-apk=(dist/'NewVoWiFi.apk').read_bytes()
-with zipfile.ZipFile(dist/'NewVoWiFi.apk') as z:
+apk=(dist/'SmartVoWifiCall.apk').read_bytes()
+with zipfile.ZipFile(dist/'SmartVoWifiCall.apk') as z:
  assert z.testzip() is None
  assert 'AndroidManifest.xml' in z.namelist()
  dex=b''.join(z.read(n) for n in z.namelist() if n.endswith('.dex'))
- assert b'Lcom/newvowifi/ims/NewVoWifiImsService;' in dex
- assert b'Lcom/newvowifi/ims/MainActivity;' in dex
- assert b'Lcom/newvowifi/ims/LiquidGlassBottomBarKt;' in dex
- assert b'Lcom/newvowifi/ims/AppScreensKt;' in dex
- assert b'Lcom/newvowifi/ims/root/SimCredentials;' in dex
- assert b'Lcom/newvowifi/ims/network/TunEgress;' in dex
- assert b'Lcom/newvowifi/ims/policy/ExclusiveRadio;' in dex
- assert b'Lcom/newvowifi/ims/policy/FallbackPolicy;' in dex
- assert b'Lcom/newvowifi/ims/clash/ClashConfig;' in dex
- assert b'Lcom/newvowifi/ims/root/RootClashMain;' in dex
- assert b'com.vowifi.sw' not in dex
- assert b'Lcom/vowifi/sw/' not in dex
-with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
+ assert b'Lcom/smartvowificall/ims/SmartVoWifiImsService;' in dex
+ assert b'Lcom/smartvowificall/ims/MainActivity;' in dex
+ assert b'Lcom/smartvowificall/ims/LiquidGlassBottomBarKt;' in dex
+ assert b'Lcom/smartvowificall/ims/AppScreensKt;' in dex
+ assert b'Lcom/smartvowificall/ims/root/SimCredentials;' in dex
+ assert b'Lcom/smartvowificall/ims/network/TunEgress;' in dex
+ assert b'Lcom/smartvowificall/ims/policy/ExclusiveRadio;' in dex
+ assert b'Lcom/smartvowificall/ims/policy/FallbackPolicy;' in dex
+ assert b'Lcom/smartvowificall/ims/clash/ClashConfig;' in dex
+ assert b'Lcom/smartvowificall/ims/root/RootClashMain;' in dex
+ assert b'com.legacy.ims' not in dex
+ assert b'Lcom/legacy/ims/' not in dex
+with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
  assert z.testzip() is None
- assert z.read('system/priv-app/NewVoWiFi/NewVoWiFi.apk')==apk
+ assert z.read('system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk')==apk
  assert hashlib.sha256(z.read('bin/vowifi-engine-arm64')).hexdigest()==engine['sha256']
  assert hashlib.sha256(z.read('bin/mihomo-arm64')).hexdigest()==mihomo['sha256']
- assert b'id=newvowifi\n' in z.read('module.prop')
- assert b'com.vowifi.sw' not in z.read('customize.sh')
+ assert b'id=smartvowificall\n' in z.read('module.prop')
+ assert b'com.legacy.ims' not in z.read('customize.sh')
  assert b'nv_install_app "$MODPATH"' in z.read('customize.sh')
  assert b'nv_install_app "$MODDIR"' in z.read('service.sh')
  assert b'install -r --user 0 -S "$nv_size" < "$nv_apk"' in z.read('app-install.sh')
@@ -48,5 +48,5 @@ with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
   assert not name.startswith('/') and '..' not in pathlib.PurePosixPath(name).parts
   assert not name.endswith(('.p12','.key'))
 java=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin/java.exe')
-subprocess.run([str(java),'-jar','D:/Android/Sdk/build-tools/37.0.0/lib/apksigner.jar','verify',str(dist/'NewVoWiFi.apk')],check=True)
+subprocess.run([str(java),'-jar','D:/Android/Sdk/build-tools/37.0.0/lib/apksigner.jar','verify',str(dist/'SmartVoWifiCall.apk')],check=True)
 print('PASS APK signature, standalone DEX, ZIP integrity, matching embedded APK, isolated engine paths/hash, scripts and package paths.')

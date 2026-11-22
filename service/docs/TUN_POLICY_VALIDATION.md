@@ -24,7 +24,7 @@
 - `tests/engine/test_native_selectors.py`：290 项原始 AArch64 指令重放通过；外部系统调用为替身，不联网。
 - APK 完整构建、签名、模块与独立 APK 字节一致、TUN 校验代码入包、固定引擎哈希、ZIP 与脚本检查通过；当前交付物哈希见 `dist/SHA256.json`。
 
-所有上述测试均在主机执行，不连接运营商、不拨号、不发送短信。0.2.3 安装包与源码包已复制至 `C:\ProjBackup\NewVoWiFi\20261122-151303-before-tun-egress-0.2.4\` 并核验 SHA-256。
+所有上述测试均在主机执行，不连接运营商、不拨号、不发送短信。0.2.3 安装包与源码包已复制至 `C:\ProjBackup\SmartVoWifiCall\20261122-151303-before-tun-egress-0.2.4\` 并核验 SHA-256。
 
 ## 待真机验证的边界
 

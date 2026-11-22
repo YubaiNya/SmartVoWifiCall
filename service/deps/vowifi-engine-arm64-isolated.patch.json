@@ -111,6 +111,6 @@
     "old_module_path_or_package_literals_observed": 0
   },
   "limits": "Static data-only patch verification. No target process, phone, network, authentication, call, or SMS was executed.",
-  "source": "D:\\NewVowifi\\service\\deps\\vowifi-engine-arm64",
-  "output": "D:\\NewVowifi\\service\\deps\\vowifi-engine-arm64-isolated"
+  "source": "D:\\SmartVoWifiCall\\service\\deps\\vowifi-engine-arm64",
+  "output": "D:\\SmartVoWifiCall\\service\\deps\\vowifi-engine-arm64-isolated"
 }

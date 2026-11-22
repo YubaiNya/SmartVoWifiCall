@@ -1,4 +1,4 @@
-"""Build NewVoWiFi release APK (Gradle + Kotlin/Compose/Miuix/Backdrop) and standalone KernelSU/Magisk module."""
+"""Build SmartVoWifiCall release APK (Gradle + Kotlin/Compose/Miuix/Backdrop) and standalone KernelSU/Magisk module."""
 import hashlib,json,os,pathlib,shutil,subprocess,zipfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -15,7 +15,7 @@ def run(args,env=None):
 
 key=ROOT/'local-signing.p12'
 if not key.exists():
- run([JAVA/'keytool.exe','-genkeypair','-keystore',key,'-storetype','PKCS12','-storepass','local-development','-keypass','local-development','-alias','newvowifi','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=NewVoWiFi Local Development'])
+ run([JAVA/'keytool.exe','-genkeypair','-keystore',key,'-storetype','PKCS12','-storepass','local-development','-keypass','local-development','-alias','smartvowificall','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=SmartVoWifiCall Local Development'])
 
 env=os.environ.copy()
 env['JAVA_HOME']=str(JAVA_HOME)
@@ -25,8 +25,8 @@ run([GRADLE,'-p',ROOT,':app:assembleRelease','--console=plain'],env=env)
 gradle_apk=ROOT/'app/build/outputs/apk/release/app-release.apk'
 if not gradle_apk.exists():
  raise RuntimeError(f'Expected Gradle release APK at {gradle_apk}')
-shutil.copy2(gradle_apk,OUT/'NewVoWiFi.apk')
-run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','verify',OUT/'NewVoWiFi.apk'])
+shutil.copy2(gradle_apk,OUT/'SmartVoWifiCall.apk')
+run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','verify',OUT/'SmartVoWifiCall.apk'])
 
 module=ROOT/'module'
 if module.exists():
@@ -38,10 +38,10 @@ if module.exists():
  mihomo_path=ROOT/'deps'/mihomo_meta['artifact']
  if hashlib.sha256(mihomo_path.read_bytes()).hexdigest()!=mihomo_meta['sha256']:
   raise RuntimeError('Bundled mihomo binary does not match pinned artifact')
- with zipfile.ZipFile(OUT/'NewVoWiFi-module.zip','w',zipfile.ZIP_DEFLATED) as z:
+ with zipfile.ZipFile(OUT/'SmartVoWifiCall-module.zip','w',zipfile.ZIP_DEFLATED) as z:
   for p in sorted(module.rglob('*')):
    if p.is_file():z.write(p,p.relative_to(module).as_posix())
-  z.write(OUT/'NewVoWiFi.apk','system/priv-app/NewVoWiFi/NewVoWiFi.apk')
+  z.write(OUT/'SmartVoWifiCall.apk','system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk')
   z.write(engine_path,'bin/vowifi-engine-arm64')
   z.write(mihomo_path,'bin/mihomo-arm64')
 

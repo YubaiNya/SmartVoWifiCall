@@ -41,5 +41,5 @@ python service/tests/engine/run_feature_tests.py
 - APK SHA-256：`49c33519f1a164df70f8b597164ff154207a9a809a0282ea88b306a7fe249f63`
 - 模块 SHA-256：`004b2bb399671fb3e625786841590a5b47c684b505ca92802d5ac27b7a464f96`
 - 协议引擎未修改，仍为 0.2 独立路径版本；没有修改短信适配实现。
-- 旧交付物保留于 `C:\ProjBackup\NewVoWiFi\20261122-134529-before-call-cleanup-0.2.1\`，SHA-256 已核验。
+- 旧交付物保留于 `C:\ProjBackup\SmartVoWifiCall\20261122-134529-before-call-cleanup-0.2.1\`，SHA-256 已核验。
 - 新包尚未安装到手机。手机恢复连接后，应先采集当前服务版本、活动会话计数、Telecom/音频状态与相关日志，再在原有不实际拨号、不发送短信限制内进行部署和状态检查。短信正常目前记为用户反馈；实际通话后双卡可呼出和号码显示仍须实机证据确认。

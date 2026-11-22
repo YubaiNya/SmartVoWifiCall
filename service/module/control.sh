@@ -1,7 +1,7 @@
 #!/system/bin/sh
 set -eu
 MODDIR=${0%/*}
-BASE=/data/adb/newvowifi_ims
+BASE=/data/adb/smartvowificall_ims
 APP_PROCESS=/system/bin/app_process
 action=${1:-}
 iccid=${2:-}
@@ -162,7 +162,7 @@ stop_owned() {
  rm -f "$pidfile" "$ownerfile" "$socketfile" "$uidfile"
 }
 check_tun_egress() {
- egress=$(CLASSPATH="$MODDIR/system/priv-app/NewVoWiFi/NewVoWiFi.apk" "$APP_PROCESS" /system/bin com.newvowifi.ims.root.RootIdentityMain check-egress "$BASE/config/$iccid.json" 2>/dev/null) || return 1
+ egress=$(CLASSPATH="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" "$APP_PROCESS" /system/bin com.smartvowificall.ims.root.RootIdentityMain check-egress "$BASE/config/$iccid.json" 2>/dev/null) || return 1
  case "$egress" in *'"ok":true'*) return 0;; *) return 1;; esac
 }
 case "$action" in

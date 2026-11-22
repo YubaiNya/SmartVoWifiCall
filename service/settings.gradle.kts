@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "NewVoWiFi"
+rootProject.name = "SmartVoWifiCall"
 include(":app")

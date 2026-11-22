@@ -1,6 +1,6 @@
-import com.newvowifi.ims.sms.SmsPduCodec;
-import com.newvowifi.ims.sms.SmsPduCodec.Concat;
-import com.newvowifi.ims.sms.SmsPduCodec.Submit;
+import com.smartvowificall.ims.sms.SmsPduCodec;
+import com.smartvowificall.ims.sms.SmsPduCodec.Concat;
+import com.smartvowificall.ims.sms.SmsPduCodec.Submit;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.ZoneOffset;

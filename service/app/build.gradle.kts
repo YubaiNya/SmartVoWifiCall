@@ -8,11 +8,11 @@ plugins {
 val systemJar = rootProject.file("deps/android-system.jar")
 
 android {
-    namespace = "com.newvowifi.ims"
+    namespace = "com.smartvowificall.ims"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.newvowifi.ims"
+        applicationId = "com.smartvowificall.ims"
         minSdk = 33
         targetSdk = 37
         versionCode = 11
@@ -24,7 +24,7 @@ android {
             storeFile = rootProject.file("local-signing.p12")
             storeType = "PKCS12"
             storePassword = "local-development"
-            keyAlias = "newvowifi"
+            keyAlias = "smartvowificall"
             keyPassword = "local-development"
         }
     }

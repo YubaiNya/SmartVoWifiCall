@@ -1,7 +1,7 @@
 """Package source and pinned local build dependencies, excluding private device data and signing keys."""
 import hashlib,json,pathlib,zipfile
 root=pathlib.Path(__file__).resolve().parents[1]
-out=root/'dist/NewVoWiFi-source.zip'
+out=root/'dist/SmartVoWifiCall-source.zip'
 # Device repair/provisioning helpers contain incident-specific identifiers and
 # remain in the private workspace. They are not product installation tools.
 public_tools={'build.py','package_source.py','verify_artifacts.py','isolate_engine_log_pool.py'}
@@ -15,7 +15,7 @@ with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
    if dirname=='app' and len(rel.parts)>1 and rel.parts[1]=='build':continue
    if p.suffix in {'.class','.pyc'}:continue
    if dirname=='tools' and rel.parts[1]!='engine_iface' and p.name not in public_tools:continue
-   if dirname=='deps' and ('softvowifi-lib' in rel.parts or p.name=='mihomo-android-arm64'):continue
+   if dirname=='deps' and (p.name=='mihomo-android-arm64'):continue
    z.write(p,rel.as_posix())
  for name in ['README.md','.gitignore','build.gradle.kts','settings.gradle.kts','gradle.properties']:
   if (root/name).exists():

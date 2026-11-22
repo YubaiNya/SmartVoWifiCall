@@ -1,4 +1,4 @@
-# SoftVoWiFi 0.3.48 REGISTER PANI on a non-WLAN binding
+# VoWiFi Engine 0.3.48 REGISTER PANI on a non-WLAN binding
 
 ## Conclusion and limits
 
@@ -39,8 +39,8 @@ The authenticated request's default `IEEE-802.11` constant (VA `0xc4be`, length 
 Static evidence can be regenerated with the existing, hash-locked reader:
 
 ```powershell
-python D:\NewVowifi\service\tools\engine_iface\inspect_native.py 'main.resolveREGISTERPANIForNetworkWith' 'main.startIMSOnPCSCF.newProductionRegistrationFactory.func4'
-python D:\NewVowifi\service\tools\engine_iface\inspect_native.py 'vowifi_engine/internal/ims.New' 'vowifi_engine/internal/ims.(*IMS).buildRegisterWithExpires' 'vowifi_engine/internal/ims.(*IMS).buildAuthenticatedRegister' 'vowifi_engine/internal/ims.setAccessNetworkInfo'
+python D:\SmartVoWifiCall\service\tools\engine_iface\inspect_native.py 'main.resolveREGISTERPANIForNetworkWith' 'main.startIMSOnPCSCF.newProductionRegistrationFactory.func4'
+python D:\SmartVoWifiCall\service\tools\engine_iface\inspect_native.py 'vowifi_engine/internal/ims.New' 'vowifi_engine/internal/ims.(*IMS).buildRegisterWithExpires' 'vowifi_engine/internal/ims.(*IMS).buildAuthenticatedRegister' 'vowifi_engine/internal/ims.setAccessNetworkInfo'
 ```
 
 The six replay cases used the existing `Machine` and `GoImage` classes in `service/tests/engine/test_native_selectors.py`; the narrow replay was run in memory and was not saved as a device probe. Four cases supplied `other`, `iface:tun0`, `sim1`, and an empty string as the **binding transport**, with intentionally unmapped config and executor pointers. Each returned empty initial/protected strings and the exact reason without dereferencing those pointers. Two header cases supplied zero and two existing PANI headers: the setter called the mocked removal function once and three times respectively, and never called append. These are controlled CPU replay results, not end-to-end runtime tests.
@@ -50,7 +50,7 @@ Minimal reproduction for the four resolver cases:
 ```powershell
 @'
 import sys
-sys.path.insert(0, r'D:\NewVowifi\service\tests\engine')
+sys.path.insert(0, r'D:\SmartVoWifiCall\service\tests\engine')
 from test_native_selectors import Machine, GoImage, STACK
 m = Machine(GoImage())
 for transport in ('other', 'iface:tun0', 'sim1', ''):

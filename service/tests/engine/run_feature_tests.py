@@ -19,7 +19,7 @@ args = parser.parse_args()
 tree = ast.parse((HERE/'run_call_tests.py').read_text(encoding='utf8'))
 stubs = next(ast.literal_eval(node.value) for node in tree.body
              if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'STUBS' for t in node.targets))
-del stubs['com/newvowifi/ims/NewMmTelFeature.java']
+del stubs['com/smartvowificall/ims/NewMmTelFeature.java']
 stubs.update({
  'android/telephony/TelephonyManager.java': '''package android.telephony; public class TelephonyManager { public boolean isEmergencyNumber(String n){ if("throw".equals(n)) throw new RuntimeException("classifier unavailable"); return "911".equals(n); } }''',
  'android/os/Bundle.java': 'package android.os; public class Bundle {}',
@@ -58,11 +58,11 @@ public class MmTelFeature {
  public static class MmTelCapabilities {public static final int CAPABILITY_TYPE_VOICE=1,CAPABILITY_TYPE_SMS=8;public void addCapabilities(int c){}}
  public static class CapabilityCallbackProxy {public void onChangeCapabilityConfigurationError(int c,int t,int e){}}
 }''',
- 'com/newvowifi/ims/RootSupervisor.java': '''package com.newvowifi.ims; import java.util.*;
+ 'com/smartvowificall/ims/RootSupervisor.java': '''package com.smartvowificall.ims; import java.util.*;
 final class RootSupervisor {static final class Policy {final int slotId=0,subId=19;final String simKey="fixture";}
 static final class Sim{final Policy policy=new Policy();} static final class Snapshot{final List<Sim> sims=Arrays.asList(new Sim());}}''',
- 'com/newvowifi/ims/RuntimeController.java': '''package com.newvowifi.ims;
-import java.util.*;import java.util.concurrent.*;import android.content.Context;import android.telephony.ims.ImsReasonInfo;import com.newvowifi.ims.engine.EngineSession;
+ 'com/smartvowificall/ims/RuntimeController.java': '''package com.smartvowificall.ims;
+import java.util.*;import java.util.concurrent.*;import android.content.Context;import android.telephony.ims.ImsReasonInfo;import com.smartvowificall.ims.engine.EngineSession;
 final class RuntimeController {
  final Context context=new Context(); final ExecutorService worker=Executors.newSingleThreadExecutor(r->new Thread(r,"test-state")),io=Executors.newCachedThreadPool();
  final Executor binderExecutor=Runnable::run; final RootSupervisor.Snapshot snapshot=new RootSupervisor.Snapshot();
@@ -70,7 +70,7 @@ final class RuntimeController {
  boolean allowBillable=true,radioAvailable=true,failRadioRead;int radioChecks;boolean billable(){return allowBillable;}boolean radioReady(Binding b){return radioAvailable;}void verifyRadioOff(Binding b)throws Exception{radioChecks++;if(!radioAvailable||failRadioRead)throw new Exception("CELLULAR_RADIO_NOT_OFF");} void kick(){} static ImsReasonInfo reason(int c){return new ImsReasonInfo(c,0,"");}
  static final class Binding{final EngineSession engine;final RootSupervisor.Sim sim;volatile boolean registered=true,callActive,reported;Binding(EngineSession e,RootSupervisor.Sim s){engine=e;sim=s;}}
 }''',
- 'com/newvowifi/ims/NewSms.java': '''package com.newvowifi.ims;import java.util.*;import android.telephony.ims.stub.ImsSmsImplBase;final class NewSms extends ImsSmsImplBase{NewSms(NewMmTelFeature f){}void received(Map<String,Object> e){}}'''
+ 'com/smartvowificall/ims/NewSms.java': '''package com.smartvowificall.ims;import java.util.*;import android.telephony.ims.stub.ImsSmsImplBase;final class NewSms extends ImsSmsImplBase{NewSms(NewMmTelFeature f){}void received(Map<String,Object> e){}}'''
 })
 stubs['android/telephony/ims/stub/ImsCallSessionImplBase.java'] = stubs['android/telephony/ims/stub/ImsCallSessionImplBase.java'].replace(
     'public class ImsCallSessionImplBase {', 'public class ImsCallSessionImplBase {public void setListener(android.telephony.ims.ImsCallSessionListener l){}')
@@ -80,7 +80,7 @@ with tempfile.TemporaryDirectory(prefix='feature-host-build-', dir=HERE) as temp
     sources = []
     for name, source in stubs.items():
         target=build/name;target.parent.mkdir(parents=True,exist_ok=True);target.write_text(source,encoding='utf8');sources.append(target)
-    app=ROOT/'app/src/main/java/com/newvowifi/ims'
+    app=ROOT/'app/src/main/java/com/smartvowificall/ims'
     for source in [app/'NewMmTelFeature.java',app/'NewCallSession.java',app/'PcmAudio.java']:
         if args.baseline:
             data=subprocess.run(['git','show',args.baseline+':'+source.relative_to(ROOT.parent).as_posix()],cwd=ROOT.parent,capture_output=True,check=True).stdout
@@ -88,4 +88,4 @@ with tempfile.TemporaryDirectory(prefix='feature-host-build-', dir=HERE) as temp
         else:sources.append(source)
     sources+=list((app/'engine').glob('*.java'))+[HERE/'EngineContractTest.java',HERE/'FeatureLifecycleTest.java']
     subprocess.run([str(JAVA/'javac.exe'),'--release','11','-encoding','UTF-8','-d',str(build),*map(str,sources)],check=True)
-    subprocess.run([str(JAVA/'java.exe'),'-ea','-cp',str(build),'com.newvowifi.ims.FeatureLifecycleTest',args.case],check=True,timeout=35)
+    subprocess.run([str(JAVA/'java.exe'),'-ea','-cp',str(build),'com.smartvowificall.ims.FeatureLifecycleTest',args.case],check=True,timeout=35)

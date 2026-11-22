@@ -6,7 +6,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
 JDK = Path(os.environ.get("JAVA_HOME", r"C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot"))
-SOURCE = ROOT / "app/src/main/java/com/newvowifi/ims"
+SOURCE = ROOT / "app/src/main/java/com/smartvowificall/ims"
 OUT = HERE / ".build"
 OUT.mkdir(exist_ok=True)
 sources = [SOURCE / "policy/PolicyEngine.java", SOURCE / "network/InterfaceSnapshot.java",
@@ -28,7 +28,7 @@ subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ClashConfigTest"], 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "root/SimCredentials.java"), str(HERE / "SimCredentialsTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT),
-                "com.newvowifi.ims.root.SimCredentialsTest"], check=True)
+                "com.smartvowificall.ims.root.SimCredentialsTest"], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "network/EngineNetworkSnapshot.java"), str(SOURCE / "engine/JsonCodec.java"),
@@ -51,4 +51,4 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8"
                 "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),
                 *map(str, sources[:4]), *map(str, android_sources)], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", os.pathsep.join([str(ANDROID_OUT), str(ANDROID)]),
-                "com.newvowifi.ims.root.RootIdentityValidationTest"], check=True)
+                "com.smartvowificall.ims.root.RootIdentityValidationTest"], check=True)

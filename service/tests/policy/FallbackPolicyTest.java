@@ -1,5 +1,5 @@
-import com.newvowifi.ims.policy.FallbackPolicy;
-import com.newvowifi.ims.policy.FallbackPolicy.Egress;
+import com.smartvowificall.ims.policy.FallbackPolicy;
+import com.smartvowificall.ims.policy.FallbackPolicy.Egress;
 import java.util.concurrent.TimeUnit;
 
 public final class FallbackPolicyTest {

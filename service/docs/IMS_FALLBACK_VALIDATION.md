@@ -37,5 +37,5 @@
 
 - 模块 SHA-256：`617364d5e9fd5afeec95cd02160b3fcba45a5ba600a2a1bc9f2ef77f96d1bd1f`
 - APK SHA-256：`24564e26cb9acd0d9b89bffc84366bd471ff785d260c079f6666f32fd2a889c1`
-- 使用单个 `NewVoWiFi-module.zip` 覆盖刷入并重启，APK 自动升级并保留配置。
-- 旧包备份：`C:\ProjBackup\NewVoWiFi\20261122-143603-before-ims-fallback-0.2.3\`，哈希已核验。
+- 使用单个 `SmartVoWifiCall-module.zip` 覆盖刷入并重启，APK 自动升级并保留配置。
+- 旧包备份：`C:\ProjBackup\SmartVoWifiCall\20261122-143603-before-ims-fallback-0.2.3\`，哈希已核验。

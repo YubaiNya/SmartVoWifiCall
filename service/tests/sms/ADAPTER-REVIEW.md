@@ -67,7 +67,7 @@ there is no generated SMS-STATUS-REPORT.
 ## Host verification
 
 ```powershell
-& D:\NewVowifi\service\tests\sms\run-adapter.ps1
+& D:\SmartVoWifiCall\service\tests\sms\run-adapter.ps1
 ```
 
 **52 assertions passed**, compiling the actual `NewSms.java`, actual PDU codec

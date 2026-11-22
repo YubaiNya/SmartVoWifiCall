@@ -1,7 +1,7 @@
 #!/system/bin/sh
 set -eu
 MODDIR=${0%/*}
-BASE=/data/adb/newvowifi_ims
+BASE=/data/adb/smartvowificall_ims
 CLASH_DIR="$BASE/clash"
 BIN="$MODDIR/bin/mihomo-arm64"
 TUN_DEV=wfctun0

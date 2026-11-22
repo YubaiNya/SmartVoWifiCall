@@ -1,4 +1,4 @@
-package com.newvowifi.ims;
+package com.smartvowificall.ims;
 
 import java.util.*;
 import android.telephony.ims.stub.ImsSmsImplBase;

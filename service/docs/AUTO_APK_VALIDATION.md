@@ -4,9 +4,9 @@
 
 ## 用户操作
 
-只需在模块管理器覆盖刷入 **NewVoWiFi-module.zip** 并重启。模块自带 APK，会自动处理首次安装与旧版覆盖，不再要求单独安装 APK；现有配置保留。从 0.1.0 可以直接升级，不需要逐个安装中间版本。
+只需在模块管理器覆盖刷入 **SmartVoWifiCall-module.zip** 并重启。模块自带 APK，会自动处理首次安装与旧版覆盖，不再要求单独安装 APK；现有配置保留。从 0.1.0 可以直接升级，不需要逐个安装中间版本。
 
-已核对实际 0.1.0 与 0.2.2 APK：包名均为 `com.newvowifi.ims`，签名证书 SHA-256 相同，versionCode 从 1 升至 4，模块 ID 一直是 `newvowifi`。
+已核对实际 0.1.0 与 0.2.2 APK：包名均为 `com.smartvowificall.ims`，签名证书 SHA-256 相同，versionCode 从 1 升至 4，模块 ID 一直是 `smartvowificall`。
 
 ## 实现
 
@@ -18,7 +18,7 @@
 - 替换现有 APK 前，通过本包的只读 `install-check` 查询是否空闲。活跃或未知通话时不终止应用，留待开机/空闲时自动补装。该入口只输出判断和错误码，不输出 SIM 身份。
 - 开机脚本对临时故障每 10 秒重试，通过安装和哈希核对后才继续它的网络发布及前台服务启动。同次启动成功后不再循环安装。
 - 签名冲突和系统拒绝的降级不使用“卸载重装”补救；刷入时明确失败，开机遇到则记录状态并停止该启动流程，旧应用数据保留。
-- 最后一次开机安装结果保存在 `/data/adb/newvowifi_ims/app-install.status`，仅含结果码，不保存原始 PackageManager 错误正文。
+- 最后一次开机安装结果保存在 `/data/adb/smartvowificall_ims/app-install.status`，仅含结果码，不保存原始 PackageManager 错误正文。
 
 命令与生命周期依据：[AOSP PackageManagerShellCommand](https://android.googlesource.com/platform/frameworks/base/+/refs/heads/android17-release/services/core/java/com/android/server/pm/PackageManagerShellCommand.java) 的 stdin/size/user/替换参数，以及 [Magisk 模块指南](https://github.com/topjohnwu/Magisk/blob/master/docs/guides.md) 的 customize 与 late-start service 流程。目标是当前 user 0 的 Android 17 设备，不扩展到多用户安装管理。
 
@@ -36,7 +36,7 @@
 
 - APK SHA-256：`2651eb7733a7a7f6a560478f7005482d7a4eef437ef1a24b2c99510ded40bcac`
 - 模块 SHA-256：`7c94ef0869cfaf9cec62c598dbdf72fdb3a5086a0c4235b2066782290f257d02`
-- 完整校验值见 `dist/SHA256.json`。0.2.1 包已备份至 `C:\ProjBackup\NewVoWiFi\20261122-140856-before-auto-apk-0.2.2\` 并验证哈希。
+- 完整校验值见 `dist/SHA256.json`。0.2.1 包已备份至 `C:\ProjBackup\SmartVoWifiCall\20261122-140856-before-auto-apk-0.2.2\` 并验证哈希。
 - 包含 0.2.1 的通话结束与来电显示修复，不改其协议逻辑；安装器保留已有计费开关，不为了升级而改变用户设置。
 - **本轮手机仍离线，未真实刷入、重启或验证旧配置在该手机上保留。** 之前的注册记录不能当作本版升级成功证明。没有实际拨号或发送短信。
 - 首次使用仍需 root 授权和可用的用户所选网络；已有安装继续使用原设置。本次解决的是单包 APK 安装/升级，不把未完成的真机验收标成通过。

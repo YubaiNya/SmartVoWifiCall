@@ -3,7 +3,7 @@
 Run from PowerShell:
 
 ```powershell
-& D:\NewVowifi\service\tests\sms\run.ps1
+& D:\SmartVoWifiCall\service\tests\sms\run.ps1
 ```
 
 The runner uses the same JDK for `javac` and `java`, compiles with `--release 8`,
@@ -25,7 +25,7 @@ List<byte[]> deliveries = SmsPduCodec.encodeDeliver(
 ```
 
 All result types and exceptions are nested public types of
-`com.newvowifi.ims.sms.SmsPduCodec`. `PduException` is checked; malformed input
+`com.smartvowificall.ims.sms.SmsPduCodec`. `PduException` is checked; malformed input
 and well-formed but unsupported semantics are distinct subclasses. No failure
 returns substituted text or a best-effort destination.
 

@@ -1,4 +1,4 @@
-package com.newvowifi.ims.engine;
+package com.smartvowificall.ims.engine;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

@@ -1,4 +1,4 @@
-import com.newvowifi.ims.policy.RegistrationRouting;
+import com.smartvowificall.ims.policy.RegistrationRouting;
 import java.util.*;
 
 /** Actual route synchronizer with a fake per-slot resolver. No Android/phone access. */
