@@ -52,7 +52,7 @@ nv_install_app() {
  nv_rc=0
  # Stream over stdin so system_server need not open a private /data/adb path.
  # -r retains the existing package data; never use -d to force a downgrade.
- nv_output=$("$NV_PM" install -r --user 0 -S "$nv_size" - < "$nv_apk" 2>&1) || nv_rc=$?
+ nv_output=$("$NV_PM" install -r --user 0 -S "$nv_size" < "$nv_apk" 2>&1) || nv_rc=$?
  if [ "$nv_rc" -ne 0 ] || ! printf '%s\n' "$nv_output" | tr -d '\r' | grep -qx 'Success'; then
   case "$nv_output" in
    *INSTALL_FAILED_UPDATE_INCOMPATIBLE*|*INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES*) NV_APP_RESULT=APP_SIGNATURE_MISMATCH;return 2;;

@@ -58,7 +58,7 @@ owned_pid() {
  [ "$pid" = "$ownerpid" ] || return 1
  [ "$(proc_start "$pid" 2>/dev/null || :)" = "$ownerstart" ] || return 1
  [ -r "/proc/$pid/cmdline" ] || return 1
- commandline=$(tr '\000' ' ' < "/proc/$pid/cmdline")
+ commandline=$(dd if="/proc/$pid/cmdline" bs=4096 count=1 2>/dev/null | tr '\000' ' ')
  case "$commandline" in *"$MODDIR/bin/vowifi-engine-arm64 --iccid=$iccid "*"--config=$BASE/config/$iccid.json "*) kill -0 "$pid" 2>/dev/null;; *) return 1;; esac
 }
 socket_token() { stat -c '%d:%i:%Z' "$1" 2>/dev/null; }

@@ -14,6 +14,7 @@ import android.telephony.TelephonyManager;
 import com.newvowifi.ims.network.InterfaceSnapshot;
 import com.newvowifi.ims.network.TunEgress;
 import com.newvowifi.ims.policy.PolicyEngine;
+import com.newvowifi.ims.policy.ExclusiveRadio;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -38,6 +39,7 @@ import org.json.JSONObject;
 public final class RootIdentityMain {
   private static final String CONFIG_DIR = "/data/adb/newvowifi_ims/config";
   private static final String IMS_DIR = "/data/adb/newvowifi_ims/ims";
+  private static final String RADIO_DIR = "/data/adb/newvowifi_ims/radio";
   private static final String IMS_PACKAGE = "com.newvowifi.ims";
   private static final String ENGINE = "/data/adb/modules/newvowifi/bin/vowifi-engine-arm64";
   private static final int OUTPUT_LIMIT = 262144;
@@ -59,11 +61,31 @@ public final class RootIdentityMain {
         // Installation sees only this decision, never the private SIM snapshot.
         output = new JSONObject().put("ok", idle).put("code", idle ? "INSTALL_IDLE" : "INSTALL_WAIT_CALL_IDLE");
       }
-      else if (mode.equals("check-egress") && args.length == 2) {
+      else if ((mode.equals("radio-hold") || mode.equals("radio-check")) && args.length == 5) {
+        try (ImsLock lock = new ImsLock()) {
+          output = radioHold(rootContext(), nonNegativeInt(args[1]), nonNegativeInt(args[2]),
+              args[3], args[4], mode.equals("radio-check"));
+        }
+      } else if (mode.equals("radio-release-all") && args.length == 1) {
+        try (ImsLock lock = new ImsLock()) {
+          Context context = rootContext();
+          requireIdle(context);
+          boolean released = true;
+          for (int slot = 0; slot < 8; slot++) released &= releaseRadio(context, slot);
+          output = new JSONObject().put("ok", released).put("released", released)
+              .put("code", released ? "RADIO_RELEASED" : "RADIO_RESTORE_PENDING");
+          if (!released) exitCode = 1;
+        }
+      } else if (mode.equals("check-egress") && args.length == 2) {
         if (!validOutputPath(args[1])) throw new Failure("INVALID_OUTPUT_PATH");
         JSONObject config = new JSONObject(new String(Files.readAllBytes(new File(args[1]).toPath()), StandardCharsets.UTF_8));
         String iface = TunEgress.interfaceFromSelector(config.optString("transport", ""));
         requireTun(iface);
+        Context context = rootContext();
+        int slot = config.getInt("slot");
+        Identity identity = requireCurrentIdentity(context, currentSubForSlot(context, slot), slot);
+        if (!identity.iccid.equals(config.optString("iccid"))) throw new Failure("SUBSCRIPTION_CHANGED");
+        requireRadioOff(identity);
         output = new JSONObject().put("ok", true).put("code", "TUN_EGRESS_CONFIRMED");
       }
       else if (mode.equals("ims-bind") && args.length == 5) {
@@ -319,6 +341,7 @@ public final class RootIdentityMain {
     Identity before = requireCurrentIdentity(context, subId, slot);
     if (!sha256(before.iccid).equals(key) || !before.homePlmn.equals(home))
       throw new Failure("SUBSCRIPTION_CHANGED");
+    requireRadioOff(before);
     if (!previous.equals(IMS_PACKAGE)) {
       JSONObject journal =
           new JSONObject()
@@ -401,6 +424,113 @@ public final class RootIdentityMain {
       return other != null && subId == other.subId && slotId == other.slotId
           && iccid.equals(other.iccid) && homePlmn.equals(other.homePlmn);
     }
+  }
+
+  private static File radioJournal(int slot) throws Exception {
+    if (slot < 0 || slot > 7) throw new Failure("INVALID_SLOT");
+    File result = new File(RADIO_DIR, slot + ".json");
+    if (!result.getCanonicalPath().equals(result.getAbsolutePath()))
+      throw new Failure("RADIO_PATH_INVALID");
+    return result;
+  }
+  private static int radioState(Identity identity) throws Exception {
+    if (identity.phoneId < 0) throw new Failure("RADIO_STATE_UNKNOWN");
+    // Per-slot modem stack status (PhoneConfigurationManager / RIL_REQUEST_ENABLE_MODEM).
+    // On Qualcomm DSDS, setRadioForSubscriber triggers shared LPM across both SIMs;
+    // enableModemForSlot disables only the target slot's cellular stack while preserving
+    // the mainland SIM and UICC QRTR AKA authentication.
+    Object enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
+        new Class<?>[] {int.class, String.class, String.class}, new Object[] {identity.phoneId, "root", null});
+    if (!(enabled instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
+    return ((Boolean) enabled) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+  }
+  private static boolean airplaneModeOn() throws Exception {
+    // ActivityThread.systemMain() is not an AMS-registered app process, so ContentResolver
+    // rejects SettingsProvider queries; read global setting through /system/bin/settings.
+    String value = run(new ProcessBuilder("/system/bin/settings", "get", "global", "airplane_mode_on"),
+        new byte[0], 5000, "AIRPLANE_STATE_UNKNOWN");
+    if ("0".equals(value)) return false;
+    if ("1".equals(value)) return true;
+    throw new Failure("AIRPLANE_STATE_UNKNOWN");
+  }
+  private static JSONObject readRadioLease(Identity identity) throws Exception {
+    File file = radioJournal(identity.slotId);
+    if (!file.isFile()) return null;
+    JSONObject value = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    if (!IMS_PACKAGE.equals(value.optString("owner")) || value.optInt("slot", -1) != identity.slotId
+        || value.optInt("subId", -1) != identity.subId
+        || !sha256(identity.iccid).equals(value.optString("simKey"))
+        || !identity.homePlmn.equals(value.optString("homePlmn")) || !value.has("restoreOn"))
+      throw new Failure("RADIO_LEASE_IDENTITY_CHANGED");
+    return value;
+  }
+  private static void requireRadioOff(Identity identity) throws Exception {
+    if (readRadioLease(identity) == null || radioState(identity) != ExclusiveRadio.OFF)
+      throw new Failure("CELLULAR_RADIO_NOT_OFF");
+  }
+  private static ExclusiveRadio.Backend radioBackend(Context context, Identity identity) {
+    return new ExclusiveRadio.Backend() {
+      public int state() throws Exception { return radioState(identity); }
+      public boolean hasLease() throws Exception { return readRadioLease(identity) != null; }
+      public boolean restoreOn() throws Exception { return readRadioLease(identity).getBoolean("restoreOn"); }
+      public void saveLease(boolean restoreOn) throws Exception {
+        requireIdle(context);
+        JSONObject value = new JSONObject().put("owner", IMS_PACKAGE).put("slot", identity.slotId)
+            .put("subId", identity.subId).put("simKey", sha256(identity.iccid))
+            .put("homePlmn", identity.homePlmn).put("restoreOn", restoreOn);
+        writePrivateFile(radioJournal(identity.slotId), value.toString().getBytes(StandardCharsets.UTF_8), RADIO_DIR);
+      }
+      public void power(boolean on) throws Exception {
+        requireIdle(context);
+        // Emergency callback mode can remain active after Telecom becomes idle.
+        for (SubscriptionInfo info : activeSubscriptions(context)) {
+          Object ecbm = binderCall("phone", "com.android.internal.telephony.ITelephony",
+              "getEmergencyCallbackMode", new Class<?>[] {int.class},
+              new Object[] {info.getSubscriptionId()});
+          if (Boolean.TRUE.equals(ecbm))
+            throw new Failure("EMERGENCY_CALLBACK_ACTIVE");
+        }
+        Identity fresh = requireCurrentIdentity(context, identity.subId, identity.slotId);
+        if (!identity.sameIdentity(fresh)) throw new Failure("SUBSCRIPTION_CHANGED");
+        // Both requestRadioPowerOffForReason and setRadioForSubscriber power off both SIMs
+        // on this Qualcomm DSDS modem. enableModemForSlot sends ENABLE_MODEM to phoneId only.
+        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "enableModemForSlot",
+            new Class<?>[] {int.class, boolean.class}, new Object[] {identity.phoneId, on});
+        if (!Boolean.TRUE.equals(ok)) throw new Failure("RADIO_COMMAND_REJECTED");
+      }
+      public void forget() throws Exception { Files.deleteIfExists(radioJournal(identity.slotId).toPath()); }
+    };
+  }
+  private static JSONObject radioHold(Context context, int sub, int slot, String key, String home,
+      boolean checkOnly) throws Exception {
+    if (!checkOnly && (new File("/data/adb/modules/newvowifi/disable").exists()
+        || new File("/data/adb/modules/newvowifi/remove").exists()
+        || new File("/data/adb/newvowifi_ims/rollback-pending").exists()))
+      throw new Failure("MODULE_DISABLED_OR_ROLLBACK");
+    Identity identity = requireCurrentIdentity(context, sub, slot);
+    if (!sha256(identity.iccid).equals(key) || !identity.homePlmn.equals(home))
+      throw new Failure("SUBSCRIPTION_CHANGED");
+    boolean off;
+    if (checkOnly) { requireRadioOff(identity); off = true; }
+    else off = ExclusiveRadio.hold(radioBackend(context, identity));
+    return new JSONObject().put("ok", true).put("radioOff", off)
+        .put("code", off ? "CELLULAR_RADIO_OFF" : "RADIO_OFF_PENDING");
+  }
+  private static boolean releaseRadio(Context context, int slot) throws Exception {
+    File file = radioJournal(slot);
+    if (!file.isFile()) return true;
+    JSONObject lease = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    if (!IMS_PACKAGE.equals(lease.optString("owner")) || lease.optInt("slot", -1) != slot)
+      throw new Failure("RADIO_LEASE_INVALID");
+    // Do not apply an old SIM's radio preference to a replacement card.
+    int sub = currentSubForSlot(context, slot);
+    if (sub != lease.optInt("subId", -1)) throw new Failure("RADIO_LEASE_IDENTITY_CHANGED");
+    Identity identity = requireCurrentIdentity(context, sub, slot);
+    readRadioLease(identity);
+    if (IMS_PACKAGE.equals(imsPackage(slot, 1))
+        || new File("/data/adb/newvowifi_ims/run/" + identity.iccid + ".pid").exists())
+      throw new Failure("RADIO_WAIT_IMS_STOP");
+    return ExclusiveRadio.release(radioBackend(context, identity), airplaneModeOn());
   }
 
   private static int subscriptionMapping(String method, int subId) throws Exception {
@@ -611,6 +741,7 @@ public final class RootIdentityMain {
       Context context, int subId, int slotId, String iface, String outputPath) throws Exception {
     requireTun(iface);
     Identity before = requireCurrentIdentity(context, subId, slotId);
+    requireRadioOff(before);
     if (!before.callStateKnown || before.callState != TelephonyManager.CALL_STATE_IDLE)
       throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
     JSONObject template = new JSONObject()
@@ -707,6 +838,7 @@ public final class RootIdentityMain {
       if (!current.callStateKnown || current.callState != TelephonyManager.CALL_STATE_IDLE)
         throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
       requireTun(TunEgress.interfaceFromSelector(config.optString("transport", "")));
+      requireRadioOff(current);
       Os.rename(candidate.getAbsolutePath(), destination.getAbsolutePath());
     } finally {
       Arrays.fill(bytes, (byte) 0);

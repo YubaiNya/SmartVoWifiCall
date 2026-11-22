@@ -1,8 +1,10 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.2.4-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.2.5-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
 
-0.2.4 按用户确认的规则保留普通蜂窝通话回退，同时只允许真实 Linux TUN 作为独立 VoWiFi 的出口。所选接口失效时不自动替换为蜂窝或物理 Wi-Fi；配置生成、提交和模块启动前均检查实际 TUN 类型。全部接口仍可查看，旧选择保留。详见 [TUN 策略与验证边界](docs/TUN_POLICY_VALIDATION.md)。
+0.2.5 按用户要求实现海外卡 Wi-Fi Calling 与蜂窝二选一互斥：开启 Wi-Fi Calling 时通过 `enableModemForSlot` 关闭该卡蜂窝协议栈（不连带影响大陆卡，保留 UICC/QRTR 鉴权），普通呼叫不可用时直接失败而不回退蜂窝；关闭总开关、禁用或卸载模块后才恢复系统 IMS 与该卡蜂窝。同时修复 Android 17 自动覆盖安装参数与 `control.sh` 进程退出时 `tr` 死循环锁死问题。详见 [单卡互斥与验证记录](docs/EXCLUSIVE_RADIO_VALIDATION.md)。
+
+0.2.4 将独立 VoWiFi 的出口限制为真实 Linux TUN；所选接口失效时不自动替换为蜂窝或物理 Wi-Fi；配置生成、提交和模块启动前均检查实际 TUN 类型。全部接口仍可查看，旧选择保留。详见 [TUN 策略与验证边界](docs/TUN_POLICY_VALIDATION.md)。
 
 0.2.3 将系统 IMS 接管与实际注册状态关联：独立引擎注册成功后才接管；注册丢失且通话空闲时恢复原厂 IMS，即使所选 VPN 接口仍然 UP。恢复注册后自动重新接管，保留接口选择。详见 [回退验证](docs/IMS_FALLBACK_VALIDATION.md)。
 

@@ -23,9 +23,9 @@ public final class RegistrationRouting {
     boolean owned = OWN_PACKAGE.equals(current);
     if (!registered) {
       if (!owned) return new Result(false, false);
-      if (frameworkCallActive || engineCallActive) return new Result(true, true);
-      backend.restoreSystem();
-      return new Result(false, false);
+      // Wi-Fi Calling mode keeps ownership on registration loss. Explicit mode exit
+      // restores the provider and only then releases the separate radio lease.
+      return new Result(true, false);
     }
     if (owned) return new Result(true, false);
     if (!current.isEmpty()) throw new IllegalStateException("OTHER_CARRIER_OVERRIDE_PRESENT");

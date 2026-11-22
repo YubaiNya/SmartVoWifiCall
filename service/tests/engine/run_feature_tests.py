@@ -21,6 +21,7 @@ stubs = next(ast.literal_eval(node.value) for node in tree.body
              if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'STUBS' for t in node.targets))
 del stubs['com/newvowifi/ims/NewMmTelFeature.java']
 stubs.update({
+ 'android/telephony/TelephonyManager.java': '''package android.telephony; public class TelephonyManager { public boolean isEmergencyNumber(String n){ if("throw".equals(n)) throw new RuntimeException("classifier unavailable"); return "911".equals(n); } }''',
  'android/os/Bundle.java': 'package android.os; public class Bundle {}',
  'android/telephony/ims/ImsCallProfile.java': '''package android.telephony.ims;
 import java.util.*;
@@ -66,7 +67,7 @@ final class RuntimeController {
  final Context context=new Context(); final ExecutorService worker=Executors.newSingleThreadExecutor(r->new Thread(r,"test-state")),io=Executors.newCachedThreadPool();
  final Executor binderExecutor=Runnable::run; final RootSupervisor.Snapshot snapshot=new RootSupervisor.Snapshot();
  final Map<Integer,Binding> bindings=new ConcurrentHashMap<>(); final Map<Integer,NewMmTelFeature> features=new ConcurrentHashMap<>();
- boolean billable(){return true;} void kick(){} static ImsReasonInfo reason(int c){return new ImsReasonInfo(c,0,"");}
+ boolean allowBillable=true,radioAvailable=true,failRadioRead;int radioChecks;boolean billable(){return allowBillable;}boolean radioReady(Binding b){return radioAvailable;}void verifyRadioOff(Binding b)throws Exception{radioChecks++;if(!radioAvailable||failRadioRead)throw new Exception("CELLULAR_RADIO_NOT_OFF");} void kick(){} static ImsReasonInfo reason(int c){return new ImsReasonInfo(c,0,"");}
  static final class Binding{final EngineSession engine;final RootSupervisor.Sim sim;volatile boolean registered=true,callActive,reported;Binding(EngineSession e,RootSupervisor.Sim s){engine=e;sim=s;}}
 }''',
  'com/newvowifi/ims/NewSms.java': '''package com.newvowifi.ims;import java.util.*;import android.telephony.ims.stub.ImsSmsImplBase;final class NewSms extends ImsSmsImplBase{NewSms(NewMmTelFeature f){}void received(Map<String,Object> e){}}'''

@@ -57,7 +57,7 @@ final class NewCallSession extends ImsCallSessionImplBase {
     return owner != null && feature.binding() == owner;
   }
   boolean canControl() {
-    return ownsBinding() && feature.rt.billable() && owner.engine.isConnected();
+    return ownsBinding() && feature.rt.billable() && feature.rt.radioReady(owner) && owner.engine.isConnected();
   }
 
   public void start(String callee, ImsCallProfile ignored) {
@@ -95,6 +95,8 @@ final class NewCallSession extends ImsCallSessionImplBase {
         try {
           if (!ownsBinding())
             throw new IllegalStateException("STALE_BINDING");
+          feature.rt.verifyRadioOff(owner);
+          if (!ownsBinding() || !owner.registered) throw new IllegalStateException("IMS_NOT_REGISTERED");
           value = owner.engine.dial(callee);
         } catch (Exception e) {
           error = e;

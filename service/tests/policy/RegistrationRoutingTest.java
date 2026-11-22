@@ -31,27 +31,28 @@ public final class RegistrationRoutingTest {
     check(sync(r,true,false,false).independent,"successful registration selects independent service");
     check(r.mutations.equals(Arrays.asList("bind")),"single bind after registration");
     check(sync(r,true,false,false).independent&&r.mutations.size()==1,"steady registration does not rebind every poll");
-    check(!sync(r,false,false,false).independent,"registration loss restores system even when tun0 remains UP");
-    check(r.mutations.equals(Arrays.asList("bind","restore")),"loss restores exactly once");
-    check(!sync(r,false,false,false).independent&&r.mutations.size()==2,"registration retry leaves system selected");
-    check(sync(r,true,false,false).independent,"registration recovery promotes candidate again");
-    check(r.mutations.equals(Arrays.asList("bind","restore","bind")),"full disconnect/reconnect sequence");
+    check(sync(r,false,false,false).independent,"registration loss retains independent provider");
+    check(r.mutations.equals(Arrays.asList("bind")),"loss cannot trigger cellular fallback");
+    check(sync(r,false,false,false).independent&&r.mutations.size()==1,"retry keeps independent provider");
+    check(sync(r,true,false,false).independent,"registration recovers without provider change");
+    check(r.mutations.equals(Arrays.asList("bind")),"disconnect/reconnect has no system restoration");
 
     r=new Resolver();r.current=RegistrationRouting.OWN_PACKAGE;
     for(boolean[] busy:new boolean[][]{{true,false},{false,true},{true,true}}){
       RegistrationRouting.Result result=sync(r,false,busy[0],busy[1]);
-      check(result.independent&&result.deferred&&r.mutations.isEmpty(),"never remove provider during a framework or engine call");
+      check(result.independent&&!result.deferred&&r.mutations.isEmpty(),"registration loss does not schedule any provider restoration");
     }
-    check(!sync(r,false,false,false).independent&&r.mutations.size()==1,"deferred restoration runs when call ends");
+    check(sync(r,false,false,false).independent&&r.mutations.isEmpty(),"call ending does not enable cellular fallback");
+    r=new Resolver();
     RegistrationRouting.Result delayed=sync(r,true,true,false);
-    check(!delayed.independent&&delayed.deferred&&r.mutations.size()==1,"OEM call prevents takeover");
-    check(sync(r,true,false,false).independent&&r.mutations.size()==2,"takeover resumes after OEM call");
+    check(!delayed.independent&&delayed.deferred&&r.mutations.isEmpty(),"OEM call prevents takeover");
+    check(sync(r,true,false,false).independent&&r.mutations.size()==1,"takeover resumes after OEM call");
 
     r=new Resolver();
     check(sync(r,true,false,true).independent,"candidate incoming call can attach to otherwise idle Android framework");
     check(r.mutations.size()==1,"candidate ringing does not deadlock its own attachment");
     r=new Resolver();r.current=RegistrationRouting.OWN_PACKAGE;
-    check(!sync(r,false,false,false).independent,"restart with old owned override but unverified registration releases provider");
+    check(sync(r,false,false,false).independent,"restart keeps owned provider while registration is unverified");
 
     r=new Resolver();r.current="other.carrier.ims";
     check(!sync(r,false,false,false).independent&&r.mutations.isEmpty(),"another provider is never restored by this app");
@@ -66,8 +67,7 @@ public final class RegistrationRoutingTest {
     try{sync(r,true,false,false);throw new AssertionError("failed bind reported selected");}
     catch(Exception expected){check(r.current.isEmpty()&&r.mutations.isEmpty(),"backend failure not reported as successful takeover");}
     r=new Resolver();r.current=RegistrationRouting.OWN_PACKAGE;r.failRestore=true;
-    try{sync(r,false,false,false);throw new AssertionError("failed restore reported system");}
-    catch(Exception expected){check(r.current.equals(RegistrationRouting.OWN_PACKAGE)&&r.mutations.isEmpty(),"backend restore failure retained for retry");}
+    check(sync(r,false,false,false).independent&&r.mutations.isEmpty(),"registration path never invokes restore backend");
     System.out.println("PASS "+checks+" registration-to-provider routing assertions; no device or actual calls.");
   }
 }

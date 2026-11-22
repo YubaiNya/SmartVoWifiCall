@@ -28,6 +28,7 @@ printf '0\n' > "$test_root/installs"
 printf '0\n' > "$test_root/checks"
 printf '0\n' > "$test_root/starts"
 printf '0\n' > "$test_root/retries"
+printf '0\n' > "$test_root/radio_releases"
 printf 'enabled=true;iface=tun0;billable=true;uid=10703\n' > "$test_root/preferences"
 printf 'existing-sim-config\n' > "$test_root/sim-config"
 before_prefs=$(sha256sum "$test_root/preferences")
@@ -47,7 +48,7 @@ pm() {
    printf 'package:%s\n' "$active"
    ;;
   install)
-   [ "$2 $3 $4 $5 $7" = '-r --user 0 -S -' ] || exit 92
+   [ "$#" -eq 6 ] && [ "$2 $3 $4 $5" = '-r --user 0 -S' ] || exit 92
    inc installs
    cat > "$test_root/stream.apk"
    [ "$(wc -c < "$test_root/stream.apk" | tr -d '[:space:]')" = "$6" ] || exit 93
@@ -77,6 +78,12 @@ app_process() {
     *) printf '{"ok":true,"code":"INSTALL_IDLE"}\n';;
    esac;;
   *ims-restore-all) printf '{"ok":true}\n';;
+  *radio-release-all)
+   inc radio_releases
+   if [ "$scenario" = boot_radio_retry ] && [ "$(cat "$test_root/radio_releases")" = 1 ]; then
+    printf '{"ok":false,"released":false,"code":"RADIO_RESTORE_PENDING"}\n'; return 1
+   fi
+   printf '{"ok":true,"released":true,"code":"RADIO_RELEASED"}\n';;
   *RootNetworkMain\ watch) return 0;;
   *) exit 97;;
  esac
@@ -150,6 +157,7 @@ class ModuleInstallTest(unittest.TestCase):
             count=lambda name:int((root/name).read_text())
             data={'code':result.returncode,'out':result.stdout,'err':result.stderr,
                   'installs':count('installs'),'checks':count('checks'),'starts':count('starts'),
+                  'radio_releases':count('radio_releases'),
                   'status':(root/'runtime/app-install.status').read_text().strip() if (root/'runtime/app-install.status').exists() else '',
                   'active':(root/'installed.apk').read_bytes() if (root/'installed.apk').exists() else None}
             self.assertEqual((root/'preferences').read_text(),'enabled=true;iface=tun0;billable=true;uid=10703\n')
@@ -194,7 +202,9 @@ class ModuleInstallTest(unittest.TestCase):
     def test_boot_identical_skips_reinstall(self):
         r=self.run_scenario('boot_identical');self.assertEqual(r['code'],0,r);self.assertEqual(r['installs'],0);self.assertEqual(r['starts'],1);self.assertEqual(r['status'],'APP_CURRENT')
     def test_boot_waits_for_call_idle(self):
-        r=self.run_scenario('boot_call');self.assertEqual(r['code'],0,r);self.assertEqual(r['checks'],2);self.assertEqual(r['installs'],1);self.assertEqual(r['starts'],1)
+        r=self.run_scenario('boot_call');self.assertEqual(r['code'],0,r);self.assertEqual(r['checks'],2);self.assertEqual(r['installs'],1);self.assertEqual(r['starts'],1);self.assertEqual(r['radio_releases'],1)
+    def test_boot_rollback_retries_pending_radio_release(self):
+        r=self.run_scenario('boot_radio_retry');self.assertEqual(r['code'],0,r);self.assertEqual(r['starts'],1);self.assertEqual(r['radio_releases'],2)
     def test_boot_signature_failure_starts_nothing(self):
         r=self.run_scenario('boot_signature');self.assertEqual(r['code'],1,r);self.assertEqual(r['starts'],0);self.assertEqual(r['status'],'APP_SIGNATURE_MISMATCH')
     def test_scripts_parse(self):

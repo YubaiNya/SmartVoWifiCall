@@ -149,6 +149,19 @@ final class RootSupervisor {
     if (!response.optBoolean("ok"))
       throw new IOException("IMS_BIND_FAILED");
   }
+  boolean holdRadio(Sim sim) throws Exception {
+    JSONObject result = new JSONObject(helper("radio-hold " + sim.policy.subId + " " + sim.policy.slotId
+        + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));
+    return result.optBoolean("ok") && result.optBoolean("radioOff");
+  }
+  void verifyRadioOff(Sim sim) throws Exception {
+    JSONObject result = new JSONObject(helper("radio-check " + sim.policy.subId + " " + sim.policy.slotId
+        + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));
+    if (!result.optBoolean("ok") || !result.optBoolean("radioOff"))
+      throw new IOException("CELLULAR_RADIO_NOT_OFF");
+  }
+  void releaseRadios() throws Exception { helper("radio-release-all"); }
+  void restoreAll() throws Exception { helper("ims-restore-all"); }
   void restore(int slot, String previous) throws Exception {
     if (previous != null && !previous.isEmpty())
       throw new IOException("IMS_ORIGIN_AMBIGUOUS");

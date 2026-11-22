@@ -42,6 +42,7 @@ restore_owned() {
   id=${p##*/};id=${id%.pid}
   sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || return 1
  done
+ CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
  rm -f "$BASE/rollback-pending"
 }
 while :; do

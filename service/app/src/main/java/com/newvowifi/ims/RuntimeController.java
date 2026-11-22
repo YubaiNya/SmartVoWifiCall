@@ -27,6 +27,8 @@ final class RuntimeController {
   final java.util.concurrent.atomic.AtomicBoolean tickQueued =
       new java.util.concurrent.atomic.AtomicBoolean();
   final Map<Integer, Binding> bindings = new ConcurrentHashMap<>();
+  volatile Map<Integer, Boolean> radioOff = Collections.emptyMap();
+  final Map<Integer, Long> lastRebindNanos = new HashMap<>();
   final Map<Integer, PolicyEngine.AppliedOverride> applied = new LinkedHashMap<>();
   volatile RootSupervisor.Snapshot snapshot;
   volatile InterfaceSnapshot interfaces;
@@ -45,6 +47,13 @@ final class RuntimeController {
   }
   boolean billable() {
     return prefs.getBoolean("billable", false);
+  }
+  boolean radioReady(Binding binding) {
+    return binding != null && Boolean.TRUE.equals(radioOff.get(binding.slot()));
+  }
+  void verifyRadioOff(Binding binding) throws Exception {
+    if (!enabled() || !radioReady(binding)) throw new IllegalStateException("CELLULAR_RADIO_NOT_OFF");
+    root.verifyRadioOff(binding.sim);
   }
   void setEnabled(boolean v) {
     prefs.edit().putBoolean("enabled", v).commit();
@@ -141,6 +150,34 @@ final class RuntimeController {
   void tick() {
     try {
       snapshot = root.snapshot();
+      if (!enabled() && (snapshot.callsActive || bindings.values().stream().anyMatch(b -> b.callActive))) {
+        pollBindings();
+        status = "通话期间暂缓切换至蜂窝模式";
+        return;
+      }
+      Map<Integer, Boolean> nextRadioOff = new HashMap<>();
+      if (enabled()) {
+        for (RootSupervisor.Sim sim : snapshot.sims) {
+          if (PolicyEngine.eligibility(sim.policy) != PolicyEngine.Reason.ELIGIBLE) continue;
+          boolean off = root.holdRadio(sim);
+          nextRadioOff.put(sim.policy.slotId, off);
+          // Reserve this card's ordinary IMS provider even while TUN/registration is absent.
+          // Also re-nudge ImsResolver if it queried empty features before our first snapshot
+          // (e.g., immediately after boot or APK upgrade) so MmTelFeature attaches.
+          // Cellular recovery is a user mode switch, never a registration-loss action.
+          int slotId = sim.policy.slotId;
+          long now = System.nanoTime();
+          Long previousRebind = lastRebindNanos.get(slotId);
+          boolean needsFeature = !features.containsKey(slotId)
+              && (previousRebind == null || now - previousRebind >= TimeUnit.SECONDS.toNanos(15));
+          if (off && !snapshot.callsActive && !bindings.values().stream().anyMatch(b -> b.callActive)
+              && (!RegistrationRouting.OWN_PACKAGE.equals(root.currentOverride(slotId)) || needsFeature)) {
+            lastRebindNanos.put(slotId, now);
+            root.bind(sim);
+          }
+        }
+      }
+      radioOff = Collections.unmodifiableMap(nextRadioOff);
       NewVoWifiImsService.refreshFeatures();
       interfaces =
           new InterfaceInventory(context, () -> root.run(InterfaceParser.ROOT_LISTING_SCRIPT), root.vpnOwners())
@@ -155,7 +192,7 @@ final class RuntimeController {
               .putString("selected." + s.policy.simKey, interfaces.preferredVpnInterface)
               .commit();
         selected.put(s.policy.simKey, selection(s.policy.simKey));
-        if (enabled())
+        if (enabled() && Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
           sims.add(s.policy);
       }
       pollBindings();
@@ -227,14 +264,28 @@ final class RuntimeController {
       }
       if (candidateStarted) pollBindings();
       synchronizeProviders();
+      if (!enabled()) {
+        root.restoreAll();
+        root.releaseRadios();
+      }
       long selectedProviders = bindings.values().stream().filter(b -> b.providerBound).count();
       boolean tunRequired = plan.decisions.stream().anyMatch(d -> d.reason == PolicyEngine.Reason.TUN_REQUIRED);
-      status = enabled() ? (selectedProviders > 0 ? "服务运行中；接管 " + selectedProviders + " 张卡"
-          : tunRequired ? "使用系统 IMS；请选择 TUN 作为 VoWiFi 出口"
-          : bindings.isEmpty() ? "等待所选 TUN 或海外 SIM"
-          : "使用系统 IMS；等待 VoWiFi 注册或通话结束")
-                         : "已停用，系统 IMS 已恢复";
+      boolean radioPending = radioOff.values().stream().anyMatch(value -> !value);
+      status = enabled() ? (radioPending ? "切换中：等待目标卡蜂窝射频关闭"
+          : radioOff.isEmpty() ? "等待可识别的海外 SIM"
+          : tunRequired ? "蜂窝已关闭；请选择 TUN 作为 VoWiFi 出口"
+          : selectedProviders > 0 ? "Wi-Fi Calling 模式；蜂窝已关闭"
+          : "蜂窝已关闭；等待所选 TUN 或 VoWiFi 注册")
+                         : "蜂窝模式；已恢复进入 Wi-Fi Calling 前的射频状态";
     } catch (Exception e) {
+      radioOff = Collections.emptyMap();
+      for (Binding b : bindings.values()) {
+        b.registered = false;
+        b.reported = false;
+        b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_SERVICE_UNAVAILABLE));
+        NewMmTelFeature feature = features.get(b.slot());
+        if (feature != null) feature.registrationChanged(false);
+      }
       status = "待处理：" + safeCode(e);
     }
   }
@@ -267,7 +318,8 @@ final class RuntimeController {
     clearSlot(a.slotId);
   }
   void clearSlot(int slot) throws Exception {
-    root.restore(slot, prefs.getString("previous." + slot, ""));
+    boolean keepProvider = enabled() && Boolean.TRUE.equals(radioOff.get(slot));
+    if (!keepProvider) root.restore(slot, prefs.getString("previous." + slot, ""));
     Binding old = bindings.remove(slot);
     if (old != null)
       old.close();
@@ -294,7 +346,7 @@ final class RuntimeController {
           b.engine.connect();
         Map<String, Object> state = b.engine.getStatus();
         b.ims = String.valueOf(state.get("ims"));
-        boolean registered = "REGISTERED".equals(b.ims);
+        boolean registered = "REGISTERED".equals(b.ims) && radioReady(b);
         if (registered != b.registered || !b.reported) {
           b.registered = registered;
           b.reported = true;
@@ -357,7 +409,9 @@ final class RuntimeController {
       if (snap != null) for (RootSupervisor.Sim s : snap.sims) {
         JSONObject row = new JSONObject().put("slot", s.policy.slotId).put("subId", s.policy.subId)
             .put("ready", s.policy.ready).put("homePlmn", s.policy.homePlmn)
-            .put("selectedInterface", selection(s.policy.simKey));
+            .put("selectedInterface", selection(s.policy.simKey))
+            .put("radioOff", Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
+            .put("featureAttached", features.containsKey(s.policy.slotId));
         Binding b = bindings.get(s.policy.slotId);
         if (b != null) row.put("ims", b.ims).put("registered", b.registered)
             .put("tunnel", b.tunnel).put("callActive", b.callActive)

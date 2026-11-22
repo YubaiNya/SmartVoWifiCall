@@ -124,12 +124,57 @@ public final class FeatureLifecycleTest {
       check(h.feature.calls.isEmpty()&&!h.binding.callActive,"IDLE clears current session and activity");
     }
   }
+  static void exclusiveRouting()throws Exception{
+    try(Harness h=new Harness()){
+      check(h.feature.shouldProcessCall(new String[]{"+441234567890"})==android.telephony.ims.feature.MmTelFeature.PROCESS_CALL_IMS,"ordinary call stays on IMS when registered");
+      h.feature.registrationChanged(false);
+      h.binding.registered=false;
+      check(h.feature.shouldProcessCall(new String[]{"+441234567890"})==android.telephony.ims.feature.MmTelFeature.PROCESS_CALL_IMS,"ordinary call stays on IMS when unregistered (no CSFB)");
+      h.rt.allowBillable=false;
+      check(h.feature.shouldProcessCall(new String[]{"+441234567890"})==android.telephony.ims.feature.MmTelFeature.PROCESS_CALL_IMS,"ordinary call stays on IMS when billable disabled (no CSFB)");
+      check(h.feature.shouldProcessCall(new String[]{"throw"})==android.telephony.ims.feature.MmTelFeature.PROCESS_CALL_IMS,"unknown emergency classification fails on IMS, never CSFB");
+      check(h.feature.shouldProcessCall(new String[]{"911"})==android.telephony.ims.feature.MmTelFeature.PROCESS_CALL_CSFB,"verified emergency number still allows CSFB");
+
+      // Unregistered ordinary call fails locally with zero engine dials.
+      NewCallSession unreg=(NewCallSession)h.feature.createCallSession(new ImsCallProfile(1,2));
+      ImsCallSessionListener l1=new ImsCallSessionListener();unreg.setListener(l1);
+      h.rt.allowBillable=true;h.binding.registered=false;
+      unreg.start("+441234567890",null);
+      await(()->l1.failed.get()==1,"unregistered outgoing call reports failure");
+      check(h.dials.get()==0,"unregistered call never dials engine");
+
+      // Radio not off blocks outgoing call before dialing.
+      h.binding.registered=true;h.rt.radioAvailable=false;
+      NewCallSession radioOn=(NewCallSession)h.feature.createCallSession(new ImsCallProfile(1,2));
+      ImsCallSessionListener l2=new ImsCallSessionListener();radioOn.setListener(l2);
+      radioOn.start("+441234567890",null);
+      await(()->l2.failed.get()==1,"outgoing call fails when cached radio state is not OFF");
+      check(h.dials.get()==0,"radio-not-off call never dials engine");
+
+      // Radio state readback failure on live pre-dial check blocks dial.
+      h.rt.radioAvailable=true;h.rt.failRadioRead=true;
+      NewCallSession verifyFail=(NewCallSession)h.feature.createCallSession(new ImsCallProfile(1,2));
+      ImsCallSessionListener l3=new ImsCallSessionListener();verifyFail.setListener(l3);
+      verifyFail.start("+441234567890",null);
+      await(()->l3.failed.get()==1,"pre-dial radio verification failure terminates outgoing call");
+      check(h.rt.radioChecks==1&&h.dials.get()==0,"failed pre-dial radio check prevents dial");
+
+      // Confirmed radio OFF + registered + billable permits dial.
+      h.rt.failRadioRead=false;
+      NewCallSession ok=(NewCallSession)h.feature.createCallSession(new ImsCallProfile(1,2));
+      ImsCallSessionListener l4=new ImsCallSessionListener();ok.setListener(l4);
+      ok.start("+441234567890",null);
+      await(()->h.dials.get()==1,"confirmed radio OFF permits VoWiFi dial");
+      check(h.rt.radioChecks==2,"live pre-dial radio verification ran before dial");
+    }
+  }
   public static void main(String[] args)throws Exception{
     String select=args.length==0?"all":args[0];
     if(select.equals("all")||select.equals("caller"))caller();
     if(select.equals("all")||select.equals("terminal"))terminal();
     if(select.equals("all")||select.equals("blocked"))blockedAudio();
     if(select.equals("all")||select.equals("reconcile"))reconciliation();
+    if(select.equals("all")||select.equals("exclusive"))exclusiveRouting();
     System.out.println("PASS "+checks+" feature lifecycle checks; Android/engine/media substitutes only.");
   }
 }

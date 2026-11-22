@@ -50,7 +50,7 @@ public final class MainActivity extends Activity {
     status = text("正在读取设备…", 16);
     body.addView(status);
     Switch enabled = new Switch(this);
-    enabled.setText("自动接管海外 SIM");
+    enabled.setText("海外卡 Wi-Fi Calling（关闭该卡蜂窝）");
     enabled.setChecked(rt.enabled());
     enabled.setOnCheckedChangeListener((v, on) -> rt.setEnabled(on));
     body.addView(enabled);
@@ -106,8 +106,8 @@ public final class MainActivity extends Activity {
     StringBuilder line = new StringBuilder(rt.status);
     for (RuntimeController.Binding b : rt.bindings.values())
       line.append("\n卡槽 ").append(b.slot() + 1).append(" · ")
-          .append(b.providerBound ? (b.providerDeferred ? "独立 IMS · 通话结束后回退" : "独立 IMS · " + b.ims)
-              : b.providerDeferred ? "系统 IMS · 等待通话结束" : "系统 IMS · 等待 VoWiFi 注册");
+          .append(b.providerBound ? "独立 IMS · " + b.ims : "等待 Wi-Fi Calling 接管")
+          .append(Boolean.TRUE.equals(rt.radioOff.get(b.slot())) ? " · 蜂窝已关闭" : " · 射频状态待确认");
     line.append(rt.billable() ? "\n本服务业务已启用" : "\n验证模式：本服务通话与短信发送关闭");
     status.setText(line);
     if (rt.snapshot == null || rt.interfaces == null)
@@ -159,7 +159,7 @@ public final class MainActivity extends Activity {
       cards.addView(chooser);
     }
     cards.addView(text("系统接口：" + rt.interfaces.entries.size()
-            + " 个。VoWiFi 只走所选 TUN；不可用时普通电话回退系统 IMS，接口选择不变。",
+            + " 个。Wi-Fi Calling 只走所选 TUN；不可用时通话失败。关闭上方开关后才恢复蜂窝，接口选择保留。",
         14));
   }
   public void onResume() {

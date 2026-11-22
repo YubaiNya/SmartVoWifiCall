@@ -18,6 +18,9 @@ subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "PolicyNetworkTest"]
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "policy/RegistrationRouting.java"), str(HERE / "RegistrationRoutingTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "RegistrationRoutingTest"], check=True)
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
+                str(SOURCE / "policy/ExclusiveRadio.java"), str(HERE / "ExclusiveRadioTest.java")], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ExclusiveRadioTest"], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "root/SimCredentials.java"), str(HERE / "SimCredentialsTest.java")], check=True)
@@ -35,7 +38,7 @@ ANDROID = SDK / "platforms/android-36/android.jar"
 ANDROID_OUT = HERE / ".android-build"
 ANDROID_OUT.mkdir(exist_ok=True)
 android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java", SOURCE / "root/SimCredentials.java",
-                   HERE / "RootIdentityValidationTest.java"]
+                   SOURCE / "policy/ExclusiveRadio.java", HERE / "RootIdentityValidationTest.java"]
 classpath = os.pathsep.join([str(ANDROID), str(ROOT / "deps/android-system.jar")])
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8", "-target", "8",
                 "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),

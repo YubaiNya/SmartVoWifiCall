@@ -106,13 +106,16 @@ final class NewMmTelFeature extends MmTelFeature {
   }
   public int shouldProcessCall(String[] numbers) {
     TelephonyManager tm = rt.context.getSystemService(TelephonyManager.class);
-    for (String n : numbers) try {
-        if (tm.isEmergencyNumber(n))
-          return PROCESS_CALL_CSFB;
-      } catch (RuntimeException e) {
-        return PROCESS_CALL_CSFB;
-      }
-    return registered && rt.billable() ? PROCESS_CALL_IMS : PROCESS_CALL_CSFB;
+    if (numbers != null)
+      for (String n : numbers) try {
+          if (tm.isEmergencyNumber(n))
+            return PROCESS_CALL_CSFB;
+        } catch (RuntimeException e) {
+          // Unknown classification must fail inside our session, not reroute a normal call.
+          return PROCESS_CALL_IMS;
+        }
+    // Ordinary calls remain here even when unavailable; NewCallSession reports failure.
+    return PROCESS_CALL_IMS;
   }
   void event(EngineState.Event e) {
     if (e.name.equals("smsReceived")) {
