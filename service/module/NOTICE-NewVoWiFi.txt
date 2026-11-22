@@ -1,0 +1,7 @@
+NewVoWiFi is a separate Android IMS integration developed for this user's device.
+It bundles the existing SoftVoWiFi 0.3.48 arm64 engine as a binary dependency.
+The original engine's supplied notices are preserved in licenses/.
+The dependency's complete engine source is not part of this project.
+The original SoftVoWiFi application is not replaced by this module; its installed
+SIM provisioning helper is invoked to obtain current SIM identity on the device.
+No SIM configuration, subscriber identifier, or runtime log is packaged here.

@@ -1,0 +1,30 @@
+"""Compile and run only pure Java policy/network scenarios; no device operations."""
+from pathlib import Path
+import os
+import subprocess
+
+ROOT = Path(__file__).resolve().parents[2]
+HERE = Path(__file__).resolve().parent
+JDK = Path(os.environ.get("JAVA_HOME", r"C:\Program Files\Eclipse Adoptium\jdk-21.0.10.7-hotspot"))
+SOURCE = ROOT / "app/src/main/java/com/newvowifi/ims"
+OUT = HERE / ".build"
+OUT.mkdir(exist_ok=True)
+sources = [SOURCE / "policy/PolicyEngine.java", SOURCE / "network/InterfaceSnapshot.java",
+           SOURCE / "network/InterfaceParser.java", HERE / "PolicyNetworkTest.java"]
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8",
+                "-d", str(OUT), *map(str, sources)], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "PolicyNetworkTest"], check=True)
+
+# Compile the Android adapters, but execute only their pure validation functions on the host.
+SDK = Path(os.environ.get("VOWIFI_ANDROID_SDK", r"D:\Android\Sdk"))
+ANDROID = SDK / "platforms/android-36/android.jar"
+ANDROID_OUT = HERE / ".android-build"
+ANDROID_OUT.mkdir(exist_ok=True)
+android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java",
+                   HERE / "RootIdentityValidationTest.java"]
+classpath = os.pathsep.join([str(ANDROID), str(ROOT / "deps/android-system.jar")])
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8", "-target", "8",
+                "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),
+                *map(str, sources[:3]), *map(str, android_sources)], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", os.pathsep.join([str(ANDROID_OUT), str(ANDROID)]),
+                "com.newvowifi.ims.root.RootIdentityValidationTest"], check=True)

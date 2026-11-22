@@ -1,0 +1,19 @@
+build/
+local-signing.p12
+device-private/
+deps/android-system.jar
+deps/vowifi-engine-arm64
+deps/vowifi-engine-arm64-isolated
+deps/softvowifi-lib/
+
+# Keep release hashes, not generated installers, in Git.
+dist/*
+!dist/SHA256.json
+
+# Device-specific incident helpers are not product/build source.
+tools/*
+!tools/build.py
+!tools/package_source.py
+!tools/verify_artifacts.py
+!tools/isolate_engine_log_pool.py
+!tools/engine_iface/

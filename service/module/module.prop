@@ -1,0 +1,6 @@
+id=newvowifi
+name=NewVoWiFi Independent IMS
+version=0.1.0-dev
+versionCode=1
+author=Local development
+description=Per-SIM IMS service with selectable interfaces. Requires SoftVoWiFi provisioning app. Paid-action test gate defaults off.

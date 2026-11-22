@@ -1,0 +1,54 @@
+{
+  "patch": "independent-log-pool-v1",
+  "source_sha256": "11864d79088731cb898518d21694e4d4068eb680e0ae11cc7f5b7f0a06a53be7",
+  "output_sha256": "15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d",
+  "bytes": 10964848,
+  "literal": {
+    "virtual_address": "0x17b35",
+    "file_offset": "0x17b35",
+    "section": ".rodata",
+    "length": 27,
+    "before": "/data/adb/vowifi/state/logs",
+    "after": "/data/adb/nvwims/state/logs"
+  },
+  "go_string_global": {
+    "virtual_address": "0x9be860",
+    "file_offset": "0x9b2860",
+    "pointer": "0x17b35",
+    "length": 27,
+    "unchanged": true
+  },
+  "changed_file_offsets": [
+    "0x17b3f",
+    "0x17b40",
+    "0x17b43",
+    "0x17b44"
+  ],
+  "preserved": [
+    "ELF headers and mappings",
+    "all code sections",
+    "all Go metadata",
+    "all relocations",
+    "all other data"
+  ],
+  "known_consumers": [
+    {
+      "function": "main.main",
+      "global_load_va": "0x838964",
+      "log_new_call_va": "0x8389ac"
+    },
+    {
+      "function": "main.runDiagnosticStream.func1",
+      "literal_address_va": "0x844a7c",
+      "note": "Log-export pool argument also changes. Its separate /data/adb/vowifi/logs root remains unchanged; do not use this CLI as an independent-directory exporter."
+    }
+  ],
+  "reference_scan": {
+    "full_path_literal_occurrences": 1,
+    "nonlogging_direct_references_observed": 0,
+    "excluded_numeric_match": "0x8c8a48 is rtype.Str nameOff 0x17b3d, resolving against types base 0x88f4c0 to *cipher.cbcDecAble at 0x8a6ffd; it is not a pointer to the path."
+  },
+  "limits": "Static data-only patch verification. No target process, phone, network, authentication, call, or SMS was executed.",
+  "source": "D:\\NewVowifi\\service\\deps\\vowifi-engine-arm64",
+  "output": "D:\\NewVowifi\\service\\deps\\vowifi-engine-arm64-isolated"
+}

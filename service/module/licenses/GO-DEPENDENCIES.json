@@ -1,0 +1,221 @@
+{
+  "dependencies": [
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/lilyzhaun/softvowifi-swu-go/LICENSE",
+          "sha256": "b053beb685ef0d03c518220cfe95a2d33899ed9e48173e07a4086b2d56bbecc5"
+        }
+      ],
+      "module": "github.com/1239t/swu-go",
+      "resolved": "github.com/lilyzhaun/softvowifi-swu-go",
+      "version": "v0.0.0-20261020141441-ca3e54b3b214"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/VoiceBlender/goamr-nb/LICENSE",
+          "sha256": "3359ea11b3bdde09d47f03740e257cdcefbb1a0161878cb792aa5863e5d83269"
+        },
+        {
+          "path": "modules/github.com/VoiceBlender/goamr-nb/NOTICE",
+          "sha256": "b0b8c88facf5dcd5e6535877711b723bf02090ed525cc9c911bf42f6f446485f"
+        }
+      ],
+      "module": "github.com/VoiceBlender/goamr-nb",
+      "resolved": "github.com/VoiceBlender/goamr-nb",
+      "version": "v1.0.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/VoiceBlender/goamr-wb/LICENSE",
+          "sha256": "3359ea11b3bdde09d47f03740e257cdcefbb1a0161878cb792aa5863e5d83269"
+        },
+        {
+          "path": "modules/github.com/VoiceBlender/goamr-wb/NOTICE",
+          "sha256": "66f5c24133061a3117ee9169b4eb6d5375f5f91cb7d043f3777603374ef9a9f2"
+        }
+      ],
+      "module": "github.com/VoiceBlender/goamr-wb",
+      "resolved": "github.com/VoiceBlender/goamr-wb",
+      "version": "v1.1.1"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/lilyzhaun/softvowifi-sipgo/LICENSE",
+          "sha256": "81e1a2bcb702a0103d3ae3c4fc6c3866d227d9effaaa4b7b801f7ffdaf8cee64"
+        }
+      ],
+      "module": "github.com/emiago/sipgo",
+      "resolved": "github.com/lilyzhaun/softvowifi-sipgo",
+      "version": "v0.0.0-20260916002955-f30e2a8e5daa"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/gobwas/httphead/LICENSE",
+          "sha256": "7d168561ad5212bf5b3023d55cba37c9594eb011ba74445d99f82055be662589"
+        }
+      ],
+      "module": "github.com/gobwas/httphead",
+      "resolved": "github.com/gobwas/httphead",
+      "version": "v0.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/gobwas/pool/LICENSE",
+          "sha256": "bcc745631c0144db2c601650c55d108172c80d601cf2346c71594a0bc32f6f1c"
+        }
+      ],
+      "module": "github.com/gobwas/pool",
+      "resolved": "github.com/gobwas/pool",
+      "version": "v0.2.1"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/gobwas/ws/LICENSE",
+          "sha256": "db823214b3ef18274418accda3812faac38a1545b8bd589aeb613a849b949c7a"
+        }
+      ],
+      "module": "github.com/gobwas/ws",
+      "resolved": "github.com/gobwas/ws",
+      "version": "v1.3.2"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/google/uuid/LICENSE",
+          "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d"
+        }
+      ],
+      "module": "github.com/google/uuid",
+      "resolved": "github.com/google/uuid",
+      "version": "v1.6.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/icholy/digest/LICENSE",
+          "sha256": "7302bfd28f45cfefb8ebda1d36f7ba5c9c75b8d241b428084a2a9abd2a2c4e66"
+        }
+      ],
+      "module": "github.com/icholy/digest",
+      "resolved": "github.com/icholy/digest",
+      "version": "v1.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/lilyzhaun/softvowifi-netlink/LICENSE",
+          "sha256": "04cf148229e562c643203d1ee8c43aae2022e5130e95ceb8ba8357a27c1a9abe"
+        },
+        {
+          "path": "modules/github.com/lilyzhaun/softvowifi-netlink/LICENSES/Go-BSD-3-Clause.txt",
+          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+        }
+      ],
+      "module": "github.com/iniwex5/netlink",
+      "resolved": "github.com/lilyzhaun/softvowifi-netlink",
+      "version": "v0.0.0-20260915075719-be8893d91893"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/pion/randutil/LICENSE",
+          "sha256": "badaf9bc72e71d5a70e7604c636b5b7adf79b9cafc188688438105d2b1e54722"
+        }
+      ],
+      "module": "github.com/pion/randutil",
+      "resolved": "github.com/pion/randutil",
+      "version": "v0.1.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/pion/rtp/LICENSE",
+          "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+        },
+        {
+          "path": "modules/github.com/pion/rtp/LICENSES/MIT.txt",
+          "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+        }
+      ],
+      "module": "github.com/pion/rtp",
+      "resolved": "github.com/pion/rtp",
+      "version": "v1.10.5"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/vishvananda/netns/LICENSE",
+          "sha256": "04cf148229e562c643203d1ee8c43aae2022e5130e95ceb8ba8357a27c1a9abe"
+        }
+      ],
+      "module": "github.com/vishvananda/netns",
+      "resolved": "github.com/vishvananda/netns",
+      "version": "v0.0.5"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/github.com/warthog618/sms/LICENSE",
+          "sha256": "19883a063dae210dfc05c7cdfcecb08b48580e9a4b7dbf738c48129cd62d1dc8"
+        }
+      ],
+      "module": "github.com/warthog618/sms",
+      "resolved": "github.com/warthog618/sms",
+      "version": "v0.3.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/go.uber.org/multierr/LICENSE.txt",
+          "sha256": "dcdabe03bef2382a130640d1c3a4cd5ec42aba1035095c38272fde694eb72405"
+        }
+      ],
+      "module": "go.uber.org/multierr",
+      "resolved": "go.uber.org/multierr",
+      "version": "v1.10.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/go.uber.org/zap/LICENSE",
+          "sha256": "c2b97b3281be272711909076c8402499b4b5a3216196af47a25b1d3674d86152"
+        }
+      ],
+      "module": "go.uber.org/zap",
+      "resolved": "go.uber.org/zap",
+      "version": "v1.27.1"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/golang.org/x/sync/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ],
+      "module": "golang.org/x/sync",
+      "resolved": "golang.org/x/sync",
+      "version": "v0.16.0"
+    },
+    {
+      "licenses": [
+        {
+          "path": "modules/golang.org/x/sys/LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ],
+      "module": "golang.org/x/sys",
+      "resolved": "golang.org/x/sys",
+      "version": "v0.43.0"
+    }
+  ],
+  "go_version": "go1.26.9",
+  "schema": 1,
+  "scope": "binary-linked-dependencies-not-private-engine-license"
+}
