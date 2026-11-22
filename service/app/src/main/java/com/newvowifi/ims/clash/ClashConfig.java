@@ -14,6 +14,7 @@ public final class ClashConfig {
   public static final String TUN_DEVICE = "wfctun0";
   public static final String TUN_IPV4 = "198.19.0.1";
   public static final String TUN_CIDR = "198.19.0.1/30";
+  public static final String NETNS_OWNER_PATH = "/data/adb/newvowifi_ims/clash/netns.owner";
   public static final String CONTROLLER_HOST = "127.0.0.1";
   public static final int CONTROLLER_PORT = 19090;
   public static final String CONTROLLER_ADDR = CONTROLLER_HOST + ":" + CONTROLLER_PORT;

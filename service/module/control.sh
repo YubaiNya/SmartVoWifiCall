@@ -18,6 +18,7 @@ ownerfile="$BASE/run/$iccid.owner"
 socketfile="$BASE/run/$iccid.sockets"
 uidfile="$BASE/run/$iccid.uid"
 lock="$BASE/run/$iccid.lock"
+CLASH_NETNS_OWNER="$BASE/clash/netns.owner"
 launched=0
 proc_start() {
  [ -r "/proc/$1/stat" ] || return 1
@@ -61,17 +62,51 @@ owned_pid() {
  commandline=$(dd if="/proc/$pid/cmdline" bs=4096 count=1 2>/dev/null | tr '\000' ' ')
  case "$commandline" in *"$MODDIR/bin/vowifi-engine-arm64 --iccid=$iccid "*"--config=$BASE/config/$iccid.json "*) kill -0 "$pid" 2>/dev/null;; *) return 1;; esac
 }
+uses_builtin_clash() {
+ [ -f "$BASE/config/$iccid.json" ] &&
+ grep -Eq '"transport"[[:space:]]*:[[:space:]]*"iface:wfctun0"' "$BASE/config/$iccid.json"
+}
+clash_netns_path() {
+ [ -f "$CLASH_NETNS_OWNER" ] || return 1
+ read -r nspid nsstart nsid < "$CLASH_NETNS_OWNER" || return 1
+ case "${nspid:-}:${nsstart:-}" in *[!0-9:]*|:*) return 1;; esac
+ [ -n "${nsid:-}" ] || return 1
+ [ "$(proc_start "$nspid" 2>/dev/null || :)" = "$nsstart" ] || return 1
+ live_ns=$(readlink "/proc/$nspid/ns/net" 2>/dev/null || :)
+ root_ns=$(readlink /proc/1/ns/net 2>/dev/null || readlink /proc/$$/ns/net 2>/dev/null || :)
+ [ -n "$live_ns" ] && [ "$live_ns" = "$nsid" ] && [ "$live_ns" != "$root_ns" ] || return 1
+ printf '/proc/%s/ns/net\n' "$nspid"
+}
 socket_token() { stat -c '%d:%i:%Z' "$1" 2>/dev/null; }
 socket_kernel_inode() {
  path=$1
- while read -r number refs protocol flags type state inode name; do
-  if [ "${name:-}" = "$path" ]; then printf '%s\n' "$inode"; return 0; fi
- done < /proc/net/unix
+ table=${2:-}
+ if [ -n "$table" ]; then
+  [ -r "$table" ] || return 1
+  while read -r number refs protocol flags type state inode name; do
+   if [ "${name:-}" = "$path" ]; then printf '%s\n' "$inode"; return 0; fi
+  done < "$table"
+  return 1
+ fi
+ if [ -r /proc/net/unix ]; then
+  while read -r number refs protocol flags type state inode name; do
+   if [ "${name:-}" = "$path" ]; then printf '%s\n' "$inode"; return 0; fi
+  done < /proc/net/unix
+ fi
+ ns=$(clash_netns_path 2>/dev/null || :)
+ if [ -n "$ns" ]; then
+  nsenter --net="$ns" -- sh -c '
+   while read -r number refs protocol flags type state inode name; do
+    if [ "${name:-}" = "$1" ]; then printf "%s\n" "$inode"; exit 0; fi
+   done < /proc/net/unix
+   exit 1
+  ' _ "$path" 2>/dev/null && return 0
+ fi
  return 1
 }
 pid_owns_socket() {
  owned_pid || return 1
- inode=$(socket_kernel_inode "$1") || return 1
+ inode=$(socket_kernel_inode "$1" "/proc/$pid/net/unix") || return 1
  for fd in "/proc/$pid/fd/"*; do
   if [ "$(readlink "$fd" 2>/dev/null || :)" = "socket:[$inode]" ]; then return 0; fi
  done
@@ -160,7 +195,18 @@ case "$action" in
    mkdir -p "$BASE/logs/$iccid" /data/local/tmp/vowifi /data/adb/nvwims/run
    chmod 0700 /data/adb/nvwims /data/adb/nvwims/run "$BASE/logs/$iccid"
    chmod o+x /data/local/tmp/vowifi
-   setsid "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
+   if uses_builtin_clash; then
+    ns=$(clash_netns_path 2>/dev/null || :)
+    [ -n "$ns" ] || fail TUN_EGRESS_UNAVAILABLE
+    setsid nsenter --net="$ns" -- unshare -m -- sh -c '
+     mount -o private none / || exit 1
+     mount -o private none /sys || exit 1
+     mount -t sysfs sysfs /sys || exit 1
+     exec "$@"
+    ' _ "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
+   else
+    setsid "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
+   fi
    pid=$!
    printf '%s\n' "$pid" > "$pidfile"
    start=$(proc_start "$pid" 2>/dev/null || :)

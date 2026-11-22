@@ -801,8 +801,37 @@ public final class RootIdentityMain {
   }
 
   private static void requireTun(String iface) throws Failure {
-    try { TunEgress.requireDevice(iface); }
-    catch (Exception error) { throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE"); }
+    try {
+      if (ClashConfig.TUN_DEVICE.equals(iface)) {
+        File owner = new File(ClashConfig.NETNS_OWNER_PATH);
+        if (!owner.isFile() || Files.isSymbolicLink(owner.toPath()))
+          throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+        String[] parts = new String(Files.readAllBytes(owner.toPath()), StandardCharsets.US_ASCII)
+            .trim().split("\\s+");
+        if (parts.length != 3 || !asciiDigits(parts[0], 1, 10) || !asciiDigits(parts[1], 1, 20)
+            || parts[2].isEmpty())
+          throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+        String netnsProc = "/proc/" + parts[0] + "/ns/net";
+        String liveNs = Os.readlink(netnsProc);
+        String rootNs = Os.readlink("/proc/1/ns/net");
+        if (!parts[2].equals(liveNs) || liveNs.equals(rootNs))
+          throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+        String flags = run(new ProcessBuilder("/system/bin/nsenter", "--net=" + netnsProc,
+            "--", "/system/bin/unshare", "-m", "--", "/system/bin/sh", "-c",
+            "mount -o private none / && mount -o private none /sys && mount -t sysfs sysfs /sys "
+                + "&& ip -4 addr show dev wfctun0 | grep -q '" + ClashConfig.TUN_IPV4 + "' "
+                + "&& ip -4 route show default dev wfctun0 | grep -q 'default' "
+                + "&& cat /sys/class/net/wfctun0/tun_flags"),
+            new byte[0], 5000, "TUN_REQUIRED_OR_UNAVAILABLE");
+        if (!TunEgress.isTunFlags(flags)) throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+        return;
+      }
+      TunEgress.requireDevice(iface);
+    } catch (Failure f) {
+      throw f;
+    } catch (Exception error) {
+      throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+    }
   }
 
   private static void writeValidatedConfig(Context context, Identity expected, String outputPath,

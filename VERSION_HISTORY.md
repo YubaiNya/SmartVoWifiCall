@@ -1,5 +1,15 @@
 # 版本记录
 
+## v0.3.1-dev — 2026-11-22
+
+应用与模块 versionCode 升为 9。修复 `0.3.0-dev` 中真实订阅导入后内置 Clash `wfctun0` 上 `vowifi-engine-arm64` 报 `selected network unavailable` 无法拉起隧道的问题，将内置 Clash 隔离机制升级为**独立 Linux Network Namespace**，并在 Xiaomi 15 / Android 17 上通过真实海外订阅完成端到端 `REGISTERED / WLAN / READY` 验证（零 Android VPN、零根命名空间路由改动、零手机其他流量代理）。
+
+- **根因**：反汇编确认引擎 `directTUNBinding` 的 `requireInterfaceRoute` 会执行不带 `oif`/`src`/`fwmark` 的 `netlink.RouteGet(dst)` 并要求命中 `wfctun0`，而根命名空间的 `oif`/`from` 策略路由无法匹配普通 `RouteGet`。
+- **修复**：`mihomo-arm64` 留在根网络命名空间（出站走系统默认路由），`clash-control.sh` 通过零 CPU 锚点进程（`unshare -n -- sleep 2147483647`，记录于 `netns.owner`，借 `/proc/<pid>/ns/net` 在所有 Android/KernelSU 挂载命名空间统一可见）创建独立网络命名空间，仅将 `wfctun0` 迁入并设置 `default dev wfctun0`；`control.sh` 仅在配置为 `iface:wfctun0` 时以 `nsenter + unshare -m` 私有重挂 `/sys` 启动引擎，并改用 `/proc/$pid/net/unix` 校验 socket 所有权；`InterfaceParser`、`RootIdentityMain` 与 `RuntimeController` 同步支持命名空间内 `wfctun0` 校验与 `netnsId` 变更自动重建。
+- **验证**：本地全量回归与产物校验全部通过（含新增锚点 PID netns 隔离单测）。Xiaomi 15 实机真实海外订阅实测通过：`tunnel=CONNECTED`、`ims=REGISTERED`（SIP 200 + SUBSCRIBE 200 active）、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=2, featureState=2`；`RootNetworkMain snapshot` 零 VPN；根命名空间无 `wfctun0`、零 Clash `ip rule`、`ip route get 1.1.1.1` 直走 `wlan0`；卡槽 0 大陆中国移动 LTE 全程在网未受影响；实测 `clash-control.sh stop` 清理后 `PolicyService` 自动自愈重建命名空间并恢复注册。未拨号或发短信。详见 [内置 Clash 验证记录](service/docs/BUILTIN_CLASH_VALIDATION.md)。
+
+0.3.0-dev 交付物已备份至 `C:\ProjBackup\NewVoWiFi\20261122-213337-before-clash-netns-0.3.1\`。
+
 ## v0.3.0-dev — 2026-11-22
 
 应用与模块 versionCode 升为 8。模块内置官方 `MetaCubeX/mihomo v1.19.34`（arm64）内核，通过独立 Linux TUN 接口 **`wfctun0`** 仅全局代理 Wi-Fi Calling 流量，不代理手机其他任何流量，也不开启 Android VPN。

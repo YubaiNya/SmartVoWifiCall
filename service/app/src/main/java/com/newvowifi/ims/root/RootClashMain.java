@@ -270,6 +270,7 @@ public final class RootClashMain {
         .put("running", running)
         .put("tunUp", tunUp)
         .put("device", ClashConfig.TUN_DEVICE)
+        .put("netnsId", ctl.optString("netnsId", ""))
         .put("subscriptionUrl", readTextIfPresent("subscription.url"))
         .put("savedNode", readTextIfPresent("selected-node.txt"))
         .put("currentNode", "")

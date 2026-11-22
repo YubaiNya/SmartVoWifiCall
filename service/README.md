@@ -1,8 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.3.0-dev**。模块内包含 APK、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.3.1-dev**。模块内包含 APK、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
 
-0.3.0 内置 `MetaCubeX/mihomo v1.19.34` 内核，在**不开启 Android VPN、不代理手机其他任何流量**的前提下，通过独立 `wfctun0` 与仅针对 `oif wfctun0` / `from 198.19.0.1/32` 的路由表 `209` 全局代理 Wi-Fi Calling 流量（mihomo 上游走系统路由）；App 内支持订阅链接拉取、YAML 导入、节点切换与测速，同时保留 `/data/adb/newvowifi_ims/clash/profile.yaml` 本地维护与外部 TUN 接口下拉选择。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
+0.3.1 在 0.3.0 内置 `MetaCubeX/mihomo v1.19.34` 内核的基础上，将 `wfctun0` 与 `iface:wfctun0` 引擎进程迁入独立 Linux Network Namespace（`mihomo-arm64` 留在根命名空间走系统默认路由，根命名空间零 `ip rule` / 零路由改动 / 零 Android VPN），彻底解决引擎 `requireInterfaceRoute` 拒绝非 VPN TUN 的问题并在真实海外订阅下完成端到端 `REGISTERED / WLAN / READY` 实测；App 内支持订阅链接拉取、YAML 导入、节点切换与测速，同时保留 `/data/adb/newvowifi_ims/clash/profile.yaml` 本地维护与外部 TUN 接口下拉选择。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
 
 0.2.5 按用户要求实现海外卡 Wi-Fi Calling 与蜂窝二选一互斥：开启 Wi-Fi Calling 时通过 `enableModemForSlot` 关闭该卡蜂窝协议栈（不连带影响大陆卡，保留 UICC/QRTR 鉴权），普通呼叫不可用时直接失败而不回退蜂窝；关闭总开关、禁用或卸载模块后才恢复系统 IMS 与该卡蜂窝。同时修复 Android 17 自动覆盖安装参数与 `control.sh` 进程退出时 `tr` 死循环锁死问题。详见 [单卡互斥与验证记录](docs/EXCLUSIVE_RADIO_VALIDATION.md)。
 

@@ -60,7 +60,38 @@
   - `RootClashMain stop` 完整停止进程并清除 `1050` / `1051` 规则、路由表 `209` 与 `wfctun0` 设备；临时合成测试配置已删除。
   - `MainActivity` 实机 UI 检查确认内置 Clash 开关、订阅输入框、拉取/导入/重载按钮、节点下拉框、测速与一键切到 `wfctun0` 按钮及原有接口下拉框均正常渲染。
 
-## 待用户填入真实订阅后验证的边界
+## 0.3.1-dev 根因修复与真实订阅端到端注册实测（2026-11-22，versionCode=9）
 
-- 上述实机验证使用本地合成测试节点完成内核启动、零系统 VPN、`wfctun0` 策略路由、节点切换、引擎严格校验与停用清理；尚未填入真实可用海外代理订阅进行真实 ePDG DNS 解析 + IKEv2 + SIP REGISTER 端到端注册与对比测试手机其他应用出口 IP。
-- 尚未对 `0.3.0-dev` 执行冷重启与真实卸载闭环（模块更新已通过 `ksud` 写入 `/data/adb/modules_update/newvowifi`）。未拨号或发短信。
+### 根因定位
+
+用户在 `0.3.0-dev` 上导入真实海外订阅并成功测速选中节点后，引擎日志出现：
+
+- `[tunnel] 连接失败: failed to bind socket: lookup wlan.three.com.hk on [::1]:53: selected network unavailable`（`tunnel.source: address_unavailable`）。
+- 反汇编 `vowifi-engine-arm64` 的 `underlay.Binding.SourceIP`（`0x748c20`）与 `requireInterfaceRoute`（`0x745fb0`）确认：非 Android VPN 的 `directTUNBinding` 会调用不带 `oif`/`src`/`fwmark` 的 `netlink.RouteGet(dst)`（如 `1.1.1.1` 与 ePDG IP），并要求返回路由的 `LinkIndex == wfctun0`。`0.3.0-dev` 在主网络命名空间仅添加了 `oif wfctun0` / `from 198.19.0.1` 规则，因此普通 `RouteGet` 命中系统 `wlan0` 路由而被引擎拒绝。
+
+### 修复方案：独立 Linux Network Namespace 硬件级隔离（无 bind-mount、无根命名空间路由改动）
+
+- **`mihomo-arm64` 保持在根网络命名空间**：其自身出站代理连接直接走手机正常系统路由（Wi-Fi / 蜂窝），零系统 VPN，根网络命名空间零 `ip rule`、零路由表改动、零 iptables 改动。
+- **`wfctun0` 迁入独立网络命名空间（`clash-control.sh`）**：启动后创建一个零 CPU 占用的命名空间锚点进程（`setsid unshare -n -- sleep 2147483647`，以 `<pid> <starttime> <netnsId>` 原子记录于 `/data/adb/newvowifi_ims/clash/netns.owner`，通过 `/proc/<pid>/ns/net` 在 Android/KernelSU 全部挂载命名空间统一可见，避免 per-app mount namespace 下 bind-mount 不可见问题），将 `wfctun0` 移入该命名空间并在其中配置 `lo`、`198.19.0.1/30` 与唯一默认路由 `default dev wfctun0`。
+- **仅 `iface:wfctun0` 引擎进程进入该命名空间（`control.sh`）**：以 `nsenter --net=/proc/<nspid>/ns/net -- unshare -m` 私有重挂 `/sys`（`mount -o private none / && mount -o private none /sys && mount -t sysfs sysfs /sys`，不污染根 `/sys`）后 `exec vowifi-engine-arm64`。实测确认 `AF_QIPCRTR`（QRTR QMI SIM AKA）与跨命名空间文件系统 Unix Socket（`/data/local/tmp/vowifi/*.sock`）均原生工作；`control.sh` 改为按 `/proc/$pid/net/unix` 校验引擎 socket 所有权。外部 TUN（如 FlClash `tun0`）保持原根命名空间路径不变。
+- **`InterfaceParser`、`RootIdentityMain` 与 `RuntimeController` 联动**：列表与 `requireTun("wfctun0")` 在命名空间内复核 `tun_flags`、`198.19.0.1` 与 `default dev wfctun0`；`RuntimeController` 跟踪 `netnsId`，当内置 Clash 停止或重启导致命名空间切换时，在通话空闲下自动重启引擎接入新命名空间。
+
+### 真机端到端实测结果（Xiaomi 15 / Android 17，真实海外订阅，无拨号、无短信）
+
+- `ksud module install` 刷入 `0.3.1-dev`（`versionCode=9`）并自动完成随包 APK 覆盖更新。
+- 实测内置 Clash 启动于独立命名空间 `net:[4026535807]`，节点为 `香港WiFicall（家庭） X1.5`（共 42 项）：
+  - `PolicyService` 状态：`Wi-Fi Calling 模式；蜂窝已关闭`；卡槽 1（`45403`）`selectedInterface=wfctun0`、`radioOff=true`、`featureAttached=true`、`tunnel=CONNECTED`、`ims=REGISTERED`、`registered=true`、`independentProvider=true`。
+  - 引擎日志完整走通 ePDG DNS（经 `WFC-PROXY`）→ IKEv2 UDP 500/4500（经 `WFC-PROXY`）→ `sv...@wfctun0` XFRM → `SIP REGISTER 200`（`expires=7200s`）→ `SUBSCRIBE 200`（`state=active`）。
+  - Android 框架实测：`FrameworkProbeMain 4` 返回 `{"ok":true,"subId":4,"registrationState":2,"transportType":2,"featureState":2}`（`REGISTERED / WLAN / READY`）。
+  - 卡槽 0（大陆中国移动 `46007`）：`IN_SERVICE` LTE 全程未受影响。
+  - **零 Android VPN**：`RootNetworkMain snapshot` 仅见 `wlan0` / `rmnet_data3` / `rmnet_data4`，全部 `vpn: false`。
+  - **手机其他流量零代理**：根网络命名空间 `ip link show wfctun0` 不存在、零 Clash `ip rule`、`ip route get 1.1.1.1` 直走 `wlan0`。
+  - **跨挂载命名空间一致性与自愈**：从 `adb shell su`（init mount ns）执行 `clash-control.sh status` 准确返回 `running:true, tunUp:true, netnsId:"net:[4026535807]"`；执行 `clash-control.sh stop` 干净清除进程与 `netns.owner` 后，`PolicyService` 在约 16 秒内自动拉起新 Clash 命名空间并重启引擎恢复 `REGISTERED / WLAN / READY`。
+
+## 仍存在的验证边界
+
+- 尚未对 `0.3.1-dev` 执行冷重启与真实卸载闭环；未拨号或发短信。
+
+## 历史记录：0.3.0-dev 首次验证边界（已由 0.3.1-dev 解决）
+
+- 0.3.0-dev 曾使用根网络命名空间 `table 209` + `pref 1050/1051` 规则，已在 0.3.1-dev 替换为独立网络命名空间方案并在升级时自动清理旧规则。

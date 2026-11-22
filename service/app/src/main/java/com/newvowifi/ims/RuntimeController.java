@@ -309,6 +309,14 @@ final class RuntimeController {
       pollBindings();
       boolean calls =
           snapshot.callsActive || bindings.values().stream().anyMatch(b -> b.callActive);
+      if (!calls) {
+        for (Binding b : new ArrayList<>(bindings.values())) {
+          if (ClashConfig.TUN_DEVICE.equals(b.iface)
+              && (!clash.tunUp || clash.netnsId.isEmpty() || !clash.netnsId.equals(b.clashNetnsId))) {
+            clearSlot(b.slot());
+          }
+        }
+      }
       PolicyEngine.Plan plan = PolicyEngine.evaluate(sims, selected, interfaces, applied, calls);
       if (plan.deferredForCall) {
         status = "通话期间暂缓切换";
@@ -346,7 +354,8 @@ final class RuntimeController {
         }
         try {
           root.start(sim, action.interfaceName);
-          connect(sim);
+          connect(sim, action.interfaceName,
+              ClashConfig.TUN_DEVICE.equals(action.interfaceName) ? clash.netnsId : "");
           candidateStarted = true;
         } catch (Exception failure) {
           clear(action);
@@ -365,7 +374,8 @@ final class RuntimeController {
         if (sim != null && !bindings.containsKey(x.slotId) && !calls) {
           try {
             root.start(sim, x.interfaceName);
-            connect(sim);
+            connect(sim, x.interfaceName,
+                ClashConfig.TUN_DEVICE.equals(x.interfaceName) ? clash.netnsId : "");
             candidateStarted = true;
           } catch (Exception failure) {
             clearSlot(x.slotId);
@@ -440,8 +450,8 @@ final class RuntimeController {
     applied.remove(slot);
     saveJournal();
   }
-  void connect(RootSupervisor.Sim sim) throws Exception {
-    Binding b = new Binding(sim);
+  void connect(RootSupervisor.Sim sim, String iface, String clashNetnsId) throws Exception {
+    Binding b = new Binding(sim, iface, clashNetnsId);
     try {
       b.engine.connect();
       bindings.put(sim.policy.slotId, b);
@@ -546,6 +556,7 @@ final class RuntimeController {
           .put("running", cs.running)
           .put("tunUp", cs.tunUp)
           .put("device", ClashConfig.TUN_DEVICE)
+          .put("netnsId", cs.netnsId)
           .put("currentNode", cs.currentNode)
           .put("nodeCount", cs.nodes.size())
           .put("lastError", cs.lastError));
@@ -554,14 +565,17 @@ final class RuntimeController {
   }
   final class Binding implements EngineSession.Listener {
     final RootSupervisor.Sim sim;
+    final String iface, clashNetnsId;
     final EngineSession engine;
     final ImsRegistrationImplBase registration;
     volatile boolean registered, reported, callActive, providerBound, providerDeferred;
     volatile String ims = "CONNECTING";
     volatile String tunnel = "UNKNOWN";
     volatile long callSnapshotError;
-    Binding(RootSupervisor.Sim sim) {
+    Binding(RootSupervisor.Sim sim, String iface, String clashNetnsId) {
       this.sim = sim;
+      this.iface = iface == null ? "" : iface;
+      this.clashNetnsId = clashNetnsId == null ? "" : clashNetnsId;
       registration = registrationFor(sim);
       engine = new EngineSession(sim.identity(), new AndroidTransport(context.getApplicationInfo().sourceDir), this, billable());
     }
@@ -607,20 +621,22 @@ final class RuntimeController {
     }
   }
   static final class ClashState {
-    static final ClashState EMPTY = new ClashState(false, false, false, 0, "", "", "", Collections.emptyList(), "");
+    static final ClashState EMPTY = new ClashState(false, false, false, 0, "", "", "", "", Collections.emptyList(), "");
     final boolean hasProfile, running, tunUp;
     final long profileBytes;
-    final String subscriptionUrl, savedNode, currentNode, lastError;
+    final String subscriptionUrl, savedNode, currentNode, netnsId, lastError;
     final List<ClashNode> nodes;
     ClashState(boolean hasProfile, boolean running, boolean tunUp, long profileBytes,
-        String subscriptionUrl, String savedNode, String currentNode, List<ClashNode> nodes, String lastError) {
+        String subscriptionUrl, String savedNode, String currentNode, String netnsId,
+        List<ClashNode> nodes, String lastError) {
       this.hasProfile = hasProfile; this.running = running; this.tunUp = tunUp;
       this.profileBytes = profileBytes; this.subscriptionUrl = subscriptionUrl;
       this.savedNode = savedNode; this.currentNode = currentNode;
+      this.netnsId = netnsId == null ? "" : netnsId;
       this.nodes = Collections.unmodifiableList(nodes); this.lastError = lastError;
     }
     ClashState withError(String err) {
-      return new ClashState(hasProfile, running, tunUp, profileBytes, subscriptionUrl, savedNode, currentNode, nodes, err);
+      return new ClashState(hasProfile, running, tunUp, profileBytes, subscriptionUrl, savedNode, currentNode, netnsId, nodes, err);
     }
     static ClashState fromJson(JSONObject j, String err) {
       List<ClashNode> list = new ArrayList<>();
@@ -635,7 +651,8 @@ final class RuntimeController {
       return new ClashState(
           j.optBoolean("hasProfile"), j.optBoolean("running"), j.optBoolean("tunUp"),
           j.optLong("profileBytes"), j.optString("subscriptionUrl", ""),
-          j.optString("savedNode", ""), j.optString("currentNode", ""), list, err);
+          j.optString("savedNode", ""), j.optString("currentNode", ""),
+          j.optString("netnsId", ""), list, err);
     }
   }
 }

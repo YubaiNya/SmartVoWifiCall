@@ -16,7 +16,21 @@ public final class InterfaceParser {
       + "if [ -r \"$p/tun_flags\" ]; then printf 'TUNFLAGS\\t%s\\t%s\\n' \"${p##*/}\" "
       + "\"$(cat \"$p/tun_flags\" 2>/dev/null)\"; fi; done\n"
       + "ip -o link show\nip -o addr show\nip -o route show table all\nip -o -6 route show table "
-        + "all";
+      + "all\n"
+      + "if [ -f /data/adb/newvowifi_ims/clash/netns.owner ]; then "
+      + "read -r nspid nsstart nsid < /data/adb/newvowifi_ims/clash/netns.owner 2>/dev/null || :; "
+      + "case \"${nspid:-}\" in ''|*[!0-9]*) nspid='';; esac; "
+      + "if [ -n \"$nspid\" ] && [ -n \"${nsid:-}\" ] && "
+      + "[ \"$(readlink \"/proc/$nspid/ns/net\" 2>/dev/null)\" = \"$nsid\" ] && "
+      + "[ \"$nsid\" != \"$(readlink /proc/1/ns/net 2>/dev/null)\" ]; then "
+      + "nsenter --net=\"/proc/$nspid/ns/net\" -- unshare -m -- sh -c '"
+      + "mount -o private none / 2>/dev/null && mount -o private none /sys 2>/dev/null && "
+      + "mount -t sysfs sysfs /sys 2>/dev/null || exit 0; "
+      + "if [ -r /sys/class/net/wfctun0/tun_flags ]; then "
+      + "printf \"IFACE\\twfctun0\\nTUNFLAGS\\twfctun0\\t%s\\n\" \"$(cat /sys/class/net/wfctun0/tun_flags 2>/dev/null)\"; "
+      + "ip -o link show dev wfctun0 2>/dev/null; "
+      + "ip -o addr show dev wfctun0 2>/dev/null; "
+      + "ip -o route show dev wfctun0 2>/dev/null; fi' 2>/dev/null || :; fi; fi";
   private static final Pattern LINK = Pattern.compile("^\\d+: (.+?): <([^>]*)>.*$");
   private static final Pattern ADDRESS = Pattern.compile("^\\d+: (\\S+)\\s+inet(6)?\\s+(\\S+).*$");
 
