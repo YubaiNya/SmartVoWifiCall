@@ -12,6 +12,7 @@ with zipfile.ZipFile(dist/'NewVoWiFi.apk') as z:
  assert 'AndroidManifest.xml' in z.namelist()
  assert b'Lcom/newvowifi/ims/NewVoWifiImsService;' in z.read('classes.dex')
  assert b'Lcom/newvowifi/ims/root/SimCredentials;' in z.read('classes.dex')
+ assert b'Lcom/newvowifi/ims/network/TunEgress;' in z.read('classes.dex')
  assert b'com.vowifi.sw' not in z.read('classes.dex')
  assert b'Lcom/vowifi/sw/' not in z.read('classes.dex')
 with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
@@ -24,6 +25,7 @@ with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
  assert b'nv_install_app "$MODDIR"' in z.read('service.sh')
  assert b'install -r --user 0 -S' in z.read('app-install.sh')
  assert b'RootNetworkMain watch' in z.read('service.sh')
+ assert b'check_tun_egress || fail TUN_EGRESS_UNAVAILABLE' in z.read('control.sh')
  assert b'/data/adb/vowifi/run/networks.json' not in z.read('bin/vowifi-engine-arm64')
  assert b'/data/adb/vowifi/run/call.lock' not in z.read('bin/vowifi-engine-arm64')
  for name in ['control.sh','customize.sh','service.sh','uninstall.sh','app-install.sh']:

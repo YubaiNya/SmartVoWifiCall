@@ -12,6 +12,7 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import com.newvowifi.ims.network.InterfaceSnapshot;
+import com.newvowifi.ims.network.TunEgress;
 import com.newvowifi.ims.policy.PolicyEngine;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -57,6 +58,13 @@ public final class RootIdentityMain {
             && !current.optBoolean("callActive", true);
         // Installation sees only this decision, never the private SIM snapshot.
         output = new JSONObject().put("ok", idle).put("code", idle ? "INSTALL_IDLE" : "INSTALL_WAIT_CALL_IDLE");
+      }
+      else if (mode.equals("check-egress") && args.length == 2) {
+        if (!validOutputPath(args[1])) throw new Failure("INVALID_OUTPUT_PATH");
+        JSONObject config = new JSONObject(new String(Files.readAllBytes(new File(args[1]).toPath()), StandardCharsets.UTF_8));
+        String iface = TunEgress.interfaceFromSelector(config.optString("transport", ""));
+        requireTun(iface);
+        output = new JSONObject().put("ok", true).put("code", "TUN_EGRESS_CONFIRMED");
       }
       else if (mode.equals("ims-bind") && args.length == 5) {
         try (ImsLock lock = new ImsLock()) {
@@ -601,12 +609,13 @@ public final class RootIdentityMain {
 
   private static JSONObject prepare(
       Context context, int subId, int slotId, String iface, String outputPath) throws Exception {
+    requireTun(iface);
     Identity before = requireCurrentIdentity(context, subId, slotId);
     if (!before.callStateKnown || before.callState != TelephonyManager.CALL_STATE_IDLE)
       throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
     JSONObject template = new JSONObject()
                               .put("enabled", true)
-                              .put("transport", "iface:" + iface)
+                              .put("transport", TunEgress.selector(iface))
                               .put("slot", slotId)
                               .put("iccid", before.iccid)
                               .put("mcc", before.homePlmn.substring(0, 3))
@@ -657,6 +666,11 @@ public final class RootIdentityMain {
         + ".mcc" + homePlmn.substring(0, 3) + ".3gppnetwork.org";
   }
 
+  private static void requireTun(String iface) throws Failure {
+    try { TunEgress.requireDevice(iface); }
+    catch (Exception error) { throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE"); }
+  }
+
   private static void writeValidatedConfig(Context context, Identity expected, String outputPath,
       JSONObject config) throws Exception {
     if (!validOutputPath(outputPath)) throw new Failure("INVALID_OUTPUT_PATH");
@@ -692,6 +706,7 @@ public final class RootIdentityMain {
         throw new Failure("SUBSCRIPTION_CHANGED");
       if (!current.callStateKnown || current.callState != TelephonyManager.CALL_STATE_IDLE)
         throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
+      requireTun(TunEgress.interfaceFromSelector(config.optString("transport", "")));
       Os.rename(candidate.getAbsolutePath(), destination.getAbsolutePath());
     } finally {
       Arrays.fill(bytes, (byte) 0);

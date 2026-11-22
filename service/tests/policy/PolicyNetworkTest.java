@@ -1,5 +1,6 @@
 import com.newvowifi.ims.network.InterfaceParser;
 import com.newvowifi.ims.network.InterfaceSnapshot;
+import com.newvowifi.ims.network.TunEgress;
 import com.newvowifi.ims.policy.PolicyEngine;
 import com.newvowifi.ims.policy.PolicyEngine.Action;
 import com.newvowifi.ims.policy.PolicyEngine.AppliedOverride;
@@ -24,6 +25,7 @@ public final class PolicyNetworkTest {
         InterfaceSnapshot.Builder b = new InterfaceSnapshot.Builder();
         InterfaceSnapshot.MutableEntry vpn = b.entry("vpnCustom42");
         vpn.up = true; vpn.address("192.0.2.7/32"); vpn.transports.add(4);
+        vpn.tunDevice = true;
         vpn.ownerPackages.add(InterfaceSnapshot.FLCLASH_PACKAGE); vpn.defaultNetwork = true;
         b.entry("downWithoutIp").up = false;
         b.entry("unknownState");
@@ -121,16 +123,47 @@ public final class PolicyNetworkTest {
 
         InterfaceSnapshot.Builder unknownVpn = new InterfaceSnapshot.Builder();
         unknownVpn.entry("tun0").transports.add(4);
+        unknownVpn.entry("tun0").tunDevice = true;
         check(unknownVpn.build().preferredVpnInterface == null, "unknown VPN owner is not FlClash");
         InterfaceSnapshot.MutableEntry second = unknownVpn.entry("tunOther"); second.transports.add(4);
+        second.tunDevice = true;
         second.ownerPackages.add(InterfaceSnapshot.FLCLASH_PACKAGE);
         check("tunOther".equals(unknownVpn.build().preferredVpnInterface), "correct VPN owner wins over tun0 name");
         unknownVpn.entry("tun0").ownerPackages.add(InterfaceSnapshot.FLCLASH_PACKAGE);
         check(unknownVpn.build().preferredVpnInterface == null, "ambiguous owned VPNs not guessed");
         unknownVpn.entry("tunOther").defaultNetwork = true;
         check("tunOther".equals(unknownVpn.build().preferredVpnInterface), "active owned VPN resolves ambiguity");
+        unknownVpn.entry("tunOther").tunDevice = false;
+        check("tun0".equals(unknownVpn.build().preferredVpnInterface), "FlClash ownership and VPN transport cannot substitute for actual TUN type");
         check(!InterfaceSnapshot.validName("../tun0") && !InterfaceSnapshot.validName("a b")
                 && !InterfaceSnapshot.validName("1234567890123456") && InterfaceSnapshot.validName("odd-name.9"), "kernel interface name validation");
+        InterfaceSnapshot.Builder exits = new InterfaceSnapshot.Builder();
+        for (String name : Arrays.asList("rmnet_data0", "wlan0", "eth0", "tunPhysical")) {
+            InterfaceSnapshot.MutableEntry e = exits.entry(name);
+            e.up = true; e.address("192.0.2.7");
+            Plan blocked = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", name), exits.build(), Collections.emptyMap(), false);
+            check(blocked.actions.isEmpty() && blocked.decisions.get(0).reason == Reason.TUN_REQUIRED, "physical interface cannot become VoWiFi egress: " + name);
+        }
+        InterfaceSnapshot.MutableEntry tunnel = exits.entry("proxy42");
+        tunnel.up = true; tunnel.address("198.18.0.1"); tunnel.tunDevice = true;
+        Plan tun = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "proxy42"), exits.build(), Collections.emptyMap(), false);
+        check(tun.actions.size() == 1 && tun.actions.get(0).kind == Kind.TAKEOVER, "real TUN accepted without tun name prefix or physical Wi-Fi");
+        Plan wrong = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "rmnet_data0"), exits.build(), applied(old), false);
+        check(wrong.actions.size() == 1 && wrong.actions.get(0).kind == Kind.CLEAR, "non-TUN choice restores ordinary system service rather than using that NIC for VoWiFi");
+        check(wrong.decisions.get(0).selection.interfaceName.equals("rmnet_data0"), "invalid selection retained, not silently replaced");
+        for (String raw : Arrays.asList("1", "0x1001", "0x5001\n")) check(TunEgress.isTunFlags(raw), "IFF_TUN accepted");
+        for (String raw : Arrays.asList(null, "", "2", "0x1002", "3", "0", "-1", "garbage", "0x100000001"))
+            check(!TunEgress.isTunFlags(raw), "TAP or unknown flags rejected");
+        check(TunEgress.selector("proxy42").equals("iface:proxy42"), "explicit selector retained");
+        check(TunEgress.interfaceFromSelector("iface:proxy42").equals("proxy42"), "selector round trip");
+        for (String selector : Arrays.asList("sim1", "sim2", "auto", "wifi", "route:system", "iface:", "iface:../tun0", "iface:tun0\n")) {
+            try { TunEgress.interfaceFromSelector(selector); throw new AssertionError("unsafe selector accepted"); }
+            catch (IllegalArgumentException expected) { check(true, "automatic or invalid selector rejected"); }
+        }
+        InterfaceSnapshot.Builder rootTun = new InterfaceSnapshot.Builder();
+        InterfaceParser.ipOutput("IFACE\tproxy42\nTUNFLAGS\tproxy42\t0x1001\nIFACE\ttap0\nTUNFLAGS\ttap0\t0x1002\n", rootTun);
+        check(rootTun.build().entries.get("proxy42").voWifiTun(), "root observation supplies real TUN type");
+        check(!rootTun.build().entries.get("tap0").voWifiTun(), "TAP is not misclassified as TUN");
         System.out.println("PASS " + checks + " policy/network assertions; no Android, root, calls or SMS executed.");
     }
 }

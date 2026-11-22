@@ -106,5 +106,54 @@ with tempfile.TemporaryDirectory(prefix="module-mock-", dir=HERE) as directory:
     assert unknown.returncode != 0 and json.loads(unknown.stdout)["code"] == "ENGINE_OWNERSHIP_UNKNOWN"
     assert not list((base / "run").iterdir())
     print("PASS status proves recorded process death; unknown ownership is an error; status creates no files or locks.")
+    # Execute the actual root-helper gate. The helper is a shell function; no
+    # Android entry point, native engine, network or live configuration is used.
+    gate = fixture / "egress.sh"
+    gate.write_text(r'''set -eu
+MODDIR=$1
+BASE=$1
+iccid=8900000000000000019
+APP_PROCESS=mock_app_process
+response='{"ok":true,"code":"TUN_EGRESS_CONFIRMED"}'
+helper_exit=0
+mock_app_process() {
+ [ "$CLASSPATH" = "$MODDIR/system/priv-app/NewVoWiFi/NewVoWiFi.apk" ] || return 20
+ [ "$#" = 4 ] && [ "$1" = /system/bin ] &&
+ [ "$2" = com.newvowifi.ims.root.RootIdentityMain ] &&
+ [ "$3" = check-egress ] && [ "$4" = "$BASE/config/$iccid.json" ] || return 21
+ printf '%s\n' "$response"
+ return "$helper_exit"
+}
+''' + function("check_tun_egress") + r'''
+check_tun_egress
+response='{"ok":false,"code":"TUN_REQUIRED_OR_UNAVAILABLE"}'
+if check_tun_egress;then exit 31;fi
+response=''
+if check_tun_egress;then exit 32;fi
+response='{"ok":true,"code":"TUN_EGRESS_CONFIRMED"}'
+helper_exit=1
+if check_tun_egress;then exit 33;fi
+APP_PROCESS="$BASE/helper-does-not-exist"
+if check_tun_egress;then exit 34;fi
+printf 'PASS TUN startup gate accepts verified helper result; absent TUN, empty result and helper failures block.\n'
+''', encoding="utf-8", newline="\n")
+    subprocess.run([str(BASH), gate.as_posix(), fixture.as_posix()], check=True)
+    # Verify placement in the real start branch: rejection must happen before
+    # process/socket ownership handling or engine launch, including restart.
+    start = re.search(r"^ start\)\n(.*?)^  ;;", source, re.M | re.S)
+    assert start
+    blocked = fixture / "blocked-start.sh"
+    blocked.write_text(r'''set -eu
+MODDIR=$1
+BASE=$1
+uid=12345
+set -- start 8900000000000000019 12345
+fail() { printf '{"ok":false,"code":"%s"}\n' "$1";exit 1; }
+check_tun_egress() { return 1; }
+owned_pid() { printf 'UNEXPECTED_PROCESS_ACCESS\n';exit 41; }
+''' + start.group(1), encoding="utf-8", newline="\n")
+    result = subprocess.run([str(BASH), blocked.as_posix(), fixture.as_posix()], capture_output=True, text=True)
+    assert result.returncode == 1 and json.loads(result.stdout)["code"] == "TUN_EGRESS_UNAVAILABLE", (result.stdout, result.stderr)
+    print("PASS rejected TUN blocks actual start branch before engine/socket operations.")
 for name in ("control.sh", "service.sh", "uninstall.sh"):
     subprocess.run([str(BASH), "-n", str(ROOT / "module" / name)], check=True)

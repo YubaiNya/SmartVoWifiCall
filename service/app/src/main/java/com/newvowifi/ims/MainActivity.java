@@ -115,7 +115,7 @@ public final class MainActivity extends Activity {
     StringBuilder key = new StringBuilder();
     for (RootSupervisor.Sim s : rt.snapshot.sims)
       key.append(s.policy.simKey).append(s.policy.subId).append(rt.selection(s.policy.simKey));
-    for (InterfaceSnapshot.Entry e : rt.interfaces.entries.values()) key.append(e.label());
+    for (InterfaceSnapshot.Entry e : rt.interfaces.entries.values()) key.append(e.label()).append(e.voWifiTun());
     if (signature.equals(key.toString()))
       return;
     signature = key.toString();
@@ -132,11 +132,11 @@ public final class MainActivity extends Activity {
         continue;
       List<String> names = new ArrayList<>(), labels = new ArrayList<>();
       names.add("");
-      labels.add("请选择网络接口");
+      labels.add("请选择 VoWiFi 的 TUN 出口");
       String selected = rt.selection(sim.policy.simKey);
       for (InterfaceSnapshot.Entry e : rt.interfaces.entries.values()) {
         names.add(e.name);
-        labels.add(e.label());
+        labels.add(e.label() + (e.voWifiTun() ? " · VoWiFi 出口" : " · 不用于 VoWiFi"));
       }
       if (!selected.isEmpty() && !names.contains(selected)) {
         names.add(selected);
@@ -159,7 +159,7 @@ public final class MainActivity extends Activity {
       cards.addView(chooser);
     }
     cards.addView(text("系统接口：" + rt.interfaces.entries.size()
-            + " 个。接口失效或 VoWiFi 未注册时，在空闲状态下使用系统 IMS。",
+            + " 个。VoWiFi 只走所选 TUN；不可用时普通电话回退系统 IMS，接口选择不变。",
         14));
   }
   public void onResume() {

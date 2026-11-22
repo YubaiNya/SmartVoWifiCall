@@ -2,6 +2,7 @@
 set -eu
 MODDIR=${0%/*}
 BASE=/data/adb/newvowifi_ims
+APP_PROCESS=/system/bin/app_process
 action=${1:-}
 iccid=${2:-}
 fail() { printf '{"ok":false,"code":"%s"}\n' "$1"; exit "${2:-1}"; }
@@ -125,6 +126,10 @@ stop_owned() {
  cleanup_recorded_sockets || return 1
  rm -f "$pidfile" "$ownerfile" "$socketfile" "$uidfile"
 }
+check_tun_egress() {
+ egress=$(CLASSPATH="$MODDIR/system/priv-app/NewVoWiFi/NewVoWiFi.apk" "$APP_PROCESS" /system/bin com.newvowifi.ims.root.RootIdentityMain check-egress "$BASE/config/$iccid.json" 2>/dev/null) || return 1
+ case "$egress" in *'"ok":true'*) return 0;; *) return 1;; esac
+}
 case "$action" in
  status)
   if owned_pid; then printf '{"ok":true,"code":"ENGINE_RUNNING","running":true}\n';exit 0;fi
@@ -146,6 +151,7 @@ case "$action" in
  start)
   [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] && [ ! -e "$BASE/rollback-pending" ] || fail MODULE_DISABLED
   uid=${3:-};case "$uid" in ''|*[!0-9]*) fail INVALID_UID 64;; esac
+  check_tun_egress || fail TUN_EGRESS_UNAVAILABLE
   if ! owned_pid; then
    cleanup_recorded_sockets || fail SOCKET_OWNERSHIP_UNKNOWN
    # Do not adopt a live or unrecorded socket belonging to the original application.

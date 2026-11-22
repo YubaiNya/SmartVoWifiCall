@@ -10,7 +10,7 @@ SOURCE = ROOT / "app/src/main/java/com/newvowifi/ims"
 OUT = HERE / ".build"
 OUT.mkdir(exist_ok=True)
 sources = [SOURCE / "policy/PolicyEngine.java", SOURCE / "network/InterfaceSnapshot.java",
-           SOURCE / "network/InterfaceParser.java", HERE / "PolicyNetworkTest.java"]
+           SOURCE / "network/InterfaceParser.java", SOURCE / "network/TunEgress.java", HERE / "PolicyNetworkTest.java"]
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8",
                 "-d", str(OUT), *map(str, sources)], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "PolicyNetworkTest"], check=True)
@@ -39,6 +39,6 @@ android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/Ro
 classpath = os.pathsep.join([str(ANDROID), str(ROOT / "deps/android-system.jar")])
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8", "-target", "8",
                 "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),
-                *map(str, sources[:3]), *map(str, android_sources)], check=True)
+                *map(str, sources[:4]), *map(str, android_sources)], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", os.pathsep.join([str(ANDROID_OUT), str(ANDROID)]),
                 "com.newvowifi.ims.root.RootIdentityValidationTest"], check=True)

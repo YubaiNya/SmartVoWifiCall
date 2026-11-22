@@ -19,7 +19,8 @@ public final class PolicyEngine {
     INVALID_HOME_PLMN,
     IDENTITY_UNAVAILABLE,
     INVALID_SUBSCRIPTION,
-    INTERFACE_UNAVAILABLE
+    INTERFACE_UNAVAILABLE,
+    TUN_REQUIRED
   }
 
   /** One currently active subscription. simKey is an opaque, stable ICCID-derived key. */
@@ -122,6 +123,8 @@ public final class PolicyEngine {
         reason = Reason.INVALID_SUBSCRIPTION;
       if (reason == Reason.ELIGIBLE && !selection.available())
         reason = Reason.INTERFACE_UNAVAILABLE;
+      if (reason == Reason.ELIGIBLE && !selection.entry.voWifiTun())
+        reason = Reason.TUN_REQUIRED;
       decisions.add(new Decision(sim, reason, selection));
       if (reason == Reason.ELIGIBLE)
         desired.put(sim.slotId,

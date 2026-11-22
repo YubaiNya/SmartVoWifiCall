@@ -12,7 +12,9 @@ import java.util.regex.Pattern;
 public final class InterfaceParser {
   private InterfaceParser() {}
   public static final String ROOT_LISTING_SCRIPT =
-      "for p in /sys/class/net/*; do [ -e \"$p\" ] && printf 'IFACE\\t%s\\n' \"${p##*/}\"; done\n"
+      "for p in /sys/class/net/*; do [ -e \"$p\" ] || continue; printf 'IFACE\\t%s\\n' \"${p##*/}\"; "
+      + "if [ -r \"$p/tun_flags\" ]; then printf 'TUNFLAGS\\t%s\\t%s\\n' \"${p##*/}\" "
+      + "\"$(cat \"$p/tun_flags\" 2>/dev/null)\"; fi; done\n"
       + "ip -o link show\nip -o addr show\nip -o route show table all\nip -o -6 route show table "
         + "all";
   private static final Pattern LINK = Pattern.compile("^\\d+: (.+?): <([^>]*)>.*$");
@@ -26,6 +28,17 @@ public final class InterfaceParser {
       if (line.startsWith("IFACE\t"))
         out.entry(line.substring(6));
     for (String line : text.split("\\r?\\n")) {
+      if (line.startsWith("TUNFLAGS\t")) {
+        String[] fields = line.split("\t", -1);
+        if (fields.length == 3) {
+          InterfaceSnapshot.MutableEntry e = out.entry(fields[1]);
+          if (e != null) {
+            e.tunnel = true;
+            e.tunDevice = TunEgress.isTunFlags(fields[2]);
+          }
+        }
+        continue;
+      }
       Matcher link = LINK.matcher(line);
       if (link.matches()) {
         InterfaceSnapshot.MutableEntry e = out.entry(linkName(link.group(1), out));
@@ -105,6 +118,7 @@ public final class InterfaceParser {
       e.wireless |= new File(dir, "wireless").exists() || new File(dir, "phy80211").exists();
       e.bridge |= new File(dir, "bridge").exists();
       e.tunnel |= new File(dir, "tun_flags").exists();
+      e.tunDevice = TunEgress.isTunFlags(read(new File(dir, "tun_flags")));
       try {
         e.virtual |= dir.getCanonicalPath().replace('\\', '/').contains("/devices/virtual/net/");
         e.usb |= new File(dir, "device")

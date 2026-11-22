@@ -30,7 +30,7 @@ public final class InterfaceSnapshot {
   private static String findPreferredVpn(Collection<Entry> entries) {
     List<Entry> candidates = new ArrayList<>();
     for (Entry e : entries) {
-      if (e.transports.contains(4) && e.ownerPackages.contains(FLCLASH_PACKAGE))
+      if (e.voWifiTun() && e.transports.contains(4) && e.ownerPackages.contains(FLCLASH_PACKAGE))
         candidates.add(e);
     }
     if (candidates.size() == 1)
@@ -118,7 +118,7 @@ public final class InterfaceSnapshot {
     public final Set<String> addresses, ownerPackages;
     public final Set<Integer> transports;
     public final Set<Long> networkHandles;
-    public final boolean defaultNetwork, defaultRoute, wireless, bridge, tunnel, virtual, usb,
+    public final boolean defaultNetwork, defaultRoute, wireless, bridge, tunnel, tunDevice, virtual, usb,
         loopback;
     private Entry(MutableEntry e) {
       name = e.name;
@@ -133,12 +133,16 @@ public final class InterfaceSnapshot {
       wireless = e.wireless;
       bridge = e.bridge;
       tunnel = e.tunnel;
+      tunDevice = e.tunDevice;
       virtual = e.virtual;
       usb = e.usb;
       loopback = e.loopback;
     }
     public boolean available() {
       return Boolean.TRUE.equals(up) && !addresses.isEmpty() && !loopback;
+    }
+    public boolean voWifiTun() {
+      return !loopback && tunDevice && TunEgress.validName(name);
     }
     public String type() {
       if (transports.contains(4))
@@ -181,7 +185,7 @@ public final class InterfaceSnapshot {
                              ownerPackages = new LinkedHashSet<>();
     public final Set<Integer> transports = new LinkedHashSet<>();
     public final Set<Long> networkHandles = new LinkedHashSet<>();
-    public boolean defaultNetwork, defaultRoute, wireless, bridge, tunnel, virtual, usb, loopback;
+    public boolean defaultNetwork, defaultRoute, wireless, bridge, tunnel, tunDevice, virtual, usb, loopback;
     private MutableEntry(String name) {
       this.name = name;
     }

@@ -228,9 +228,11 @@ final class RuntimeController {
       if (candidateStarted) pollBindings();
       synchronizeProviders();
       long selectedProviders = bindings.values().stream().filter(b -> b.providerBound).count();
-      status = enabled() ? (bindings.isEmpty() ? "等待所选接口或海外 SIM"
-          : selectedProviders == 0 ? "使用系统 IMS；等待 VoWiFi 注册或通话结束"
-          : "服务运行中；接管 " + selectedProviders + " 张卡")
+      boolean tunRequired = plan.decisions.stream().anyMatch(d -> d.reason == PolicyEngine.Reason.TUN_REQUIRED);
+      status = enabled() ? (selectedProviders > 0 ? "服务运行中；接管 " + selectedProviders + " 张卡"
+          : tunRequired ? "使用系统 IMS；请选择 TUN 作为 VoWiFi 出口"
+          : bindings.isEmpty() ? "等待所选 TUN 或海外 SIM"
+          : "使用系统 IMS；等待 VoWiFi 注册或通话结束")
                          : "已停用，系统 IMS 已恢复";
     } catch (Exception e) {
       status = "待处理：" + safeCode(e);
@@ -369,7 +371,7 @@ final class RuntimeController {
         out.put("preferredVpnInterface", inventory.preferredVpnInterface);
         for (InterfaceSnapshot.Entry e : inventory.entries.values()) nets.put(new JSONObject()
             .put("name",e.name).put("up",e.up).put("available",e.available())
-            .put("type",e.type()).put("owners",new JSONArray(e.ownerPackages)));
+            .put("type",e.type()).put("voWifiTun",e.voWifiTun()).put("owners",new JSONArray(e.ownerPackages)));
       }
       out.put("interfaces", nets);
     } catch (Exception ignored) { }

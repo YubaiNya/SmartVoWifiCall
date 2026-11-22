@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.2.3-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.2.4-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.2.4 按用户确认的规则保留普通蜂窝通话回退，同时只允许真实 Linux TUN 作为独立 VoWiFi 的出口。所选接口失效时不自动替换为蜂窝或物理 Wi-Fi；配置生成、提交和模块启动前均检查实际 TUN 类型。全部接口仍可查看，旧选择保留。详见 [TUN 策略与验证边界](docs/TUN_POLICY_VALIDATION.md)。
 
 0.2.3 将系统 IMS 接管与实际注册状态关联：独立引擎注册成功后才接管；注册丢失且通话空闲时恢复原厂 IMS，即使所选 VPN 接口仍然 UP。恢复注册后自动重新接管，保留接口选择。详见 [回退验证](docs/IMS_FALLBACK_VALIDATION.md)。
 
@@ -13,7 +15,7 @@
 ## 当前实现
 
 - 按当前 SIM 的归属 PLMN 判断：460、461 保留系统 IMS；其余有效归属 PLMN（包括港澳台）由用户开启自动接管。身份未就绪时不接管。
-- 按 SIM 身份保存接口选择，列出全部内核网络接口；消失的选择保留为失效状态。能核实 VPN 所有者时，首次默认选择 FlClash 的接口。
+- 按 SIM 身份保存接口选择，列出全部内核网络接口并标注能否用作 VoWiFi 出口；消失或非 TUN 的选择保留为失效状态。能核实 VPN 所有者和 TUN 类型时，首次默认选择 FlClash 的接口。
 - 每卡独立引擎会话、配置和系统 MMTEL 绑定。先准备引擎注册，再选择系统 provider；未注册时原厂 IMS 保持接管。接口失效、注册丢失、换卡、关闭服务时，在无通话状态恢复系统服务。
 - 系统注册回调来自独立引擎的真实 `getStatus.ims == REGISTERED`，不会引用系统原有 IMS 注册结果。
 - 接入 Android MmTel、普通语音会话、PCM 音频及文字短信适配。通话和发送短信开关默认关闭，RPC 层再次检查；设备验收不得开启或触发收费动作。
@@ -34,7 +36,9 @@ SIM 配置直接通过 Android `IPhoneSubInfo` 读取当前 IMSI、IMEI 和可�
 
 覆盖升级使用相同包名和签名，保留应用开关、每张卡的接口选择、SIM 配置和其他已有数据。安装器不卸载应用、不清数据、不重置偏好；签名冲突或不允许的降级会明确失败并保留旧数据。首次使用仍需授予 NewVoWiFi root、开启海外卡接管并确认网络接口；已有用户沿用原设置。
 
-所选网络必须已经能访问运营商 ePDG；使用 FlClash 时由 FlClash 自己提供 VPN/代理，模块不代办代理订阅或 VPN 配置。移除对 SoftVoWiFi 的依赖不等于所有手机、运营商都已验证。本版原生 SIM 通道为 Qualcomm QRTR，其他基带尚未支持。
+所选 TUN 必须已经能访问运营商 ePDG；不要求物理 Wi-Fi 在线。使用 FlClash 时由 FlClash 自己提供 VPN/代理，模块不代办代理订阅或 VPN 配置。普通电话回退仍需该卡具备蜂窝服务。移除对 SoftVoWiFi 的依赖不等于所有手机、运营商都已验证。本版原生 SIM 通道为 Qualcomm QRTR，其他基带尚未支持。
+
+TUN 选择与启动校验不是全链路抓包证明：FlClash 的实际代理规则/物理上游、内核 XFRM 输出及 TUN 断开瞬间仍需真机确认；本模块也未修改原厂 IMS 的 WFC 偏好。不能据此声称全机所有 Wi-Fi Calling 都受本模块出口限制。
 
 ## 构建
 
