@@ -20,10 +20,13 @@ with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
  assert hashlib.sha256(z.read('bin/vowifi-engine-arm64')).hexdigest()==engine['sha256']
  assert b'id=newvowifi\n' in z.read('module.prop')
  assert b'com.vowifi.sw' not in z.read('customize.sh')
+ assert b'nv_install_app "$MODPATH"' in z.read('customize.sh')
+ assert b'nv_install_app "$MODDIR"' in z.read('service.sh')
+ assert b'install -r --user 0 -S' in z.read('app-install.sh')
  assert b'RootNetworkMain watch' in z.read('service.sh')
  assert b'/data/adb/vowifi/run/networks.json' not in z.read('bin/vowifi-engine-arm64')
  assert b'/data/adb/vowifi/run/call.lock' not in z.read('bin/vowifi-engine-arm64')
- for name in ['control.sh','customize.sh','service.sh','uninstall.sh']:
+ for name in ['control.sh','customize.sh','service.sh','uninstall.sh','app-install.sh']:
   assert b'\r' not in z.read(name),name+' must use LF line endings'
  for name in z.namelist():
   assert not name.startswith('/') and '..' not in pathlib.PurePosixPath(name).parts

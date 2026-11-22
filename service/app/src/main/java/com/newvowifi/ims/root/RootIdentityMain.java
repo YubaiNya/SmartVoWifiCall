@@ -51,6 +51,13 @@ public final class RootIdentityMain {
       String mode = args.length == 0 ? "snapshot" : args[0];
       if (mode.equals("snapshot") && args.length <= 1)
         output = snapshot(rootContext());
+      else if (mode.equals("install-check") && args.length == 1) {
+        JSONObject current = snapshot(rootContext());
+        boolean idle = current.optBoolean("callStateKnown", false)
+            && !current.optBoolean("callActive", true);
+        // Installation sees only this decision, never the private SIM snapshot.
+        output = new JSONObject().put("ok", idle).put("code", idle ? "INSTALL_IDLE" : "INSTALL_WAIT_CALL_IDLE");
+      }
       else if (mode.equals("ims-bind") && args.length == 5) {
         try (ImsLock lock = new ImsLock()) {
           output = bindIms(

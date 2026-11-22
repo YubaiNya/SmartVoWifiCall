@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.2.1-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.2.2-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.2.2 将 APK 首次安装和覆盖升级纳入模块，保留原配置；升级只需刷一个模块 ZIP 并重启。安装流程的本地验证见 [自动安装记录](docs/AUTO_APK_VALIDATION.md)。
 
 0.2.1 修复通话终结事件遗漏、共享通话线程被音频关闭阻塞、旧会话残留和来电号码展示状态缺失。旧版在本地测试中复现，修正后通过；手机离线，尚未安装复测。详见 [通话修复记录](docs/CALL_FIX_VALIDATION.md)。
 
@@ -24,7 +26,11 @@ SIM 配置直接通过 Android `IPhoneSubInfo` 读取当前 IMSI、IMEI 和可�
 
 ## 安装与首次设置
 
-模块面向已 root 的 Android 17 / arm64 设备。刷入 `NewVoWiFi-module.zip` 后，由系统挂载随包 APK；开机脚本启动网络快照和前台服务。首次使用仍需向 NewVoWiFi 授予 root、开启海外卡接管并确认网络接口；通话和短信发送默认关闭。
+模块面向已 root 的 Android 17 / arm64 设备。**从 0.1.0 或之后版本升级，只需覆盖刷入 `NewVoWiFi-module.zip`，然后重启；无需另外安装 APK。**
+
+正常系统中刷入时会自动安装/覆盖随包 APK；通话中、电话状态未知或安装服务暂不可用时，自动留待下次启动补装。Recovery 中刷入也由开机脚本完成安装。开机再次核对 APK 内容一致后，模块才继续启动网络快照和前台服务。
+
+覆盖升级使用相同包名和签名，保留应用开关、每张卡的接口选择、SIM 配置和其他已有数据。安装器不卸载应用、不清数据、不重置偏好；签名冲突或不允许的降级会明确失败并保留旧数据。首次使用仍需授予 NewVoWiFi root、开启海外卡接管并确认网络接口；已有用户沿用原设置。
 
 所选网络必须已经能访问运营商 ePDG；使用 FlClash 时由 FlClash 自己提供 VPN/代理，模块不代办代理订阅或 VPN 配置。移除对 SoftVoWiFi 的依赖不等于所有手机、运营商都已验证。本版原生 SIM 通道为 Qualcomm QRTR，其他基带尚未支持。
 
@@ -38,7 +44,7 @@ python D:\NewVowifi\service\tools\build.py
 
 需要本机 JDK 21、Android build-tools 37.0.0、Android 37 资源 SDK、`deps/android-system.jar` 和 `deps/vowifi-engine-arm64-isolated`。源包保留原始引擎，可运行 `tools/isolate_engine_log_pool.py` 复现独立副本。本版以当前手机 Android 17 / API 37 为目标，未声明兼容旧版系统。依赖路径、版本及来源记录在 `deps/`；脚本通过 `javac → d8 → aapt2 → zipalign → apksigner` 生成 APK 与 KernelSU/Magisk 模块。签名文件仅供本机开发，不放入源码包。
 
-输出：`dist/NewVoWiFi.apk`、`dist/NewVoWiFi-module.zip`、`dist/SHA256.json`。再运行 `tools/package_source.py` 生成源码与固定依赖包。模块使用独立 ID `newvowifi`，不覆盖原 `vowifi_sw`。
+输出：`dist/NewVoWiFi-module.zip` 是完整安装/升级包；另保留 `dist/NewVoWiFi.apk` 供开发验证，日常刷入不需要单独使用。`dist/SHA256.json` 记录校验值，再运行 `tools/package_source.py` 生成源码与固定依赖包。模块使用独立 ID `newvowifi`，不覆盖原 `vowifi_sw`。
 
 此前 0.1 实机采用数据分区 APK、应用 root 授权和模块脚本即时运行；普通应用域无法直连 socket 时使用 root 子进程中继。本版沿用此实现。0.2 新模块尚未安装到离线手机，不把此前结果计为本版实测。
 
