@@ -47,12 +47,14 @@
   - 系统侧独立探测 `FrameworkProbeMain 4` 返回 `{"ok":true,"subId":4,"registrationState":2,"transportType":2,"featureState":2}`（Android 系统确认 `REGISTERED / WLAN / READY`）。
   - 基带状态确认：卡槽 1 `modemEnabled=false`、`NOT_REG_MT_NOT_SEARCHING_OP`，租约位于 `/data/adb/newvowifi_ims/radio/1.json`；卡槽 0（46007 中国移动）全程保持 `modemEnabled=true`、`mVoiceRegState=0(IN_SERVICE)`、LTE 在网，IMS 覆盖为空。
   - 在卡槽 1 `modemEnabled=false` 下冷重启 `vowifi-engine-arm64 --sim-mode=qrtr`，完整通过 QRTR EAP-AKA 鉴权、IKEv2 与 SIP REGISTER。
-- 实测退出与重新接管闭环：
-  - 按顺序执行 `ims-restore-all` → `control.sh stop` → `radio-release-all`，分别返回 `IMS_RESTORED`、引擎停止、`RADIO_RELEASED`；卡槽 0/1 IMS 覆盖均为空，租约目录清零，卡槽 1 恢复 `modemEnabled=true`、卡槽 0 全程 `modemEnabled=true`。
-  - 重新启动 `PolicyService` 后自动重新关闭卡槽 1 蜂窝协议栈、绑定 `com.newvowifi.ims`、挂载 `NewMmTelFeature` 并完成注册；`FrameworkProbeMain 4` 再次返回 `registrationState=2, transportType=2, featureState=2`，卡槽 1 `modemEnabled=false`、卡槽 0 `modemEnabled=true`。
+- 实测 App 界面总开关与还原/接管闭环：
+  - 在 `MainActivity` 界面关闭总开关后，状态切为 `蜂窝模式；已恢复进入 Wi-Fi Calling 前的射频状态`，卡槽 0/1 IMS 覆盖均清空、引擎退出（0 进程）、租约清零、卡槽 1 恢复 `modemEnabled=true`、卡槽 0 保持 `modemEnabled=true`，所选接口 `tun0` 保留。
+  - 在界面重新开启总开关后，自动重新关闭卡槽 1 蜂窝协议栈、绑定 `com.newvowifi.ims` 并完成注册；`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=2, featureState=2`，卡槽 1 `modemEnabled=false`、卡槽 0 `modemEnabled=true`。
+- 实测整机冷重启（`adb reboot`）与开机无 TUN 场景：
+  - 重启后 KernelSU 自动将 `/data/adb/modules_update/newvowifi` 切换至 `/data/adb/modules/newvowifi`（`version=0.2.5-dev`，`versionCode=7`），更新目录已清空。
+  - `service.sh` 核验 APK 哈希一致写入 `APP_CURRENT`（不重复重装），自动拉起 `RootNetworkMain watch` 与 `PolicyService`。
+  - 重启后 FlClash 尚未启动（`tun0` 不存在），卡槽 1 自动保持 `modemEnabled=false`、`mVoiceRegState=1(OUT_OF_SERVICE)`、`NOT_REG_OR_SEARCHING`、`IMS=com.newvowifi.ims`、`featureAttached=true`，诊断显示 `蜂窝已关闭；等待所选 TUN 或 VoWiFi 注册`，`FrameworkProbeMain 4` 返回 `registrationState=0, featureState=2`（不误显 Wi-Fi Calling 已注册，也不回退蜂窝）；卡槽 0 中国移动正常开机驻网 LTE `IN_SERVICE`（`modemEnabled=true`、`IMS` 覆盖为空）。
 
 ## 尚未实测的边界
 
-- 本轮采用免重启热同步验证模块脚本，尚未执行整机冷重启验证开机自启闭环及真实卸载流程；模块更新已通过 `ksud module install` 写入 `/data/adb/modules_update/newvowifi`，重启后将由 KernelSU 正常切换。
-- 尚未实测开启 Wi-Fi Calling 状态下主动断开 `tun0` 观察界面与系统图标同步变化。
-- 按要求未进行真实拨号或发送短信。紧急号码仍允许系统按紧急呼叫规则走 `PROCESS_CALL_CSFB`。
+- 尚未执行模块禁用/卸载自动还原的真实卸载测试；真实拨号与发送短信按要求未执行。紧急号码仍允许系统按紧急呼叫规则走 `PROCESS_CALL_CSFB`。
