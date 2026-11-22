@@ -1,11 +1,21 @@
 package com.newvowifi.ims.root;
 
 import android.net.LinkProperties;
+import android.net.LinkAddress;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.TelephonyNetworkSpecifier;
 import android.os.IBinder;
 import android.os.Process;
 import android.os.RemoteException;
+import android.os.SystemClock;
+import android.system.Os;
+import com.newvowifi.ims.network.EngineNetworkSnapshot;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -13,14 +23,15 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Read-only app_process network ownership snapshot. No Context, application-side connectivity
- * cache, IP addresses, routes, full capability dumps, or persistent ownership cache is used.
+ * Root network observation. The default snapshot mode is read-only. Publish additionally writes
+ * a private native-engine registry from current Binder observations; stdout contains no IP data.
  *
  * The API37 device DEX defines IConnectivityManager.getAllNetworks(), getLinkProperties(Network),
  * getNetworkCapabilities(Network,String,String), and IPackageManager.getPackagesForUid(int).
@@ -40,11 +51,19 @@ public final class RootNetworkMain {
       if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
       String mode = args.length == 0 ? "snapshot" : args[0];
       if (args.length > 1) throw new Failure("INVALID_ARGUMENT");
+      if (mode.equals("watch")) {
+        // A separate root process keeps observations fresh while policy operations
+        // wait for SIM authentication, engine startup, or per-card lifecycle locks.
+        for (;;) {
+          try { snapshot(true); } catch (Exception ignored) { }
+          Thread.sleep(5000);
+        }
+      }
       if (mode.equals("diagnostics")) {
         result = new JSONObject().put("ok", true).put("code", "NETWORK_API_DIAGNOSTICS")
                      .put("methods", apiDiagnostics());
-      } else if (mode.equals("snapshot")) {
-        result = snapshot();
+      } else if (mode.equals("snapshot") || mode.equals("publish")) {
+        result = snapshot(mode.equals("publish"));
       } else throw new Failure("INVALID_ARGUMENT");
     } catch (Throwable error) {
       exitCode = 1;
@@ -61,7 +80,7 @@ public final class RootNetworkMain {
     System.exit(exitCode);
   }
 
-  private static JSONObject snapshot() throws Exception {
+  private static JSONObject snapshot(boolean publish) throws Exception {
     BoundService connectivity = new BoundService("connectivity", CONNECTIVITY);
     BoundService packages = new BoundService("package", PACKAGES);
     Method all = connectivity.type.getMethod("getAllNetworks");
@@ -72,6 +91,7 @@ public final class RootNetworkMain {
     if (!(value instanceof Network[])) throw new Failure("NETWORK_LIST_UNAVAILABLE");
     Network[] networks = (Network[]) value;
     List<JSONObject> rows = new ArrayList<>();
+    List<Map<String, Object>> registry = new ArrayList<>();
     Set<String> issues = new LinkedHashSet<>();
     BoundService vpnManager = null;
     VpnOwner configuredVpn = null;
@@ -110,6 +130,10 @@ public final class RootNetworkMain {
             || reportedOwnerUid != latestCaps.getOwnerUid()) {
           skipped++; issues.add("NETWORK_CHANGED_DURING_READ"); continue;
         }
+        if (publish) {
+          Map<String, Object> observed = registryEntry(network, latestLink, latestCaps);
+          if (observed != null) registry.add(observed);
+        }
         if (vpn && configuredVpn != null && iface.equals(configuredVpn.iface)) {
           VpnOwner latestOwner = readVpnOwner(vpnManager, packages);
           if (!configuredVpn.sameAs(latestOwner)) {
@@ -137,9 +161,89 @@ public final class RootNetworkMain {
       }
     }
     rows.sort(Comparator.comparingLong(row -> row.optLong("networkHandle", 0)));
+    if (publish) {
+      Network active = (Network) connectivity.type.getMethod("getActiveNetwork").invoke(connectivity.proxy);
+      long defaultHandle = active == null ? 0 : active.getNetworkHandle();
+      String boot = new String(Files.readAllBytes(new File("/proc/sys/kernel/random/boot_id").toPath()),
+          StandardCharsets.US_ASCII).trim();
+      Map<String, Object> document = EngineNetworkSnapshot.document(
+          boot, SystemClock.elapsedRealtime(), defaultHandle, registry);
+      Boolean airplane = airplaneMode();
+      if (airplane != null) document.put("airplaneMode", airplane);
+      writeRegistry(new JSONObject(document).toString().getBytes(StandardCharsets.UTF_8));
+    }
     return new JSONObject().put("ok", true).put("code", "NETWORK_SNAPSHOT")
         .put("networks", new JSONArray(rows)).put("skippedNetworks", skipped)
-        .put("complete", skipped == 0).put("issues", new JSONArray(issues));
+        .put("complete", skipped == 0).put("issues", new JSONArray(issues))
+        .put("registryPublished", publish).put("registryNetworkCount", registry.size());
+  }
+
+  private static Boolean airplaneMode() {
+    java.lang.Process process = null;
+    try {
+      process = new ProcessBuilder("/system/bin/settings", "get", "global", "airplane_mode_on")
+                    .redirectErrorStream(true).start();
+      if (!process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS) || process.exitValue() != 0)
+        return null;
+      String value = new String(process.getInputStream().readNBytes(32), StandardCharsets.US_ASCII).trim();
+      return value.equals("1") ? Boolean.TRUE : value.equals("0") ? Boolean.FALSE : null;
+    } catch (Exception ignored) {
+      return null;
+    } finally {
+      if (process != null) {
+        if (process.isAlive()) process.destroyForcibly();
+        try { process.getInputStream().close(); } catch (Exception ignored) { }
+        try { process.getOutputStream().close(); } catch (Exception ignored) { }
+        try { process.getErrorStream().close(); } catch (Exception ignored) { }
+      }
+    }
+  }
+
+  private static Map<String, Object> registryEntry(Network network, LinkProperties link,
+      NetworkCapabilities caps) throws Exception {
+    String transport = caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN) ? "vpn"
+        : caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ? "wifi"
+        : caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) ? "cellular" : "other";
+    List<InetAddress> addresses = new ArrayList<>();
+    for (LinkAddress address : link.getLinkAddresses()) addresses.add(address.getAddress());
+    List<Integer> slots = new ArrayList<>();
+    if (transport.equals("cellular") && caps.getNetworkSpecifier() instanceof TelephonyNetworkSpecifier) {
+      try {
+        int subId = ((TelephonyNetworkSpecifier) caps.getNetworkSpecifier()).getSubscriptionId();
+        BoundService subscriptions = new BoundService("isub", "com.android.internal.telephony.ISub");
+        int slot = (Integer) subscriptions.type.getMethod("getSlotIndex", int.class)
+                                 .invoke(subscriptions.proxy, subId);
+        if (slot >= 0 && slot <= 1) slots.add(slot);
+      } catch (Exception ignored) { }
+    }
+    return EngineNetworkSnapshot.entry(network.getNetworkHandle(), link.getInterfaceName(), transport,
+        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED), addresses,
+        link.getDnsServers(), slots);
+  }
+
+  private static void writeRegistry(byte[] data) throws Exception {
+    if (data.length > 32768) throw new Failure("NETWORK_SNAPSHOT_TOO_LARGE");
+    File base = new File("/data/adb/nvwims"), run = new File(base, "run");
+    for (File dir : new File[] {base, run}) {
+      if (!dir.getAbsolutePath().equals(dir.getCanonicalPath()) || Files.isSymbolicLink(dir.toPath()))
+        throw new Failure("NETWORK_REGISTRY_PATH_INVALID");
+      if (!dir.isDirectory() && !dir.mkdir()) throw new Failure("NETWORK_REGISTRY_WRITE_FAILED");
+      Os.chmod(dir.getAbsolutePath(), 0700);
+    }
+    File destination = new File(run, "networks.json");
+    if (Files.isSymbolicLink(destination.toPath()) || destination.isDirectory())
+      throw new Failure("NETWORK_REGISTRY_PATH_INVALID");
+    File candidate = File.createTempFile(".networks-", ".tmp", run);
+    try {
+      Os.chmod(candidate.getAbsolutePath(), 0600);
+      try (FileOutputStream stream = new FileOutputStream(candidate)) {
+        stream.write(data);
+        stream.getFD().sync();
+      }
+      Os.rename(candidate.getAbsolutePath(), destination.getAbsolutePath());
+    } finally {
+      Files.deleteIfExists(candidate.toPath());
+    }
   }
 
   private static final class VpnOwner {

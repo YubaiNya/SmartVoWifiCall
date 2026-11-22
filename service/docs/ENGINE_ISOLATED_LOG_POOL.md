@@ -1,4 +1,4 @@
-# Independent engine log-pool patch
+# Independent engine data-directory patch
 
 The 0.3.48 engine accepts an independent `--log-dir`, but `main.main` loads the
 managed logging pool from a separate global default. The original default is
@@ -7,6 +7,12 @@ three original pool groups admitted and the independent engine reporting that
 logging initialization failed while service execution continued. This is a
 logging blocker; it does not establish the cause of IKE/IMS registration failure.
 
+The first revision isolated only that log pool. The standalone revision also
+relocates the default log root, call-admission lock, and network snapshot. This
+removes the four embedded `/data/adb/vowifi/` paths without changing code. The
+network snapshot still needs this service's own producer; see
+`STANDALONE_ENGINE_DEPENDENCIES.md`.
+
 ## Candidate
 
 | Item | Value |
@@ -14,20 +20,27 @@ logging blocker; it does not establish the cause of IKE/IMS registration failure
 | Original | `service/deps/vowifi-engine-arm64` |
 | Original SHA-256 | `11864d79088731cb898518d21694e4d4068eb680e0ae11cc7f5b7f0a06a53be7` |
 | Output | `service/deps/vowifi-engine-arm64-isolated` |
-| Output SHA-256 | `15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d` |
+| Output SHA-256 | `f53df163c7731ebeba45ebf913e85cace0af2884647359155ed515e137b479b3` |
 | Size | 10,964,848 bytes, unchanged |
-| Replacement | `/data/adb/vowifi/state/logs` → `/data/adb/nvwims/state/logs` |
-| Literal | `.rodata`, VA and file offset `0x17b35`, 27 bytes |
+| Replacements | Four equal-length paths below: `vowifi` → `nvwims` |
+| Literals | `.rodata`; each VA equals its file offset |
 | Go string global | VA `0x9be860`, file offset `0x9b2860`; unchanged pointer `0x17b35`, length 27 |
-| Actual changed file bytes | `0x17b3f`, `0x17b40`, `0x17b43`, `0x17b44` |
+| Actual changed file bytes | 16 total; exact offsets in the patch manifest and test |
 
-Only the single existing equal-length literal changes. All code, other data,
+| Original path | Literal VA/file offset | Length |
+| --- | --- | --- |
+| `/data/adb/vowifi/logs` | `0x1302d` | 21 |
+| `/data/adb/vowifi/state/logs` | `0x17b35` | 27 |
+| `/data/adb/vowifi/run/call.lock` | `0x1a65d` | 30 |
+| `/data/adb/vowifi/run/networks.json` | `0x1e2b3` | 34 |
+
+Only those four existing equal-length literals change. All code, other data,
 ELF headers/mappings, Go metadata, and relocations remain byte-for-byte identical.
 The original input is retained. No network, authentication, country, call, or SMS
 logic is changed. This derived binary is not an upstream release; upstream
 licensing and provenance limits still apply.
 
-## Reference scope
+## Log-pool reference scope
 
 The full path occurs once in the original file. Its confirmed consumers are:
 
@@ -40,10 +53,10 @@ match at VA `0x8c8a48` is the `rtype.Str` relative name offset `0x17b3d`, not a 
 pointer: types base `0x88f4c0` resolves it to `*cipher.cbcDecAble` at `0x8a6ffd`.
 That type metadata and name remain unchanged.
 
-The diagnostic-stream wrapper has a separate unchanged root literal
-`/data/adb/vowifi/logs`; this patch does not turn that command into an exporter
-for the independent `--log-dir`. Do not use its output as evidence of the new
-engine's logs. The correct read-only pool inspection command is **`log-budget`**:
+The diagnostic-stream wrapper's root now resolves to `/data/adb/nvwims/logs`.
+That still differs from the launcher's explicit `/data/adb/newvowifi_ims/logs`
+directory. Do not use its output as evidence of those explicitly relocated
+logs. The correct read-only pool inspection command is **`log-budget`**:
 
 ```text
 <isolated-engine> log-budget /data/adb/nvwims/state/logs
@@ -68,14 +81,21 @@ confirmed `log-budget`.
   before launch. The engine creates/checks `state/logs` beneath it and derives
   `/data/adb/nvwims/run/locks` for pool/writer locks. The existing original
   SoftVoWiFi pool and history are not part of this setup.
+- For the standalone revision, also create `/data/adb/nvwims/run` (0700).
+  The call-admission lock opens/creates its file but does not create its parent.
+  Publish the independently observed network snapshot there at intervals below
+  the engine's 15-second freshness limit; the parent integration uses five seconds.
 
 These are integration requirements for the parent agent; this local patch task
 performed no phone operations and made no changes to any original pool.
 
-Integration result on 2026-11-22: the installed independent engine reported the
+Integration result for the first, log-only revision on 2026-11-22: the installed independent engine reported the
 new pool initialized, one admitted group and no admission error. Its own
 `engine.log` recorded the successful SIP REGISTER 200. The original engine file
-and original pool were retained. See `VALIDATION.md` for the device results.
+and original pool were retained. Its SHA-256 was
+`15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d`.
+That device result does not constitute a device test of the newer four-path
+candidate. See `VALIDATION.md` for the device results.
 
 ## Reproduce and verify
 
@@ -84,9 +104,11 @@ python D:\NewVowifi\service\tools\isolate_engine_log_pool.py
 python D:\NewVowifi\service\tests\engine\test_isolated_log_pool.py
 ```
 
-Four test groups pass: exact candidate identity/differences; ELF mappings and
-unchanged sections; reproducibility/version rejection; refusal to overwrite the
-baseline. The machine-readable manifest is
+Five test groups pass: exact candidate identity/differences; ELF mappings and
+unchanged sections; reproducibility/version rejection; dependency/manifest
+consistency; refusal to overwrite the baseline. The script can replace only the
+exact earlier log-only derived output, or reproduce the current output; any
+other existing output is rejected. The machine-readable manifest is
 `deps/vowifi-engine-arm64-isolated.patch.json`.
 
 The separate original-instruction replay of directory validation used a virtual

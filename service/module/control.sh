@@ -151,8 +151,8 @@ case "$action" in
    # Do not adopt a live or unrecorded socket belonging to the original application.
    [ ! -S "/data/local/tmp/vowifi/$iccid.sock" ] && [ ! -S "/data/local/tmp/vowifi/$iccid.audio.sock" ] || fail SOCKET_OWNERSHIP_UNKNOWN
    [ -s "$BASE/config/$iccid.json" ] || fail CONFIG_MISSING
-   mkdir -p "$BASE/logs/$iccid" /data/local/tmp/vowifi /data/adb/nvwims
-   chmod 0700 /data/adb/nvwims "$BASE/logs/$iccid"
+   mkdir -p "$BASE/logs/$iccid" /data/local/tmp/vowifi /data/adb/nvwims/run
+   chmod 0700 /data/adb/nvwims /data/adb/nvwims/run "$BASE/logs/$iccid"
    chmod o+x /data/local/tmp/vowifi
    setsid "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
    pid=$!

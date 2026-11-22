@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，参考 SoftVoWiFi 的引擎协议。源码位于 `app/src/main/java/com/newvowifi/ims/`。2026-11-22 已在 Xiaomi 15 / Android 17 上完成无需重启的安装，CTExcel 实际收到 SIP 200，Android 系统 API 确认 `REGISTERED / WLAN / READY`。详情见 [验证记录](docs/VALIDATION.md)。
+独立 Android `ImsService` 开发版，当前版本 **0.2.0-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.1.0-dev 曾在 Xiaomi 15 / Android 17 实测 CTExcel SIP 200 和系统 `REGISTERED / WLAN / READY`。0.2.0-dev 移除了外部运行依赖并完成本地检查；本轮手机离线，**尚未验证新版本安装、独立注册和重启恢复**。两个版本的证据分开记录，见 [0.2 独立版验证](docs/STANDALONE_VALIDATION.md) 与 [0.1 真机记录](docs/VALIDATION.md)。
 
 ## 当前实现
 
@@ -10,11 +12,19 @@
 - 系统注册回调来自独立引擎的真实 `getStatus.ims == REGISTERED`，不会引用系统原有 IMS 注册结果。
 - 接入 Android MmTel、普通语音会话、PCM 音频及文字短信适配。通话和发送短信开关默认关闭，RPC 层再次检查；设备验收不得开启或触发收费动作。
 
-新写的是 Android 系统服务、分卡策略、接口选择、生命周期和协议适配；底层复用用户手机现有 **SoftVoWiFi 0.3.48 arm64 引擎二进制**，其完整源码不在这个项目中。独立副本只改动日志池路径的 4 个数据字节，网络、鉴权和国家码逻辑没有改动；原始引擎保留。见 [日志池补丁](docs/ENGINE_ISOLATED_LOG_POOL.md)。
+新写的是 Android 系统服务、分卡策略、接口选择、生命周期、SIM 凭据读取和网络快照；底层将 **SoftVoWiFi 0.3.48 arm64 引擎二进制**直接打包进本模块，其完整源码不在这个项目中。引擎来源仍是 SoftVoWiFi，但手机不再需要安装原项目。独立副本修改四条文件路径中的 16 个数据字节，代码、鉴权、国家码与 ELF 布局不变；原始引擎保留。见 [路径隔离补丁](docs/ENGINE_ISOLATED_LOG_POOL.md)。
 
-SIM 配置生成依赖已安装的 `com.vowifi.sw.ProvisioningIdentityMain`，每次重新读取并核对当前 SIM 身份。应用数据独立保存到 `/data/adb/newvowifi_ims`，日志池元数据保存到 `/data/adb/nvwims`；旧 `/data/adb/newvowifi` 和原 SoftVoWiFi 数据继续保留。
+SIM 配置直接通过 Android `IPhoneSubInfo` 读取当前 IMSI、IMEI 和可用的 ISIM 字段，核对前后身份，再由内置引擎严格校验并原子写入。本项目不再查找原 APK 或调用其 Java 类，也不复制旧 SIM 配置。
 
-本机选择经所有者核实的 FlClash `tun0`，并使用现有 qianlink 配置的英国出口。出口探测返回 GB；这不代表 SIP 中写入了 `country=GB`。二进制分析表明 `iface:tun0` 的非 Wi-Fi 分支省略 PANI，实际注册成功已经绕过原厂 PANI 选择路径。没有伪造 GPS 坐标。
+应用数据位于 `/data/adb/newvowifi_ims`；引擎网络快照、通话锁和日志池位于 `/data/adb/nvwims`。本模块与应用策略每 5 秒根据当前 Android 网络生成快照，包含真实 Network handle、地址和 DNS；引擎拒绝超过 15 秒的旧快照。详见 [引擎独立运行依赖](docs/STANDALONE_ENGINE_DEPENDENCIES.md)。
+
+0.1 真机测试选择了经所有者核实的 FlClash `tun0` 和现有 qianlink 英国出口。出口探测 GB 不代表 SIP 写入 `country=GB`；二进制分析表明该分支省略 PANI。0.2 保留这段协议逻辑，不伪造 GPS 坐标。
+
+## 安装与首次设置
+
+模块面向已 root 的 Android 17 / arm64 设备。刷入 `NewVoWiFi-module.zip` 后，由系统挂载随包 APK；开机脚本启动网络快照和前台服务。首次使用仍需向 NewVoWiFi 授予 root、开启海外卡接管并确认网络接口；通话和短信发送默认关闭。
+
+所选网络必须已经能访问运营商 ePDG；使用 FlClash 时由 FlClash 自己提供 VPN/代理，模块不代办代理订阅或 VPN 配置。移除对 SoftVoWiFi 的依赖不等于所有手机、运营商都已验证。本版原生 SIM 通道为 Qualcomm QRTR，其他基带尚未支持。
 
 ## 构建
 
@@ -28,7 +38,7 @@ python D:\NewVowifi\service\tools\build.py
 
 输出：`dist/NewVoWiFi.apk`、`dist/NewVoWiFi-module.zip`、`dist/SHA256.json`。再运行 `tools/package_source.py` 生成源码与固定依赖包。模块使用独立 ID `newvowifi`，不覆盖原 `vowifi_sw`。
 
-本次实机采用数据分区 APK、该应用的 root 授权和模块脚本即时运行，已证实不必等待系统应用扫描即可绑定 IMS。普通应用域无法直连引擎 socket 时，使用获授权的 root 子进程中继。没有放宽全部普通应用的 SELinux 权限。KernelSU 的持久模块已安装并暂存；本轮没有重启，因此下次启动后的系统挂载路径尚未实测。
+此前 0.1 实机采用数据分区 APK、应用 root 授权和模块脚本即时运行；普通应用域无法直连 socket 时使用 root 子进程中继。本版沿用此实现。0.2 新模块尚未安装到离线手机，不把此前结果计为本版实测。
 
 ## 本地验证
 
@@ -39,6 +49,7 @@ python D:\NewVowifi\service\tests\policy\run_tests.py
 & D:\NewVowifi\service\tests\sms\run-adapter.ps1
 python D:\NewVowifi\service\tests\engine\run_call_tests.py
 python D:\NewVowifi\service\tests\policy\test_module_control.py
+python D:\NewVowifi\service\tests\policy\test_standalone_module.py
 python D:\NewVowifi\service\tests\engine\test_native_selectors.py
 python D:\NewVowifi\service\tests\engine\test_isolated_log_pool.py
 python D:\NewVowifi\service\tools\verify_artifacts.py

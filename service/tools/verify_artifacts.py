@@ -11,11 +11,18 @@ with zipfile.ZipFile(dist/'NewVoWiFi.apk') as z:
  assert z.testzip() is None
  assert 'AndroidManifest.xml' in z.namelist()
  assert b'Lcom/newvowifi/ims/NewVoWifiImsService;' in z.read('classes.dex')
+ assert b'Lcom/newvowifi/ims/root/SimCredentials;' in z.read('classes.dex')
+ assert b'com.vowifi.sw' not in z.read('classes.dex')
+ assert b'Lcom/vowifi/sw/' not in z.read('classes.dex')
 with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
  assert z.testzip() is None
  assert z.read('system/priv-app/NewVoWiFi/NewVoWiFi.apk')==apk
  assert hashlib.sha256(z.read('bin/vowifi-engine-arm64')).hexdigest()==engine['sha256']
  assert b'id=newvowifi\n' in z.read('module.prop')
+ assert b'com.vowifi.sw' not in z.read('customize.sh')
+ assert b'RootNetworkMain watch' in z.read('service.sh')
+ assert b'/data/adb/vowifi/run/networks.json' not in z.read('bin/vowifi-engine-arm64')
+ assert b'/data/adb/vowifi/run/call.lock' not in z.read('bin/vowifi-engine-arm64')
  for name in ['control.sh','customize.sh','service.sh','uninstall.sh']:
   assert b'\r' not in z.read(name),name+' must use LF line endings'
  for name in z.namelist():
@@ -23,4 +30,4 @@ with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
   assert not name.endswith(('.p12','.key'))
 java=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin/java.exe')
 subprocess.run([str(java),'-jar','D:/Android/Sdk/build-tools/37.0.0/lib/apksigner.jar','verify',str(dist/'NewVoWiFi.apk')],check=True)
-print('PASS APK signature, DEX service, ZIP integrity, matching embedded APK, pinned engine hash, script line endings and package paths.')
+print('PASS APK signature, standalone DEX, ZIP integrity, matching embedded APK, isolated engine paths/hash, scripts and package paths.')

@@ -28,11 +28,15 @@ run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','sign','--ks',key,'--ks-pass'
 run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','verify',OUT/'NewVoWiFi.apk'])
 module=ROOT/'module'
 if module.exists():
+ engine_meta=json.loads((ROOT/'deps/engine.source.json').read_text())
+ engine_path=ROOT/'deps'/engine_meta['artifact']
+ if hashlib.sha256(engine_path.read_bytes()).hexdigest()!=engine_meta['sha256']:
+  raise RuntimeError('Bundled engine does not match pinned isolated artifact')
  with zipfile.ZipFile(OUT/'NewVoWiFi-module.zip','w',zipfile.ZIP_DEFLATED) as z:
   for p in sorted(module.rglob('*')):
    if p.is_file():z.write(p,p.relative_to(module).as_posix())
   z.write(OUT/'NewVoWiFi.apk','system/priv-app/NewVoWiFi/NewVoWiFi.apk')
-  z.write(ROOT/'deps/vowifi-engine-arm64-isolated','bin/vowifi-engine-arm64')
+  z.write(engine_path,'bin/vowifi-engine-arm64')
 hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.suffix in ['.apk','.zip']}
 (OUT/'SHA256.json').write_text(json.dumps(hashes,indent=2)+'\n')
 print(json.dumps(hashes,indent=2))

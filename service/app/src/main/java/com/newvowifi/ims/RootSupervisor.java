@@ -117,8 +117,9 @@ final class RootSupervisor {
   }
   Map<String, Set<String>> vpnOwners() throws Exception {
     JSONObject result = new JSONObject(run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
-        + " /system/bin/app_process /system/bin com.newvowifi.ims.root.RootNetworkMain snapshot"));
-    if (!result.optBoolean("ok")) return Collections.emptyMap();
+        + " /system/bin/app_process /system/bin com.newvowifi.ims.root.RootNetworkMain publish"));
+    if (!result.optBoolean("ok") || !result.optBoolean("registryPublished"))
+      throw new IOException(result.optString("code", "NETWORK_REGISTRY_UNAVAILABLE"));
     Map<String, Set<String>> owners = new LinkedHashMap<>();
     Set<String> seen = new HashSet<>(), ambiguous = new HashSet<>();
     JSONArray nets = result.getJSONArray("networks");

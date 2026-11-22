@@ -3,10 +3,10 @@
   "version": "0.3.48",
   "origin": "user-owned device /data/adb/modules/vowifi_sw/bin/vowifi-engine-arm64",
   "artifact": "vowifi-engine-arm64-isolated",
-  "sha256": "15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d",
+  "sha256": "f53df163c7731ebeba45ebf913e85cace0af2884647359155ed515e137b479b3",
   "upstreamSha256": "11864d79088731cb898518d21694e4d4068eb680e0ae11cc7f5b7f0a06a53be7",
   "patchManifest": "vowifi-engine-arm64-isolated.patch.json",
-  "changes": "Four data bytes isolate the default log pool; network, authentication and code bytes unchanged",
+  "changes": "Sixteen data bytes relocate four default paths (log root, log pool, call admission lock, network snapshot) from /data/adb/vowifi to /data/adb/nvwims; all code, protocol, authentication, country logic and ELF mappings unchanged",
   "bytes": 10964848,
   "sourceAvailability": "Binary dependency; complete engine source not supplied",
   "clientReference": "https://github.com/lilyzhaun/softvowifi-client"

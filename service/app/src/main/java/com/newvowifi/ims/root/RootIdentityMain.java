@@ -28,6 +28,7 @@ import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -608,24 +609,21 @@ public final class RootIdentityMain {
                                .put("epdgFqdn", "")
                                .put("dns", "")
                                .put("smsc", "");
-    // Match the original app's positive-only optional carrierId projection. No old profile,
-    // subscriber phone number, SMSC number or cached IMS identity is copied into this candidate.
+    // No old profile, phone number, SMSC or cached IMS identity enters this candidate.
     if (before.carrierId > 0) template.put("carrierId", before.carrierId);
-    String classpath = installedHelperClasspath();
-    ProcessBuilder command = new ProcessBuilder("/system/bin/app_process", "/system/bin",
-        "com.vowifi.sw.ProvisioningIdentityMain", Integer.toString(subId),
-        Integer.toString(slotId));
-    command.environment().put("CLASSPATH", classpath);
-    String result =
-        run(command, template.toString().getBytes(StandardCharsets.UTF_8), 15000, "HELPER_FAILED");
-    JSONObject config;
+    SimCredentials credentials;
     try {
-      config = new JSONObject(result);
-    } catch (Exception e) {
-      throw new Failure("HELPER_OUTPUT_INVALID");
+      credentials = SimCredentials.read((method, id, attributed) -> binderCall("iphonesubinfo",
+          "com.android.internal.telephony.IPhoneSubInfo", method,
+          attributed ? new Class<?>[] {int.class, String.class, String.class} : new Class<?>[] {int.class},
+          attributed ? new Object[] {id, "root", null} : new Object[] {id}), subId, before.phoneId);
+    } catch (SimCredentials.ReadFailure e) {
+      throw new Failure(e.code);
     }
-    validateConfig(config, before, iface);
-    writeValidatedConfig(context, before, outputPath, config);
+    for (Map.Entry<String, String> field : credentials.fields().entrySet())
+      template.put(field.getKey(), field.getValue());
+    validateConfig(template, before, iface);
+    writeValidatedConfig(context, before, outputPath, template);
     return new JSONObject().put("ok", true).put("code", "PREPARED");
   }
 
@@ -642,7 +640,7 @@ public final class RootIdentityMain {
         || !config.has("dns") || !config.optString("dns").isEmpty()
         || !config.has("smsc") || !config.optString("smsc").isEmpty()
         || (current.carrierId > 0 && config.optInt("carrierId", -1) != current.carrierId))
-      throw new Failure("HELPER_IDENTITY_MISMATCH");
+      throw new Failure("CONFIG_IDENTITY_MISMATCH");
   }
 
   static String homeImsRealm(String homePlmn) {
@@ -700,24 +698,6 @@ public final class RootIdentityMain {
         && iccid.equals(normalizeIccid(resultIccid)) && slot == resultSlot
         && homePlmn.substring(0, 3).equals(resultMcc) && homePlmn.substring(3).equals(resultMnc)
         && asciiDigits(imsi, 15, 15) && imsi.startsWith(homePlmn) && asciiDigits(imei, 15, 15);
-  }
-
-  private static String installedHelperClasspath() throws Exception {
-    String listing = run(new ProcessBuilder("/system/bin/pm", "path", "com.vowifi.sw"), new byte[0],
-        10000, "HELPER_NOT_INSTALLED");
-    List<String> paths = new ArrayList<>();
-    for (String line : listing.split("\\r?\\n")) {
-      if (!line.startsWith("package:"))
-        continue;
-      String path = line.substring(8).trim();
-      if (!path.startsWith("/") || !path.endsWith(".apk") || path.indexOf(':') >= 0
-          || !new File(path).isFile())
-        throw new Failure("HELPER_NOT_INSTALLED");
-      paths.add(path);
-    }
-    if (paths.isEmpty())
-      throw new Failure("HELPER_NOT_INSTALLED");
-    return String.join(":", paths);
   }
 
   /** Fixed subprocess arguments; stderr is drained without logging or mixing into private JSON. */

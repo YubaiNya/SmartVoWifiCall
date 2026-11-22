@@ -11,8 +11,8 @@ The configured selector `iface:tun0` and the selected binding's `Transport` are 
 ## Artifact identity and method
 
 - Baseline: `service/deps/vowifi-engine-arm64`, SHA-256 `11864d79088731cb898518d21694e4d4068eb680e0ae11cc7f5b7f0a06a53be7`.
-- Independent logging variant: `service/deps/vowifi-engine-arm64-isolated`, SHA-256 `15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d`.
-- Both are 10,964,848 bytes. The only changed file offsets are `0x17b3f`, `0x17b40`, `0x17b43`, and `0x17b44`, within the log-pool directory literal. All code and PANI metadata cited here are identical.
+- Independent logging variant used for the reported registration: SHA-256 `15f8be3814736aa33ca4605c4facb787e13e75cd383ab609d3d4f51b33a3d47d`; it changed four bytes in the log-pool literal.
+- The later standalone `service/deps/vowifi-engine-arm64-isolated` candidate is SHA-256 `f53df163c7731ebeba45ebf913e85cace0af2884647359155ed515e137b479b3`. It changes 16 bytes across four directory literals. Both derived variants and the original remain 10,964,848 bytes. All code and PANI metadata cited here are identical; the earlier registration observation is not a device test of the newer candidate. Exact differences are in `vowifi-engine-arm64-isolated.patch.json`.
 - Earlier target-free REA Go metadata evidence: `ev_d212bc450f5880a42bb62de1203cffbf6cb2754ea7eb1a6d35fa1199e10e7099` (Go 1.26.9, Android/arm64). The address-level analysis below uses the existing local pyelftools/Capstone reader. It is not a successful REA native-provider decompilation.
 - Addresses below are ELF virtual addresses, not raw file offsets or absolute live process addresses. An observer would need the verified ELF load bias.
 - No Android engine process, phone operation, network request, call, SMS, or runtime hook was performed by this analysis.

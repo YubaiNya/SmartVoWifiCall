@@ -6,6 +6,34 @@ while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2;done
 pm grant com.newvowifi.ims android.permission.READ_PHONE_STATE >/dev/null 2>&1
 pm grant com.newvowifi.ims android.permission.POST_NOTIFICATIONS >/dev/null 2>&1
 # No RECORD_AUDIO grant and no audio connections in the registration-only workflow.
+network_pid=
+network_start=
+proc_start() {
+ [ -r "/proc/$1/stat" ] || return 1
+ record=$(cat "/proc/$1/stat") || return 1
+ rest=${record##*) }
+ set -- $rest
+ [ "$#" -ge 20 ] || return 1
+ shift 19
+ printf '%s' "$1"
+}
+publisher_running() {
+ [ -n "$network_pid" ] && [ -n "$network_start" ] || return 1
+ [ "$(proc_start "$network_pid" 2>/dev/null)" = "$network_start" ]
+}
+stop_publisher() {
+ if publisher_running; then kill -TERM "$network_pid" 2>/dev/null || :;fi
+}
+trap stop_publisher EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+start_publisher() {
+ if ! publisher_running; then
+  CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootNetworkMain watch >/dev/null 2>&1 &
+  network_pid=$!
+  network_start=$(proc_start "$network_pid" 2>/dev/null)
+ fi
+}
 restore_owned() {
  [ -f "$APK" ] || return 1
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain ims-restore-all >/dev/null 2>&1 || return 1
@@ -27,6 +55,9 @@ while :; do
    exit 0
   fi
  else
+  # The independent producer refreshes every 5 seconds even while lifecycle
+  # operations block. The engine rejects observations older than 15 seconds.
+  start_publisher
   # START_STICKY alone does not cover a crash loop or a stopped foreground service.
   cmd activity start-foreground-service --user 0 -n com.newvowifi.ims/.PolicyService >/dev/null 2>&1
   for p in "$BASE/run/"*.pid; do
@@ -35,5 +66,5 @@ while :; do
    sh "$MODDIR/control.sh" repair "$id" >/dev/null 2>&1 || :
   done
  fi
- sleep 15
+ sleep 5
 done
