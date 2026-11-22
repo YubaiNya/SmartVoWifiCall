@@ -14,9 +14,11 @@ import java.util.Set;
 /** A fresh, immutable inventory. Interface visibility is independent of usability. */
 public final class InterfaceSnapshot {
   public static final String FLCLASH_PACKAGE = "com.follow.clash";
+  public static final String BUILTIN_CLASH_TUN = "wfctun0";
+  public static final String BUILTIN_CLASH_IPV4 = "198.19.0.1";
   public final Map<String, Entry> entries;
   public final List<String> failures;
-  /** Null if FlClash ownership is unknown, absent, or ambiguous. Never a guessed tun name. */
+  /** Prefers built-in Clash wfctun0 when UP with its dedicated IP; otherwise verified FlClash VPN. */
   public final String preferredVpnInterface;
 
   private InterfaceSnapshot(Builder builder) {
@@ -28,6 +30,11 @@ public final class InterfaceSnapshot {
   }
 
   private static String findPreferredVpn(Collection<Entry> entries) {
+    for (Entry e : entries) {
+      if (BUILTIN_CLASH_TUN.equals(e.name) && e.available() && e.voWifiTun()
+          && e.addresses.contains(BUILTIN_CLASH_IPV4))
+        return e.name;
+    }
     List<Entry> candidates = new ArrayList<>();
     for (Entry e : entries) {
       if (e.voWifiTun() && e.transports.contains(4) && e.ownerPackages.contains(FLCLASH_PACKAGE))
@@ -145,6 +152,8 @@ public final class InterfaceSnapshot {
       return !loopback && tunDevice && TunEgress.validName(name);
     }
     public String type() {
+      if (BUILTIN_CLASH_TUN.equals(name) && voWifiTun())
+        return "内置 Clash";
       if (transports.contains(4))
         return "VPN";
       if (loopback)

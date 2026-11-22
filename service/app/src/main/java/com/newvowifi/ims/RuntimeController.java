@@ -3,11 +3,13 @@ import android.content.*;
 import android.net.*;
 import android.telephony.ims.*;
 import android.telephony.ims.stub.*;
+import com.newvowifi.ims.clash.*;
 import com.newvowifi.ims.engine.*;
 import com.newvowifi.ims.network.*;
 import com.newvowifi.ims.policy.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.function.Consumer;
 import org.json.*;
 
 final class RuntimeController {
@@ -32,6 +34,7 @@ final class RuntimeController {
   final Map<Integer, PolicyEngine.AppliedOverride> applied = new LinkedHashMap<>();
   volatile RootSupervisor.Snapshot snapshot;
   volatile InterfaceSnapshot interfaces;
+  volatile ClashState clash = ClashState.EMPTY;
   volatile String status = "等待启动";
   volatile boolean started;
   final Map<Integer, NewMmTelFeature> features = new ConcurrentHashMap<>();
@@ -47,6 +50,113 @@ final class RuntimeController {
   }
   boolean billable() {
     return prefs.getBoolean("billable", false);
+  }
+  boolean clashEnabled() {
+    return prefs.getBoolean("clash_enabled", false);
+  }
+  void setClashEnabled(boolean v) {
+    prefs.edit().putBoolean("clash_enabled", v).commit();
+    kick();
+  }
+  void useBuiltinTunForForeignSims() {
+    RootSupervisor.Snapshot snap = snapshot;
+    if (snap == null) return;
+    SharedPreferences.Editor ed = prefs.edit();
+    for (RootSupervisor.Sim s : snap.sims) {
+      if (PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE)
+        ed.putString("selected." + s.policy.simKey, ClashConfig.TUN_DEVICE);
+    }
+    ed.commit();
+    kick();
+  }
+  void clashFetchSubscription(String url, Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        JSONObject r = root.clashFetchSubscription(url);
+        prefs.edit().putBoolean("clash_enabled", true).commit();
+        try { root.clashRestart(); } catch (Exception ignored) {}
+        refreshClashState();
+        kick();
+        done.accept("订阅已更新（节点 " + r.optInt("proxyCount") + "，provider " + r.optInt("providerCount") + "）");
+      } catch (Exception e) {
+        done.accept("拉取失败：" + safeCode(e));
+      }
+    });
+  }
+  void clashSaveProfile(String yaml, Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        JSONObject r = root.clashSaveProfile(yaml);
+        prefs.edit().putBoolean("clash_enabled", true).commit();
+        try { root.clashRestart(); } catch (Exception ignored) {}
+        refreshClashState();
+        kick();
+        done.accept("配置已导入（节点 " + r.optInt("proxyCount") + "，provider " + r.optInt("providerCount") + "）");
+      } catch (Exception e) {
+        done.accept("导入失败：" + safeCode(e));
+      }
+    });
+  }
+  void clashReloadLocal(Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        JSONObject r = root.clashRebuild();
+        if (clashEnabled()) root.clashRestart();
+        refreshClashState();
+        kick();
+        done.accept("已重载本地配置（节点 " + r.optInt("proxyCount") + "，provider " + r.optInt("providerCount") + "）");
+      } catch (Exception e) {
+        done.accept("重载失败：" + safeCode(e));
+      }
+    });
+  }
+  void clashSelectNode(String node, Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        root.clashSelectNode(node);
+        refreshClashState();
+        done.accept("已切换出口节点：" + node);
+      } catch (Exception e) {
+        done.accept("切换失败：" + safeCode(e));
+      }
+    });
+  }
+  void clashTestDelay(Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        JSONObject r = root.clashTestDelay();
+        JSONObject delays = r.optJSONObject("delays");
+        int okCount = delays == null ? 0 : delays.length();
+        refreshClashState();
+        done.accept("测速完成（可用节点 " + okCount + " 个）");
+      } catch (Exception e) {
+        done.accept("测速失败：" + safeCode(e));
+      }
+    });
+  }
+  void refreshClashState() {
+    try {
+      clash = ClashState.fromJson(root.clashStatus(), "");
+    } catch (Exception e) {
+      clash = clash.withError(safeCode(e));
+    }
+  }
+  private void syncClash(boolean callsActive) {
+    try {
+      ClashState current = ClashState.fromJson(root.clashStatus(), "");
+      if (clashEnabled()) {
+        if (current.hasProfile && (!current.running || !current.tunUp)) {
+          root.clashStart();
+          current = ClashState.fromJson(root.clashStatus(), "");
+        }
+      } else if (current.running && !callsActive) {
+        root.clashStop();
+        current = ClashState.fromJson(root.clashStatus(), "");
+      }
+      clash = current;
+    } catch (Exception e) {
+      clash = clash.withError(safeCode(e));
+    }
   }
   boolean radioReady(Binding binding) {
     return binding != null && Boolean.TRUE.equals(radioOff.get(binding.slot()));
@@ -179,6 +289,7 @@ final class RuntimeController {
       }
       radioOff = Collections.unmodifiableMap(nextRadioOff);
       NewVoWifiImsService.refreshFeatures();
+      syncClash(snapshot.callsActive || bindings.values().stream().anyMatch(b -> b.callActive));
       interfaces =
           new InterfaceInventory(context, () -> root.run(InterfaceParser.ROOT_LISTING_SCRIPT), root.vpnOwners())
               .read();
@@ -428,6 +539,16 @@ final class RuntimeController {
             .put("type",e.type()).put("voWifiTun",e.voWifiTun()).put("owners",new JSONArray(e.ownerPackages)));
       }
       out.put("interfaces", nets);
+      ClashState cs = clash;
+      out.put("clash", new JSONObject()
+          .put("enabled", clashEnabled())
+          .put("hasProfile", cs.hasProfile)
+          .put("running", cs.running)
+          .put("tunUp", cs.tunUp)
+          .put("device", ClashConfig.TUN_DEVICE)
+          .put("currentNode", cs.currentNode)
+          .put("nodeCount", cs.nodes.size())
+          .put("lastError", cs.lastError));
     } catch (Exception ignored) { }
     return out;
   }
@@ -470,6 +591,51 @@ final class RuntimeController {
     }
     void close() {
       engine.close();
+    }
+  }
+  static final class ClashNode {
+    final String name, type;
+    final int delay;
+    ClashNode(String name, String type, int delay) {
+      this.name = name; this.type = type; this.delay = delay;
+    }
+    String label() {
+      StringBuilder sb = new StringBuilder(name);
+      if (!type.isEmpty()) sb.append(" [").append(type).append("]");
+      if (delay > 0) sb.append(" · ").append(delay).append("ms");
+      return sb.toString();
+    }
+  }
+  static final class ClashState {
+    static final ClashState EMPTY = new ClashState(false, false, false, 0, "", "", "", Collections.emptyList(), "");
+    final boolean hasProfile, running, tunUp;
+    final long profileBytes;
+    final String subscriptionUrl, savedNode, currentNode, lastError;
+    final List<ClashNode> nodes;
+    ClashState(boolean hasProfile, boolean running, boolean tunUp, long profileBytes,
+        String subscriptionUrl, String savedNode, String currentNode, List<ClashNode> nodes, String lastError) {
+      this.hasProfile = hasProfile; this.running = running; this.tunUp = tunUp;
+      this.profileBytes = profileBytes; this.subscriptionUrl = subscriptionUrl;
+      this.savedNode = savedNode; this.currentNode = currentNode;
+      this.nodes = Collections.unmodifiableList(nodes); this.lastError = lastError;
+    }
+    ClashState withError(String err) {
+      return new ClashState(hasProfile, running, tunUp, profileBytes, subscriptionUrl, savedNode, currentNode, nodes, err);
+    }
+    static ClashState fromJson(JSONObject j, String err) {
+      List<ClashNode> list = new ArrayList<>();
+      JSONArray arr = j.optJSONArray("nodes");
+      if (arr != null) {
+        for (int i = 0; i < arr.length(); i++) {
+          JSONObject o = arr.optJSONObject(i);
+          if (o != null && !o.optString("name").isEmpty())
+            list.add(new ClashNode(o.optString("name"), o.optString("type", ""), o.optInt("delay", 0)));
+        }
+      }
+      return new ClashState(
+          j.optBoolean("hasProfile"), j.optBoolean("running"), j.optBoolean("tunUp"),
+          j.optLong("profileBytes"), j.optString("subscriptionUrl", ""),
+          j.optString("savedNode", ""), j.optString("currentNode", ""), list, err);
     }
   }
 }

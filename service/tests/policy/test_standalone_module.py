@@ -144,8 +144,9 @@ class ModuleInstallTest(unittest.TestCase):
             self.assertTrue(root.is_relative_to(HERE.resolve()))
             module=root/'module'
             module.mkdir()
-            for name in ['app-install.sh','customize.sh','service.sh','control.sh']:
+            for name in ['app-install.sh','customize.sh','service.sh','control.sh','clash-control.sh']:
                 shutil.copy2(ROOT/'module'/name,module/name)
+            (module/'clash-control.sh').write_text('#!/bin/sh\nprintf \'{"ok":true,"code":"CLASH_STOPPED"}\\n\'\n',encoding='utf8',newline='\n')
             apk=module/'system/priv-app/NewVoWiFi/NewVoWiFi.apk'
             apk.parent.mkdir(parents=True)
             apk.write_bytes(b'new-apk-payload\x00\r\n')
@@ -208,7 +209,7 @@ class ModuleInstallTest(unittest.TestCase):
     def test_boot_signature_failure_starts_nothing(self):
         r=self.run_scenario('boot_signature');self.assertEqual(r['code'],1,r);self.assertEqual(r['starts'],0);self.assertEqual(r['status'],'APP_SIGNATURE_MISMATCH')
     def test_scripts_parse(self):
-        for name in ['app-install.sh','customize.sh','service.sh','control.sh','uninstall.sh']:
+        for name in ['app-install.sh','customize.sh','service.sh','control.sh','clash-control.sh','uninstall.sh']:
             subprocess.run([str(BASH),'-n',str(ROOT/'module'/name)],check=True)
 
 if __name__=='__main__':unittest.main(verbosity=2)

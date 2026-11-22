@@ -1,5 +1,19 @@
 # 版本记录
 
+## v0.3.0-dev — 2026-11-22
+
+应用与模块 versionCode 升为 8。模块内置官方 `MetaCubeX/mihomo v1.19.34`（arm64）内核，通过独立 Linux TUN 接口 **`wfctun0`** 仅全局代理 Wi-Fi Calling 流量，不代理手机其他任何流量，也不开启 Android VPN。
+
+- 内置 `bin/mihomo-arm64`（来源与 SHA-256 见 `service/deps/mihomo.source.json`，GPL-3.0 许可证位于 `module/licenses/MIHOMO-GPL-3.0.txt`）。
+- `ClashConfig` 自动剥离用户订阅中的 `auto-route`、`auto-redirect`、本地代理端口、原 `dns`/`rules`/`proxy-groups`，强制生成 `device: wfctun0`（`198.19.0.1/30`、`auto-route: false`）、仅包含真实代理节点的 `WFC-PROXY` 与单一规则 `MATCH,WFC-PROXY`（永不误走 `DIRECT`），ePDG DNS（`any:53` 劫持）经 `WFC-PROXY` 代理，mihomo 上游出站走系统默认路由。
+- `clash-control.sh` 仅写入针对 `oif wfctun0`（优先级 1050）与 `from 198.19.0.1/32`（优先级 1051）的独立路由表 `209`，不改主路由表、不写 iptables；停止/禁用/卸载模块时完整清理进程与两条规则。
+- `MainActivity` 新增内置 Clash 管理：启用开关、订阅链接拉取、YAML 文件导入、本地 `/data/adb/newvowifi_ims/clash/profile.yaml` 重载、`WFC-PROXY` 节点选择与测速、一键将海外卡切到 `wfctun0`，并保留原有接口下拉框兼容外部 TUN（如 FlClash `tun0`）。
+- 完整保留 0.2.5 的单卡蜂窝协议栈互斥（`enableModemForSlot`）与禁止普通呼叫 CSFB 回退。
+
+本地全量回归与产物校验全部通过（策略/网络 92、注册路由 27、单卡互斥 28、Clash 配置净化 33、SIM 凭据 181、网络快照 27、身份/路径 23、引擎/通话/Feature 195、模块脚本与单包安装 26、原生选择器 290、日志池 5、短信 187）。本轮手机离线，**0.3.0-dev 尚未真机实测**。详见 [内置 Clash 验证记录](service/docs/BUILTIN_CLASH_VALIDATION.md)。
+
+0.2.5 交付物已备份至 `C:\ProjBackup\NewVoWiFi\20261122-204200-before-builtin-clash-0.3.0\` 并核验 SHA-256。
+
 ## v0.2.5-dev — 2026-11-22
 
 应用与模块 versionCode 升为 7。按用户要求实现海外卡 Wi-Fi Calling 与蜂窝二选一互斥，并禁止普通呼叫在 Wi-Fi Calling 不可用时自动回退蜂窝。

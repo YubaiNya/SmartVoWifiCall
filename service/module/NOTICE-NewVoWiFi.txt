@@ -6,4 +6,7 @@ Neither the original SoftVoWiFi application nor its module is required at runtim
 NewVoWiFi reads current SIM credentials and publishes network observations itself.
 The bundled derived engine changes 16 data bytes to isolate four state paths;
 its protocol/authentication code remains identical to the preserved original.
+It also bundles the official MetaCubeX/mihomo Android arm64 binary (GPL-3.0,
+see licenses/MIHOMO-GPL-3.0.txt) solely to proxy Wi-Fi Calling traffic over an
+isolated Linux TUN interface (wfctun0) without starting an Android VPN.
 No SIM configuration, subscriber identifier, or runtime log is packaged here.

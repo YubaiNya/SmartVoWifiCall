@@ -11,6 +11,7 @@ import android.system.Os;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import com.newvowifi.ims.clash.ClashConfig;
 import com.newvowifi.ims.network.InterfaceSnapshot;
 import com.newvowifi.ims.network.TunEgress;
 import com.newvowifi.ims.policy.PolicyEngine;
@@ -744,6 +745,7 @@ public final class RootIdentityMain {
     requireRadioOff(before);
     if (!before.callStateKnown || before.callState != TelephonyManager.CALL_STATE_IDLE)
       throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
+    String dnsTarget = ClashConfig.TUN_DEVICE.equals(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
     JSONObject template = new JSONObject()
                               .put("enabled", true)
                               .put("transport", TunEgress.selector(iface))
@@ -754,7 +756,7 @@ public final class RootIdentityMain {
                                .put("mncLen", before.homePlmn.length() - 3)
                                .put("imsRealm", homeImsRealm(before.homePlmn))
                                .put("epdgFqdn", "")
-                               .put("dns", "")
+                               .put("dns", dnsTarget)
                                .put("smsc", "");
     // No old profile, phone number, SMSC or cached IMS identity enters this candidate.
     if (before.carrierId > 0) template.put("carrierId", before.carrierId);
@@ -776,6 +778,7 @@ public final class RootIdentityMain {
 
   private static void validateConfig(JSONObject config, Identity current, String iface)
       throws Exception {
+    String expectedDns = ClashConfig.TUN_DEVICE.equals(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
     if (!validPreparedIdentity(current.iccid, current.homePlmn, current.slotId,
             config.optString("iccid", ""), config.optString("mcc", ""), config.optString("mnc", ""),
             config.optInt("slot", -1), config.optString("imsi", ""), config.optString("imei", ""))
@@ -784,7 +787,7 @@ public final class RootIdentityMain {
         || config.optInt("mncLen", -1) != current.homePlmn.length() - 3
         || !homeImsRealm(current.homePlmn).equals(config.optString("imsRealm", ""))
         || !config.has("epdgFqdn") || !config.optString("epdgFqdn").isEmpty()
-        || !config.has("dns") || !config.optString("dns").isEmpty()
+        || !config.has("dns") || !expectedDns.equals(config.optString("dns"))
         || !config.has("smsc") || !config.optString("smsc").isEmpty()
         || (current.carrierId > 0 && config.optInt("carrierId", -1) != current.carrierId))
       throw new Failure("CONFIG_IDENTITY_MISMATCH");

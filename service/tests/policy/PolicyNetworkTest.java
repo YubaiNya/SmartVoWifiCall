@@ -164,6 +164,18 @@ public final class PolicyNetworkTest {
         InterfaceParser.ipOutput("IFACE\tproxy42\nTUNFLAGS\tproxy42\t0x1001\nIFACE\ttap0\nTUNFLAGS\ttap0\t0x1002\n", rootTun);
         check(rootTun.build().entries.get("proxy42").voWifiTun(), "root observation supplies real TUN type");
         check(!rootTun.build().entries.get("tap0").voWifiTun(), "TAP is not misclassified as TUN");
+
+        InterfaceSnapshot.Builder builtin = new InterfaceSnapshot.Builder();
+        InterfaceSnapshot.MutableEntry fl = builtin.entry("tun0");
+        fl.up = true; fl.address("198.18.0.1"); fl.tunDevice = true; fl.transports.add(4);
+        fl.ownerPackages.add(InterfaceSnapshot.FLCLASH_PACKAGE);
+        InterfaceSnapshot.MutableEntry wfc = builtin.entry("wfctun0");
+        wfc.up = true; wfc.address("198.19.0.1"); wfc.tunDevice = true;
+        InterfaceSnapshot builtSnap = builtin.build();
+        check("wfctun0".equals(builtSnap.preferredVpnInterface), "built-in Clash wfctun0 preferred over external FlClash when ready");
+        check("内置 Clash".equals(builtSnap.entries.get("wfctun0").type()), "built-in Clash interface clearly labeled");
+        wfc.tunDevice = false;
+        check("tun0".equals(builtin.build().preferredVpnInterface), "spoofed non-TUN wfctun0 falls back to verified FlClash");
         System.out.println("PASS " + checks + " policy/network assertions; no Android, root, calls or SMS executed.");
     }
 }

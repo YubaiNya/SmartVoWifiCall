@@ -18,6 +18,9 @@ final class RootSupervisor {
     return "'" + s.replace("'", "'\\''") + "'";
   }
   String run(String script) throws Exception {
+    return run(script, null);
+  }
+  String run(String script, byte[] stdin) throws Exception {
     Process p = new ProcessBuilder("su", "-c", script).start();
     Collector out = new Collector(p.getInputStream(), true),
               err = new Collector(p.getErrorStream(), false);
@@ -27,8 +30,9 @@ final class RootSupervisor {
     reader.start();
     drain.start();
     try {
+      if (stdin != null && stdin.length > 0) p.getOutputStream().write(stdin);
       p.getOutputStream().close();
-      if (!p.waitFor(25, TimeUnit.SECONDS)) {
+      if (!p.waitFor(30, TimeUnit.SECONDS)) {
         p.destroyForcibly();
         throw new IOException("ROOT_TIMEOUT");
       }
@@ -87,6 +91,21 @@ final class RootSupervisor {
     return run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
         + " /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain " + args);
   }
+  JSONObject clash(String mode, String stdinText) throws Exception {
+    byte[] input = stdinText == null ? null : stdinText.getBytes(StandardCharsets.UTF_8);
+    String result = run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
+        + " /system/bin/app_process /system/bin com.newvowifi.ims.root.RootClashMain " + mode, input);
+    return new JSONObject(result);
+  }
+  JSONObject clashStatus() throws Exception { return clash("status", null); }
+  JSONObject clashStart() throws Exception { return clash("start", null); }
+  JSONObject clashRestart() throws Exception { return clash("restart", null); }
+  JSONObject clashStop() throws Exception { return clash("stop", null); }
+  JSONObject clashRebuild() throws Exception { return clash("rebuild", null); }
+  JSONObject clashFetchSubscription(String url) throws Exception { return clash("fetch-subscription", url); }
+  JSONObject clashSaveProfile(String yaml) throws Exception { return clash("save-profile", yaml); }
+  JSONObject clashSelectNode(String node) throws Exception { return clash("select-node", node); }
+  JSONObject clashTestDelay() throws Exception { return clash("test-delay", null); }
   static final class Sim {
     final PolicyEngine.Sim policy;
     final String iccid;

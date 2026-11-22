@@ -16,6 +16,7 @@ for p in "$BASE/run/"*.pid; do
  id=${p##*/};id=${id%.pid}
  sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || exit 1
 done
+sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || exit 1
 i=0
 until CLASSPATH="$APK" /system/bin/app_process /system/bin com.newvowifi.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1; do
  i=$((i+1));[ "$i" -lt 12 ] || exit 1

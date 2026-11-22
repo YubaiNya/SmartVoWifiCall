@@ -14,7 +14,7 @@ with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
    if not p.is_file() or any(part.startswith('.') or part=='__pycache__' for part in rel.parts):continue
    if p.suffix in {'.class','.pyc'}:continue
    if dirname=='tools' and rel.parts[1]!='engine_iface' and p.name not in public_tools:continue
-   if dirname=='deps' and 'softvowifi-lib' in rel.parts:continue
+   if dirname=='deps' and ('softvowifi-lib' in rel.parts or p.name=='mihomo-android-arm64'):continue
    z.write(p,rel.as_posix())
  for name in ['README.md','.gitignore']:
   z.write(root/name,name)
