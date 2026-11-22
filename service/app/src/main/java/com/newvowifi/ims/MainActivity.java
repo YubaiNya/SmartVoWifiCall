@@ -105,7 +105,9 @@ public final class MainActivity extends Activity {
     updating = false;
     StringBuilder line = new StringBuilder(rt.status);
     for (RuntimeController.Binding b : rt.bindings.values())
-      line.append("\n卡槽 ").append(b.slot() + 1).append(" · ").append(b.ims);
+      line.append("\n卡槽 ").append(b.slot() + 1).append(" · ")
+          .append(b.providerBound ? (b.providerDeferred ? "独立 IMS · 通话结束后回退" : "独立 IMS · " + b.ims)
+              : b.providerDeferred ? "系统 IMS · 等待通话结束" : "系统 IMS · 等待 VoWiFi 注册");
     line.append(rt.billable() ? "\n本服务业务已启用" : "\n验证模式：本服务通话与短信发送关闭");
     status.setText(line);
     if (rt.snapshot == null || rt.interfaces == null)
@@ -157,7 +159,7 @@ public final class MainActivity extends Activity {
       cards.addView(chooser);
     }
     cards.addView(text("系统接口：" + rt.interfaces.entries.size()
-            + " 个。接口失效时，空闲状态下恢复该卡的系统 IMS。",
+            + " 个。接口失效或 VoWiFi 未注册时，在空闲状态下使用系统 IMS。",
         14));
   }
   public void onResume() {

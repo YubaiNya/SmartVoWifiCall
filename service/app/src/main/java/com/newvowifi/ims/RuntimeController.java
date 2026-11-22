@@ -166,6 +166,7 @@ final class RuntimeController {
         status = "通话期间暂缓切换";
         return;
       }
+      boolean candidateStarted = false;
       for (PolicyEngine.Action action : plan.actions) {
         if (action.kind == PolicyEngine.Kind.CLEAR) {
           clear(action);
@@ -198,7 +199,7 @@ final class RuntimeController {
         try {
           root.start(sim, action.interfaceName);
           connect(sim);
-          root.bind(sim);
+          candidateStarted = true;
         } catch (Exception failure) {
           clear(action);
           throw failure;
@@ -217,18 +218,43 @@ final class RuntimeController {
           try {
             root.start(sim, x.interfaceName);
             connect(sim);
-            root.bind(sim);
+            candidateStarted = true;
           } catch (Exception failure) {
             clearSlot(x.slotId);
             throw failure;
           }
         }
       }
+      if (candidateStarted) pollBindings();
+      synchronizeProviders();
+      long selectedProviders = bindings.values().stream().filter(b -> b.providerBound).count();
       status = enabled() ? (bindings.isEmpty() ? "等待所选接口或海外 SIM"
-                                               : "服务运行中；接管 " + bindings.size() + " 张卡")
+          : selectedProviders == 0 ? "使用系统 IMS；等待 VoWiFi 注册或通话结束"
+          : "服务运行中；接管 " + selectedProviders + " 张卡")
                          : "已停用，系统 IMS 已恢复";
     } catch (Exception e) {
       status = "待处理：" + safeCode(e);
+    }
+  }
+  private void synchronizeProviders() throws Exception {
+    boolean frameworkBusy = snapshot == null || snapshot.callsActive;
+    for (Binding b : new ArrayList<>(bindings.values())) {
+      if (bindings.get(b.slot()) != b) continue;
+      RegistrationRouting.Result route = RegistrationRouting.synchronize(
+          b.registered && b.engine.isConnected(), frameworkBusy, b.callActive,
+          new RegistrationRouting.Backend() {
+            public String current() throws Exception { return root.currentOverride(b.slot()); }
+            public void selectIndependent() throws Exception {
+              if (!b.registered || !b.engine.isConnected())
+                throw new IllegalStateException("IMS_NOT_REGISTERED");
+              root.bind(b.sim);
+            }
+            public void restoreSystem() throws Exception {
+              root.restore(b.slot(), prefs.getString("previous." + b.slot(), ""));
+            }
+          });
+      b.providerBound = route.independent;
+      b.providerDeferred = route.deferred;
     }
   }
   static String safeCode(Throwable e) {
@@ -333,7 +359,8 @@ final class RuntimeController {
         Binding b = bindings.get(s.policy.slotId);
         if (b != null) row.put("ims", b.ims).put("registered", b.registered)
             .put("tunnel", b.tunnel).put("callActive", b.callActive)
-            .put("callSnapshotError", b.callSnapshotError);
+            .put("callSnapshotError", b.callSnapshotError)
+            .put("independentProvider", b.providerBound).put("providerSwitchDeferred", b.providerDeferred);
         sims.put(row);
       }
       out.put("sims", sims);
@@ -352,7 +379,7 @@ final class RuntimeController {
     final RootSupervisor.Sim sim;
     final EngineSession engine;
     final ImsRegistrationImplBase registration;
-    volatile boolean registered, reported, callActive;
+    volatile boolean registered, reported, callActive, providerBound, providerDeferred;
     volatile String ims = "CONNECTING";
     volatile String tunnel = "UNKNOWN";
     volatile long callSnapshotError;

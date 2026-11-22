@@ -36,7 +36,7 @@ public final class PolicyEngine {
     }
   }
 
-  /** Only overrides owned by this app, recorded after successful execution/verification. */
+  /** Owned lifecycle intent. Runtime separately gates the MMTEL override on IMS registration. */
   public static final class AppliedOverride {
     public final String simKey, interfaceName;
     public final int subId, slotId;

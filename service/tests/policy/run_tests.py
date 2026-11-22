@@ -16,6 +16,10 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "PolicyNetworkTest"], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
+                str(SOURCE / "policy/RegistrationRouting.java"), str(HERE / "RegistrationRoutingTest.java")], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "RegistrationRoutingTest"], check=True)
+
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "root/SimCredentials.java"), str(HERE / "SimCredentialsTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT),
                 "com.newvowifi.ims.root.SimCredentialsTest"], check=True)
