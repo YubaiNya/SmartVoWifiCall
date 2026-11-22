@@ -42,12 +42,6 @@ final class AndroidTransport implements EngineRpcClient.TransportFactory {
     Process child=new ProcessBuilder("su","-W","-c",command).start();
     Thread errors=new Thread(()->{try(InputStream in=child.getErrorStream()){byte[] b=new byte[1024];while(in.read(b)!=-1){}}catch(IOException ignored){}},"VoWiFi-root-stderr");
     errors.setDaemon(true);errors.start();
-    return new EngineRpcClient.Transport(){
-      public InputStream input(){return child.getInputStream();}
-      public OutputStream output(){return child.getOutputStream();}
-      public void close() throws IOException {
-        try{child.getOutputStream().close();}finally{try{child.getInputStream().close();}finally{child.destroy();}}
-      }
-    };
+    return new ProcessTransport(child);
   }
 }

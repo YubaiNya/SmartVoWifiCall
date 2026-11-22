@@ -18,8 +18,9 @@ public final class SocketRelayMain {
       try(LocalSocket socket=new LocalSocket()){
         socket.connect(new LocalSocketAddress(args[0],LocalSocketAddress.Namespace.FILESYSTEM));
         Thread upload=new Thread(()->{
-          try {copy(System.in,socket.getOutputStream());socket.shutdownOutput();}
-          catch(IOException ignored){try{socket.close();}catch(IOException alsoIgnored){}}
+          try {copy(System.in,socket.getOutputStream());}
+          catch(IOException ignored) { }
+          finally {try{socket.close();}catch(IOException ignored){}}
         },"VoWiFi-relay-upload");
         upload.setDaemon(true);upload.start();
         copy(socket.getInputStream(),new FileOutputStream(FileDescriptor.out));

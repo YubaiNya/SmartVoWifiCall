@@ -180,6 +180,9 @@ final class PcmAudio implements AutoCloseable {
   public void close() {
     if (!closed.compareAndSet(false, true))
       return;
+    // Release the engine attachment even if a local stream/device close blocks.
+    // A pending audioStart still establishes the required start-before-stop order.
+    startFinished.whenComplete((v, e) -> queueStop());
     EngineRpcClient.Transport s;
     AudioRecord r;
     AudioTrack t;
@@ -216,7 +219,5 @@ final class PcmAudio implements AutoCloseable {
       } catch (Exception ignored) {
       }
     }
-    // Do not send stop ahead of a still-pending audioStart.
-    startFinished.whenComplete((v, e) -> queueStop());
   }
 }

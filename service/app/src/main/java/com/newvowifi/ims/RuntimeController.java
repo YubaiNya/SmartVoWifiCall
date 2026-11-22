@@ -284,11 +284,10 @@ final class RuntimeController {
           b.callSnapshotError = 0;
           Map<String, Object> call = b.engine.getState().callSnapshot;
           String stage = String.valueOf(call.get("stage"));
-          b.callActive = !stage.equals("IDLE")
-              || (f != null && f.pendingOutgoing != null && f.pendingOutgoing.owner == b);
           if (f != null) worker.execute(() -> {
             if (bindings.get(b.slot()) == b) f.snapshot(call);
           });
+          else b.callActive = !stage.equals("IDLE");
         } catch (EngineRpcClient.RpcException notReady) {
           // An application-level call readiness error does not invalidate the
           // registration status just read on this still-connected socket.

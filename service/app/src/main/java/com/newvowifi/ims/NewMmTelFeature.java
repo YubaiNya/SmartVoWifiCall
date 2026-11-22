@@ -120,8 +120,11 @@ final class NewMmTelFeature extends MmTelFeature {
       return;
     }
     if (e.name.equals("incomingCall") || e.name.equals("callState") || e.name.equals("callEnded")) {
+      if (e.name.equals("callEnded") || "ENDED".equals(EngineState.text(e.data, "state")))
+        terminalEvent(e.data);
       // An event can be queued before a newer poll result. Resynchronize from the
-      // versioned authoritative snapshot instead of applying a stale state string.
+      // versioned authoritative snapshot. A verified terminal event is consumed
+      // immediately: getCallSnapshot can temporarily return 2006 during teardown.
       RuntimeController.Binding b = binding();
       if (b == null)
         return;
@@ -137,6 +140,22 @@ final class NewMmTelFeature extends MmTelFeature {
         }
       });
     }
+  }
+  private void terminalEvent(Map<String, Object> data) {
+    RuntimeController.Binding b = binding();
+    if (b == null) return;
+    String id = EngineState.text(data, "callId");
+    NewCallSession session = id == null ? null : calls.get(id);
+    if (session == null || session.owner != b) return;
+    EngineState.Version version;
+    try { version = EngineState.Version.parse(data); } catch (Exception ignored) { return; }
+    EngineState.Version latest = b.engine.getState().callVersion;
+    if (latest == null || !version.epoch.equals(latest.epoch) || version.isOlderThan(latest)
+        || (appliedCallVersion != null && (!version.epoch.equals(appliedCallVersion.epoch)
+            || version.isOlderThan(appliedCallVersion)))) return;
+    appliedCallVersion = version;
+    session.ended(false);
+    b.callActive = !calls.isEmpty() || pendingOutgoing != null;
   }
   void snapshot(Map<String, Object> data) {
     RuntimeController.Binding b = binding();
@@ -163,27 +182,41 @@ final class NewMmTelFeature extends MmTelFeature {
     }
     appliedCallVersion = version;
     String id = EngineState.text(data, "callId"), stage = EngineState.text(data, "stage");
+    // The engine exposes one authoritative call. A newer different call or an
+    // IDLE snapshot also retires an older session whose terminal event was lost.
+    if ("IDLE".equals(stage) || (id != null && !id.isEmpty()))
+      for (NewCallSession c : new ArrayList<>(calls.values()))
+        if ("IDLE".equals(stage) || !c.id.equals(id)) c.ended(false);
     if (id != null && "INCOMING".equals(data.get("direction")) && "RINGING".equals(stage))
       incoming(id, EngineState.text(data, "peer"));
     if (id != null && "OUTGOING".equals(data.get("direction")) && !calls.containsKey(id)
         && pendingOutgoing != null)
       pendingOutgoing.bindCallId(id);
-    if ("IDLE".equals(stage)) {
-      for (NewCallSession c : new ArrayList<>(calls.values())) c.ended(false);
-    } else if (id != null && calls.containsKey(id))
+    if (!"IDLE".equals(stage) && id != null && calls.containsKey(id))
       calls.get(id).stage(stage);
+    b.callActive = !"IDLE".equals(stage) || pendingOutgoing != null;
   }
   void incoming(String id, String peer) {
     if (!ready || !rt.billable() || calls.containsKey(id))
       return;
     ImsCallProfile p =
         new ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE);
-    if (peer != null)
-      p.setCallExtra(ImsCallProfile.EXTRA_OI, peer.replaceFirst("^tel:", ""));
+    // The native peer contract already filters Privacy/anonymous/non-numeric
+    // identities. A missing public peer must remain unknown, not be reconstructed.
+    boolean publicNumber = peer != null && peer.matches("\\+?[0-9]{1,20}");
+    p.setCallExtra(ImsCallProfile.EXTRA_OI, publicNumber ? peer : "");
+    p.setCallExtraInt(ImsCallProfile.EXTRA_OIR, publicNumber
+        ? ImsCallProfile.OIR_PRESENTATION_NOT_RESTRICTED : ImsCallProfile.OIR_PRESENTATION_UNKNOWN);
     NewCallSession c = new NewCallSession(this, p);
     c.id = id;
     calls.put(id, c);
     c.stage("RINGING");
-    notifyIncomingCall(c, new Bundle());
+    try {
+      ImsCallSessionListener listener = notifyIncomingCall(c, id, new Bundle());
+      if (listener != null) c.setListener(listener);
+      else c.reject(0);
+    } catch (RuntimeException error) {
+      c.reject(0);
+    }
   }
 }

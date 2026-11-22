@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.2.0-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.2.1-dev**。模块内包含 APK、引擎、SIM 配置生成与实时网络快照，无需安装或运行 SoftVoWiFi 应用及模块。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.2.1 修复通话终结事件遗漏、共享通话线程被音频关闭阻塞、旧会话残留和来电号码展示状态缺失。旧版在本地测试中复现，修正后通过；手机离线，尚未安装复测。详见 [通话修复记录](docs/CALL_FIX_VALIDATION.md)。
 
 0.1.0-dev 曾在 Xiaomi 15 / Android 17 实测 CTExcel SIP 200 和系统 `REGISTERED / WLAN / READY`。0.2.0-dev 移除了外部运行依赖并完成本地检查；本轮手机离线，**尚未验证新版本安装、独立注册和重启恢复**。两个版本的证据分开记录，见 [0.2 独立版验证](docs/STANDALONE_VALIDATION.md) 与 [0.1 真机记录](docs/VALIDATION.md)。
 
@@ -48,6 +50,7 @@ python D:\NewVowifi\service\tests\policy\run_tests.py
 & D:\NewVowifi\service\tests\sms\run.ps1
 & D:\NewVowifi\service\tests\sms\run-adapter.ps1
 python D:\NewVowifi\service\tests\engine\run_call_tests.py
+python D:\NewVowifi\service\tests\engine\run_feature_tests.py
 python D:\NewVowifi\service\tests\policy\test_module_control.py
 python D:\NewVowifi\service\tests\policy\test_standalone_module.py
 python D:\NewVowifi\service\tests\engine\test_native_selectors.py

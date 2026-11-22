@@ -1,5 +1,19 @@
 # 版本记录
 
+## v0.2.1-dev — 2026-11-22
+
+应用与模块 versionCode 升为 3。用户反馈短信正常，但接听并结束一次电话后两张卡均无法呼出，来电显示未知号码；这是用户实测报告，本轮没有取得对应手机日志。
+
+- 精确消费有版本的 `incomingCall.state=ENDED` 和 `callEnded`，后续快照报错也能通知 Android 结束匹配会话；拒绝旧 epoch、旧 revision 与其他 callId 的事件。
+- 将音频资源关闭移出共享通话线程；audioStop 不再排在可能阻塞的本地关闭之后，仍保持 audioStart 先于 audioStop。
+- root 中继先取消子进程再关闭缓冲管道，stdin EOF 时关闭整个 socket，避免半关闭残留。
+- 新权威快照可清理已不属于当前通话的旧会话。
+- 公开号码设置 OI 和明确的 OIR；缺失、匿名号码维持未知。使用 Android 17 返回 listener 的来电通知接口，显式接回框架回调。
+
+新增 38 项真实 feature/session/audio 代码集成替身检查和 12 项 root 中继关闭检查通过。旧标签 `v0.2.0-dev` 在号码展示、终止事件、阻塞音频关闭、旧会话清理四组场景中均复现失败，修正后通过；本轮共执行 522 项 Java/协议模拟检查。手机 ADB 及无线 ADB 均不可用，新包未安装、未实际拨号或发送短信，不能声称手机症状已消除。详见 [修复验证](service/docs/CALL_FIX_VALIDATION.md)。
+
+此前 0.2 安装包已备份并核验至 `C:\ProjBackup\NewVoWiFi\20261122-134529-before-call-cleanup-0.2.1\`。
+
 ## v0.2.0-dev — 2026-11-22
 
 独立模块版本，应用与模块 versionCode 升为 2。

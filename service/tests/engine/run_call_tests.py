@@ -32,7 +32,8 @@ with tempfile.TemporaryDirectory(prefix='call-host-build-', dir=HERE) as build:
         p.write_text(source, encoding='utf-8')
         generated.append(p)
     app = ROOT / 'app/src/main/java/com/newvowifi/ims'
-    sources = list((app / 'engine').glob('*.java')) + [app / 'NewCallSession.java', app / 'PcmAudio.java',
-                HERE / 'EngineContractTest.java', HERE / 'CallIntegrationTest.java'] + generated
+    sources = list((app / 'engine').glob('*.java')) + [app / 'NewCallSession.java', app / 'PcmAudio.java', app / 'ProcessTransport.java',
+                HERE / 'EngineContractTest.java', HERE / 'CallIntegrationTest.java', HERE / 'ProcessTransportTest.java'] + generated
     subprocess.run([str(JAVA/'javac.exe'),'--release','11','-encoding','UTF-8','-d',str(build),*map(str,sources)],check=True)
     subprocess.run([str(JAVA/'java.exe'),'-ea','-cp',str(build),'com.newvowifi.ims.CallIntegrationTest'],check=True,timeout=40)
+    subprocess.run([str(JAVA/'java.exe'),'-ea','-cp',str(build),'com.newvowifi.ims.ProcessTransportTest'],check=True,timeout=10)

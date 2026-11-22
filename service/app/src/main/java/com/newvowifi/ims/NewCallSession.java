@@ -327,16 +327,18 @@ final class NewCallSession extends ImsCallSessionImplBase {
     ended = true;
     state = State.TERMINATED;
     terminalReason = RuntimeController.reason(reason);
-    if (audio != null) {
-      audio.close();
-      audio = null;
-    }
+    PcmAudio closingAudio = audio;
+    audio = null;
     if (!id.isEmpty())
       feature.calls.remove(id, this);
     if (feature.pendingOutgoing == this)
       feature.pendingOutgoing = null;
-    // A local failure is not proof that the remote dialog ended. RuntimeController clears
-    // callActive only after a fresh engine snapshot, keeping routing stable during cleanup.
+    // A local failure is not proof that the remote dialog ended. The feature clears
+    // callActive from a versioned engine snapshot/terminal event, not this local close.
+    // Pipe close / AudioRecord.stop can wait for an I/O thread. Never hold the
+    // shared call-state worker (or the framework's terminal callback) behind it.
+    if (closingAudio != null)
+      feature.rt.io.execute(closingAudio::close);
     flushCallbacks();
   }
   private void flushCallbacks() {
