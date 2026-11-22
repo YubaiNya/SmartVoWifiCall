@@ -170,6 +170,7 @@ public final class ClashConfig {
     out.append("  enable: true\n");
     out.append("  listen: 127.0.0.1:1053\n");
     out.append("  enhanced-mode: redir-host\n");
+    out.append("  fake-ip-range: 198.19.0.1/16\n");
     out.append("  respect-rules: false\n");
     out.append("  default-nameserver:\n");
     out.append("    - 223.5.5.5\n");

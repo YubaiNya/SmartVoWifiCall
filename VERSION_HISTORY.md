@@ -10,7 +10,7 @@
 - `MainActivity` 新增内置 Clash 管理：启用开关、订阅链接拉取、YAML 文件导入、本地 `/data/adb/newvowifi_ims/clash/profile.yaml` 重载、`WFC-PROXY` 节点选择与测速、一键将海外卡切到 `wfctun0`，并保留原有接口下拉框兼容外部 TUN（如 FlClash `tun0`）。
 - 完整保留 0.2.5 的单卡蜂窝协议栈互斥（`enableModemForSlot`）与禁止普通呼叫 CSFB 回退。
 
-本地全量回归与产物校验全部通过（策略/网络 92、注册路由 27、单卡互斥 28、Clash 配置净化 33、SIM 凭据 181、网络快照 27、身份/路径 23、引擎/通话/Feature 195、模块脚本与单包安装 26、原生选择器 290、日志池 5、短信 187）。本轮手机离线，**0.3.0-dev 尚未真机实测**。详见 [内置 Clash 验证记录](service/docs/BUILTIN_CLASH_VALIDATION.md)。
+本地全量回归与产物校验全部通过（策略/网络 92、注册路由 27、单卡互斥 28、Clash 配置净化 34、SIM 凭据 181、网络快照 27、身份/路径 23、引擎/通话/Feature 195、模块脚本与单包安装 26、原生选择器 290、日志池 5、短信 187）。Xiaomi 15 / Android 17 真机已完成 `ksud` 刷入自动覆盖升级、`mihomo-arm64 v1.19.34` 启动、`wfctun0`（`0x1001` / `198.19.0.1/30`）就绪、仅新增 `1050`/`1051` 两条策略路由（表 `209`）、零 Android VPN、仅回环端口监听（`127.0.0.1:1053` 与 `19090`）、`WFC-PROXY` 节点切换、`vowifi-engine-arm64 config-verify --strict` 校验 `iface:wfctun0` + `dns: 1.1.1.1` 通过、停用完整清理与 App 新 UI 渲染验证（实测期间补充 `dns.fake-ip-range: 198.19.0.1/16` 锚定 `wfctun0` 网段）。尚待填入真实海外订阅完成 `wfctun0` 端到端 SIP 注册与冷重启验证；未拨号或发短信。详见 [内置 Clash 验证记录](service/docs/BUILTIN_CLASH_VALIDATION.md)。
 
 0.2.5 交付物已备份至 `C:\ProjBackup\NewVoWiFi\20261122-204200-before-builtin-clash-0.3.0\` 并核验 SHA-256。
 

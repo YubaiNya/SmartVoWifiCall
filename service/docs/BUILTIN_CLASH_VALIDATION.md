@@ -24,7 +24,7 @@
      - `tun`: `device: wfctun0`、`inet4-address: [198.19.0.1/30]`、`stack: gvisor`、`auto-route: false`、`auto-redirect: false`、`auto-detect-interface: false`、`dns-hijack: [any:53]`（不创建系统 VPN、不改主路由表、不写 iptables）。
      - `proxy-groups`: 仅生成 `WFC-PROXY`（`type: select`），汇总用户所有真实节点与 `proxy-providers`，严格剔除 `DIRECT` / `REJECT` / `GLOBAL` 等保留目标，防止误走直连；若配置中无任何有效代理节点/provider，直接以 `CLASH_NO_PROXIES` 拒绝启动。
      - `rules`: 仅 `MATCH,WFC-PROXY`（进入 `wfctun0` 的全部流量全局走所选代理节点）。
-     - `dns`: `enhanced-mode: redir-host`、`proxy-server-nameserver: [223.5.5.5, 119.29.29.29]`（上游代理域名走系统直连解析），`nameserver: [https://1.1.1.1/dns-query#WFC-PROXY, tcp://8.8.8.8:53#WFC-PROXY]`（ePDG 域名解析走 `WFC-PROXY` 代理）。
+     - `dns`: `enhanced-mode: redir-host`、`fake-ip-range: 198.19.0.1/16`（用于锚定 mihomo v1.19 顶层 `tun` 的 `wfctun0` 网段为 `198.19.0.1/30`，避免与外部 `198.18.0.1/30` 冲突；不启用 fake-ip 响应）、`proxy-server-nameserver: [223.5.5.5, 119.29.29.29]`（上游代理域名走系统直连解析），`nameserver: [https://1.1.1.1/dns-query#WFC-PROXY, tcp://8.8.8.8:53#WFC-PROXY]`（ePDG 域名解析走 `WFC-PROXY` 代理）。
 
 3. **精准定向策略路由（`clash-control.sh`）**
    - 仅在 `wfctun0` 就绪后写入独立路由表 `209` 与两条精确 `ip rule`：
@@ -45,11 +45,22 @@
 - `tests/policy/test_clash_control.py`：真实 `clash-control.sh` 路由函数与启动守卫验证通过（确认仅写入 `table 209` 与 `pref 1050/1051`，零 `main` 表与零 `iptables` 操作，停止时完整清理）。
 - `tests/policy/test_module_control.py`（4 组）、`tests/policy/test_standalone_module.py`（21 场景）、`tests/engine/run_tests.py`（93）、`run_call_tests.py`（51）、`run_feature_tests.py`（51）、`test_native_selectors.py`（290）、`test_isolated_log_pool.py`（5）、短信测试（187）及 `tools/verify_artifacts.py` 全部通过。
 
-## 待真机验证的边界
+## 真机验证结果（Xiaomi 15 / Android 17，无拨号、无短信）
 
-- 本轮手机未通过 ADB 连接，**0.3.0-dev 尚未在真机上安装实测**。
-- 连接手机并刷入 `NewVoWiFi-module.zip` 后，需实测验证：
-  1. `mihomo-arm64` 在 Android 17 上正常启动并创建 `wfctun0`（`198.19.0.1/30`），状态栏不出现系统 VPN 钥匙图标；
-  2. `ip rule show` 仅增加 `1050` / `1051` 两条 `wfctun0` 规则，手机其他应用出口 IP 与直连访问不受影响；
-  3. 填入订阅或导入 YAML 并选定海外节点后，`vowifi-engine-arm64` 通过 `iface:wfctun0` 完成 `config-verify --strict`、ePDG DNS 代理、IKEv2 与 SIP REGISTER（`REGISTERED / WLAN / READY`）；
-  4. 停用内置 Clash 或卸载模块时，`mihomo-arm64` 退出且 `1050` / `1051` / `table 209` 完整清除。
+- `ksud module install` 刷入最终 `0.3.0-dev` 模块包，自动完成随包 APK 覆盖安装（`versionCode=8`、`versionName=0.3.0-dev`），输出 `- NewVoWiFi APK installed/verified; existing configuration retained.`。
+- 实机运行 `/data/adb/modules/newvowifi/bin/mihomo-arm64 -v` 返回 `Mihomo Meta v1.19.34 android arm64 ... Use tags: with_gvisor`。
+- 真机实测发现 mihomo v1.19 顶层 `tun:` 从 `dns.fake-ip-range` 推导 TUN 网段；补充 `fake-ip-range: 198.19.0.1/16` 后重新打包实测通过：
+  - `RootClashMain start` 返回 `{"ok":true,"code":"CLASH_READY","device":"wfctun0"}`。
+  - `/sys/class/net/wfctun0/tun_flags` 为 `0x1001`（真实 `IFF_TUN`），地址为 `198.19.0.1/30`（`UP`）。
+  - `ip route show table 209` 仅含 `default dev wfctun0 scope link`；`ip rule show` 仅新增 `1050: from all oif wfctun0 lookup 209` 与 `1051: from 198.19.0.1 lookup 209`，`main` 路由表无默认路由变更。
+  - `RootNetworkMain snapshot` 确认全程**零 Android VPN**（`vpn: false`）。
+  - `ss -lntup | grep mihomo` 确认仅监听回环 `127.0.0.1:1053`（DNS）与 `127.0.0.1:19090`（带密钥控制器），零外部代理端口开放。
+  - `RootClashMain status` 与 `select-node` 实测正常读取 `WFC-PROXY` 节点列表并切换持久化至 `Test-Node-B`。
+  - `vowifi-engine-arm64 config-verify --strict` 对 `transport: "iface:wfctun0"` 与 `dns: "1.1.1.1"` 返回 `{"ok":true,"code":"IDENTITY_MATCH"}`。
+  - `RootClashMain stop` 完整停止进程并清除 `1050` / `1051` 规则、路由表 `209` 与 `wfctun0` 设备；临时合成测试配置已删除。
+  - `MainActivity` 实机 UI 检查确认内置 Clash 开关、订阅输入框、拉取/导入/重载按钮、节点下拉框、测速与一键切到 `wfctun0` 按钮及原有接口下拉框均正常渲染。
+
+## 待用户填入真实订阅后验证的边界
+
+- 上述实机验证使用本地合成测试节点完成内核启动、零系统 VPN、`wfctun0` 策略路由、节点切换、引擎严格校验与停用清理；尚未填入真实可用海外代理订阅进行真实 ePDG DNS 解析 + IKEv2 + SIP REGISTER 端到端注册与对比测试手机其他应用出口 IP。
+- 尚未对 `0.3.0-dev` 执行冷重启与真实卸载闭环（模块更新已通过 `ksud` 写入 `/data/adb/modules_update/newvowifi`）。未拨号或发短信。

@@ -73,6 +73,7 @@ public final class ClashConfigTest {
     check(!y.contains("auto-redirect: true") && y.contains("  auto-redirect: false\n"), "auto-redirect forced false");
     check(!y.contains("auto-detect-interface: true") && y.contains("  auto-detect-interface: false\n"), "auto-detect-interface forced false");
     check(!y.contains("enhanced-mode: fake-ip") && y.contains("  enhanced-mode: redir-host\n"), "redir-host enforced");
+    check(y.contains("  fake-ip-range: 198.19.0.1/16\n"), "wfctun0 subnet anchored to 198.19.0.1");
     check(!y.contains("GEOIP,CN,DIRECT"), "user rules stripped");
     check(y.contains("  device: wfctun0\n"), "wfctun0 device enforced");
     check(y.contains("    - 198.19.0.1/30\n"), "isolated 198.19.0.1/30 CIDR enforced");
