@@ -1,4 +1,7 @@
 build/
+app/build/
+.gradle/
+local.properties
 local-signing.p12
 device-private/
 deps/android-system.jar

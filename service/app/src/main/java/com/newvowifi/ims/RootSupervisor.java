@@ -106,6 +106,14 @@ final class RootSupervisor {
   JSONObject clashSaveProfile(String yaml) throws Exception { return clash("save-profile", yaml); }
   JSONObject clashSelectNode(String node) throws Exception { return clash("select-node", node); }
   JSONObject clashTestDelay() throws Exception { return clash("test-delay", null); }
+  JSONObject clashSetController(boolean externalLan, int port) throws Exception {
+    return clash("set-controller",
+        new JSONObject().put("externalLan", externalLan).put("port", port).toString());
+  }
+  JSONObject clashRotateSecret() throws Exception { return clash("rotate-secret", null); }
+  JSONObject clashConnections() throws Exception { return clash("connections", null); }
+  JSONObject clashCloseConnection(String id) throws Exception { return clash("close-connection", id); }
+  JSONObject clashCloseAllConnections() throws Exception { return clash("close-all-connections", null); }
   static final class Sim {
     final PolicyEngine.Sim policy;
     final String iccid;

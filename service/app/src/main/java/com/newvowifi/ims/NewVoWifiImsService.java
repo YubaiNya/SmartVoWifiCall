@@ -60,8 +60,7 @@ public final class NewVoWifiImsService extends ImsService {
     return rt().registration(slot);
   }
   public ImsRegistrationImplBase getRegistrationForSubscription(int slot, int sub) {
-    return rt().matchesSubscription(slot, sub) ? getRegistration(slot)
-                                               : new ImsRegistrationImplBase(rt().binderExecutor);
+    return rt().registration(slot);
   }
   public ImsConfigImplBase getConfig(int slot) {
     return new ImsConfigImplBase(rt().binderExecutor);

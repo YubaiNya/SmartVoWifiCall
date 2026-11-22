@@ -1,5 +1,23 @@
 # 版本记录
 
+## v0.4.0-dev — 2026-11-22
+
+应用与模块 versionCode 升为 11。采用 **Apple Design** 视觉令牌 + **Miuix (`top.yukonga.miuix.kmp:miuix-*:0.9.4`)** + **Kyant AndroidLiquidGlass (`io.github.kyant0:backdrop-android:2.0.1`)** 重新设计整个多页面 UI，移植 SukiSU-Ultra / Kyant `LiquidBottomTabs` 三层液态玻璃浮动底栏与 `DampedDragAnimation` 物理弹簧阻尼滑动（按压放大 `78/56`、实时 `lens` 折射与色差、交互高光与速度形变）；内置 Clash 新增 **外部控制器（External Controller）** 局域网/本机切换与 **实时连接监控/管理（Live Connections）**；新增 **`FallbackPolicy`** 自动蜂窝回退与有序 IMS 注销机制，并移除状态栏常驻通知。
+
+- **多页面 Apple Design + Miuix + 液态玻璃底栏（[AppleGlassTheme.kt](service/app/src/main/java/com/newvowifi/ims/AppleGlassTheme.kt)、[LiquidGlassBottomBar.kt](service/app/src/main/java/com/newvowifi/ims/LiquidGlassBottomBar.kt)、[AppScreens.kt](service/app/src/main/java/com/newvowifi/ims/AppScreens.kt)、[MainActivity.kt](service/app/src/main/java/com/newvowifi/ims/MainActivity.kt)）**：
+  - 拆分为 **「概览」**（IMS/ePDG 状态看板、总开关、计费开关、双卡槽与出口选择器）、**「代理」**（内置 Mihomo 内核开关、订阅拉取、YAML 导入、本地重载、42 节点延迟测速与卡片切换）、**「连接」**（1.5 秒实时观测 `wfctun0` 活跃连接、累计上下行流量、UDP/TCP 与关键字过滤、单条/全部连接断开、External Controller 本机/局域网模式切换、密钥重置与 MetaCubeXD/Yacd/Zashboard 一键调试地址复制）、**「网络」**（内核全部网络接口与 `IFF_TUN` 资格审查）四个页面。
+  - 底栏严格对齐 Kyant / SukiSU-Ultra 的 `LiquidBottomTabs` + `DampedDragAnimation` + `InteractiveHighlight` 三层结构：可见底栏折射页面背景、隐藏着色捕获层（按压放大 `1.2x`）提供蓝色折射源、滑块胶囊按压放大 `78/56` 并动态淡入 `lens` 折射、色散、高光、内外阴影及速度拉伸形变。
+- **内置 Clash 外部控制与实时连接调试（[ClashConfig.java](service/app/src/main/java/com/newvowifi/ims/clash/ClashConfig.java)、[RootClashMain.java](service/app/src/main/java/com/newvowifi/ims/root/RootClashMain.java)）**：
+  - 支持 `externalControllerLan`（`127.0.0.1:<port>` 与 `0.0.0.0:<port>` + `external-controller-cors`）动态切换、端口配置与密钥轮换，持久化于 `/data/adb/newvowifi_ims/clash/controller.json`，同时保持所有代理端口为 `0`、`allow-lan: false`、`auto-route: false` 以及强制 `secret`；`dns` 新增 `ipv6: false` 避免冷启动向代理上游重复发起 `AAAA` 查询。
+  - 新增 `connections`、`close-connection`、`close-all-connections` 命令，直接对接 Mihomo `/connections` REST API。
+- **接口失效/非 TUN 自动蜂窝回退与状态栏 VoWiFi 图标即时清理（[FallbackPolicy.java](service/app/src/main/java/com/newvowifi/ims/policy/FallbackPolicy.java)、[RuntimeController.java](service/app/src/main/java/com/newvowifi/ims/RuntimeController.java)、[NewVoWifiImsService.java](service/app/src/main/java/com/newvowifi/ims/NewVoWifiImsService.java)）**：
+  - 新增纯策略 `FallbackPolicy`（44 项单测断言）：当所选接口不是 TUN（如切换到 `dummy0`）、未选接口、所选 TUN 超过宽限期不可用或 IMS 注册超过 120 秒未就绪时，自动释放目标卡蜂窝射频（`releaseRadios`）并恢复系统 IMS 服务（指数退避 5→10→20→30 分钟自动重试，用户切换接口或开关时立即重置）。
+  - 统一每卡槽唯一的 `ImsRegistrationImplBase` 实例，并在解绑系统 IMS 服务前严格先执行 `setVoiceServiceOverride(false)`、`MmTelFeature.registrationChanged(false)`（清空 `VOICE/SMS` 能力）与 `onDeregistered`，彻底消除切换到非 TUN 接口后状态栏仍残留 VoWiFi 图标、电话无法回退蜂窝呼出的问题。
+- **移除状态栏常驻通知（[PolicyService.java](service/app/src/main/java/com/newvowifi/ims/PolicyService.java)）**：
+  - `PolicyService` 启动满足前台服务契约后立即调用 `stopForeground(STOP_FOREGROUND_REMOVE)` 并取消通知（`IMPORTANCE_MIN` 无角标通道），状态栏与通知栏零常驻通知（`dumpsys notification` 验证为 `0`）。
+
+0.3.2-dev 交付物已备份至 `C:\ProjBackup\NewVoWiFi\20261122-223544-before-liquid-glass-ui-0.4.0\`。
+
 ## v0.3.2-dev — 2026-11-22
 
 应用与模块 versionCode 升为 10。修复海外卡关闭蜂窝协议栈（`enableModemForSlot(slot, false)`）且 VoWiFi 已注册（`REGISTERED / WLAN`）时，拨号仍被 Android `TelephonyConnectionService` 拦截并提示“移动网络不可用。需连接至无线网络才能拨打电话”的问题，同时修复小米 `ImsServiceController` 在应用强停/升级后不重连 `NewMmTelFeature` 的问题。

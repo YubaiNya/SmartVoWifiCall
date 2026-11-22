@@ -97,9 +97,23 @@
   - `alreadyBound && needsFeature` 时先 `restore` 再 `bind`，解决强停/升级后 `NewMmTelFeature` 不挂载问题。
   - Xiaomi 15 实测：`featureAttached=true`、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=2, featureState=2`、`voiceServiceOverride=true`、`dumpsys telephony.registry` 显示卡槽 1 `mVoiceRegState=0(IN_SERVICE), mDataRegState=1(OUT_OF_SERVICE)`、`Phone-1: isImsRegistered=true, isWifiCallingEnabled=true`，卡槽 0 中国移动 LTE 不受影响。未主动拨号或发短信，留待用户实测。
 
+## 0.4.0-dev 液态玻璃四页面 UI、外部控制/实时连接、自动蜂窝回退与移除常驻通知验证（2026-11-22）
+
+1. **多页面 Apple Design + Miuix + SukiSU-Ultra 同源液态玻璃底栏**：
+   - 升级构建链路至 Gradle `9.4.1` + AGP `9.1.0` + Kotlin Compose `2.4.20`（`compileSdk=37`），集成 `top.yukonga.miuix.kmp:miuix-{ui,preference,icons,blur}-android:0.9.4` 与 `io.github.kyant0:backdrop-android:2.0.1`。
+   - 真机 Xiaomi 15（`c4e7fca`）实测渲染「概览」「代理」「连接」「网络」四页面，移植 Kyant / SukiSU-Ultra `LiquidBottomTabs` + `DampedDragAnimation` + `InteractiveHighlight` 三层底栏（按压滑块放大 `78/56`、隐藏着色层放大 `1.2x`、实时 `lens` 折射与色散、高光及速度拉伸形变）。
+2. **External Controller 与实时连接观测**：
+   - `ClashConfigTest` 扩展至 43 项断言，验证 `externalControllerLan=true/false` 下 `0.0.0.0:<port>` + CORS、`127.0.0.1:<port>`、强制 `secret`、`dns.ipv6: false` 与零开放代理端口。
+   - 真机 `RootClashMain connections` 与 App「连接」页实时观测到 `wfctun0`（`198.19.0.1`）至 `wlan.three.com.hk:500/4500` 的 UDP IKEv2/IPsec 会话及 `WFC-PROXY -> 香港WiFicall（家庭） X1.5` 链路与上下行字节统计。
+3. **接口切换/失效时的蜂窝回退与状态栏 VoWiFi 图标清理（`FallbackPolicy`）**：
+   - 新增 `FallbackPolicyTest`（44 项断言）通过。
+   - 真机验证：当卡槽 1 出口切换为非 TUN 接口 `dummy0` 时，`PolicyService` 立即先清空 `MmTelCapabilities` 并发送 `onDeregistered`，再解绑独立 IMS 并释放蜂窝射频（`status="VoWiFi 暂不可用（所选接口不是 TUN）；已回退蜂窝"`、`radioOff=false`、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=1, featureState=2` 回退至蜂窝）；切回 `wfctun0` 后自动重新关闭单卡蜂窝并恢复 `REGISTERED / WLAN / READY`（`registrationState=2, transportType=2, featureState=2`、`voiceServiceOverride=true`）。
+4. **移除常驻通知**：
+   - `PolicyService` 启动后立即执行 `stopForeground(STOP_FOREGROUND_REMOVE)` 并取消通知；真机 `dumpsys notification | grep -c 'pkg=com.newvowifi.ims'` 返回 `0`。
+
 ## 仍存在的验证边界
 
-- 尚未对 `0.3.2-dev` 执行整机冷重启与真实卸载闭环；未由代理执行真实拨号或发短信。
+- 尚未对 `0.4.0-dev` 执行整机冷重启与真实卸载闭环；未由代理执行真实拨号或发短信。
 
 ## 历史记录：0.3.0-dev 首次验证边界（已由 0.3.1-dev 解决）
 

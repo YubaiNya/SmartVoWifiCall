@@ -10,21 +10,29 @@ public final class PolicyService extends Service {
   }
   private ConnectivityManager.NetworkCallback network;
   private SubscriptionManager.OnSubscriptionsChangedListener subscriptions;
+  private void dismissForegroundNotification() {
+    try {
+      NotificationManager nm = getSystemService(NotificationManager.class);
+      NotificationChannel ch =
+          new NotificationChannel("service", "VoWiFi 后台服务", NotificationManager.IMPORTANCE_MIN);
+      ch.setShowBadge(false);
+      ch.setSound(null, null);
+      ch.enableVibration(false);
+      nm.createNotificationChannel(ch);
+      startForeground(1,
+          new Notification.Builder(this, "service")
+              .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+              .build());
+      stopForeground(STOP_FOREGROUND_REMOVE);
+      nm.cancel(1);
+      nm.cancelAll();
+    } catch (Exception ignored) {
+    }
+  }
   @Override
   public void onCreate() {
     super.onCreate();
-    NotificationManager nm = getSystemService(NotificationManager.class);
-    nm.createNotificationChannel(
-        new NotificationChannel("service", "VoWiFi 服务", NotificationManager.IMPORTANCE_LOW));
-    PendingIntent open = PendingIntent.getActivity(
-        this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
-    startForeground(1,
-        new Notification.Builder(this, "service")
-            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
-            .setContentTitle("NewVoWiFi")
-            .setContentText("海外卡 IMS 服务 · 接口与注册状态")
-            .setContentIntent(open)
-            .build());
+    dismissForegroundNotification();
     RuntimeController rt = RuntimeController.get(this);
     rt.start();
     network = new ConnectivityManager.NetworkCallback() {
@@ -52,6 +60,7 @@ public final class PolicyService extends Service {
     }
   }
   public int onStartCommand(Intent i, int flags, int id) {
+    dismissForegroundNotification();
     RuntimeController.get(this).kick();
     return START_STICKY;
   }

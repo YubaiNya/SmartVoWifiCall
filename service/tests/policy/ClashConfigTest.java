@@ -119,6 +119,25 @@ public final class ClashConfigTest {
       check(true, "weak controller secret rejected");
     }
 
+    // External controller LAN mode for debugging (e.g., MetaCubeXD / Zashboard):
+    // must keep secret, port:0, allow-lan:false, auto-route:false, and add CORS.
+    ClashConfig.Built lan = ClashConfig.buildRuntimeConfig(sample, secret, true, 19095);
+    check(lan.yaml.contains("external-controller: 0.0.0.0:19095\n"), "LAN controller bind applied");
+    check(lan.yaml.contains("external-controller-cors:\n  allow-origins:\n    - \"*\"\n  allow-private-network: true\n"),
+        "LAN controller CORS enabled for web dashboards");
+    check(lan.yaml.contains("secret: \"" + secret + "\"\n"), "secret still enforced in LAN mode");
+    check(lan.yaml.contains("port: 0\n") && lan.yaml.contains("mixed-port: 0\n")
+        && lan.yaml.contains("allow-lan: false\n") && lan.yaml.contains("  auto-route: false\n"),
+        "proxy ports and auto-route remain strictly disabled in LAN debug mode");
+    for (int badPort : new int[] {0, 80, 1023, 65536, -1}) {
+      try {
+        ClashConfig.buildRuntimeConfig(sample, secret, true, badPort);
+        throw new AssertionError("invalid controller port accepted: " + badPort);
+      } catch (IllegalArgumentException expected) {
+        check(true, "invalid controller port rejected: " + badPort);
+      }
+    }
+
     System.out.println("PASS " + checks + " built-in Clash config sanitization assertions; no mihomo or network executed.");
   }
 }

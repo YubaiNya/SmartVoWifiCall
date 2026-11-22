@@ -10,11 +10,15 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
+import java.net.Inet4Address;
+import java.net.InetAddress;
+import java.net.NetworkInterface;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.SecureRandom;
+import java.util.Enumeration;
 import java.util.Iterator;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
@@ -62,6 +66,18 @@ public final class RootClashMain {
         output = selectNode(node);
       } else if (mode.equals("test-delay") && args.length == 1) {
         output = testDelay();
+      } else if (mode.equals("set-controller") && args.length == 1) {
+        String body = new String(readAllLimited(System.in, 1024), StandardCharsets.UTF_8).trim();
+        output = setController(new JSONObject(body));
+      } else if (mode.equals("rotate-secret") && args.length == 1) {
+        output = rotateSecret();
+      } else if (mode.equals("connections") && args.length == 1) {
+        output = connections();
+      } else if (mode.equals("close-connection") && args.length == 1) {
+        String id = new String(readAllLimited(System.in, 256), StandardCharsets.UTF_8).trim();
+        output = closeConnection(id);
+      } else if (mode.equals("close-all-connections") && args.length == 1) {
+        output = closeAllConnections();
       } else {
         throw new Failure("INVALID_ARGUMENT");
       }
@@ -125,6 +141,10 @@ public final class RootClashMain {
   private static String ensureSecret() throws Exception {
     String existing = readTextIfPresent("controller.secret");
     if (existing.matches("[A-Za-z0-9_-]{16,128}")) return existing;
+    return generateAndSaveSecret();
+  }
+
+  private static String generateAndSaveSecret() throws Exception {
     byte[] bytes = new byte[24];
     new SecureRandom().nextBytes(bytes);
     StringBuilder hex = new StringBuilder(48);
@@ -134,9 +154,49 @@ public final class RootClashMain {
     return secret;
   }
 
+  private static final class ControllerSettings {
+    final boolean externalLan;
+    final int port;
+    ControllerSettings(boolean externalLan, int port) {
+      this.externalLan = externalLan;
+      this.port = port;
+    }
+    String localUrl(String path) {
+      return "http://" + ClashConfig.CONTROLLER_HOST + ":" + port + path;
+    }
+  }
+
+  private static ControllerSettings readControllerSettings() {
+    try {
+      String raw = readTextIfPresent("controller.json");
+      if (!raw.isEmpty()) {
+        JSONObject j = new JSONObject(raw);
+        boolean lan = j.optBoolean("externalLan", false);
+        int port = j.optInt("port", ClashConfig.CONTROLLER_PORT);
+        if (port >= 1024 && port <= 65535) return new ControllerSettings(lan, port);
+      }
+    } catch (Exception ignored) {}
+    return new ControllerSettings(false, ClashConfig.CONTROLLER_PORT);
+  }
+
+  private static String currentLanIpv4() {
+    try {
+      NetworkInterface wlan = NetworkInterface.getByName("wlan0");
+      if (wlan != null && wlan.isUp()) {
+        Enumeration<InetAddress> addrs = wlan.getInetAddresses();
+        while (addrs.hasMoreElements()) {
+          InetAddress a = addrs.nextElement();
+          if (a instanceof Inet4Address && !a.isLoopbackAddress()) return a.getHostAddress();
+        }
+      }
+    } catch (Exception ignored) {}
+    return "";
+  }
+
   private static JSONObject saveProfile(String rawYaml, String subscriptionUrl) throws Exception {
     String secret = ensureSecret();
-    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(rawYaml, secret);
+    ControllerSettings cs = readControllerSettings();
+    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(rawYaml, secret, cs.externalLan, cs.port);
     writeAtomic("profile.yaml", rawYaml.getBytes(StandardCharsets.UTF_8));
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     if (subscriptionUrl != null) {
@@ -156,13 +216,125 @@ public final class RootClashMain {
     byte[] bytes = Files.readAllBytes(profile.toPath());
     if (bytes.length > MAX_PROFILE_BYTES) throw new Failure("CLASH_PROFILE_TOO_LARGE");
     String secret = ensureSecret();
-    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(new String(bytes, StandardCharsets.UTF_8), secret);
+    ControllerSettings cs = readControllerSettings();
+    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(
+        new String(bytes, StandardCharsets.UTF_8), secret, cs.externalLan, cs.port);
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     return new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_RUNTIME_BUILT")
         .put("proxyCount", built.proxyNames.size())
         .put("providerCount", built.providerNames.size());
+  }
+
+  private static JSONObject setController(JSONObject input) throws Exception {
+    boolean lan = input.optBoolean("externalLan", false);
+    int port = input.optInt("port", ClashConfig.CONTROLLER_PORT);
+    if (port < 1024 || port > 65535) throw new Failure("CLASH_CONTROLLER_PORT_INVALID");
+    JSONObject saved = new JSONObject().put("externalLan", lan).put("port", port);
+    writeAtomic("controller.json", (saved.toString() + "\n").getBytes(StandardCharsets.UTF_8));
+    File profile = new File(CLASH_DIR, "profile.yaml");
+    boolean restarted = false;
+    if (profile.isFile() && profile.length() > 0) {
+      rebuild();
+      JSONObject ctl = runControl("status");
+      if (ctl.optBoolean("running")) {
+        start(true);
+        restarted = true;
+      }
+    }
+    return new JSONObject()
+        .put("ok", true)
+        .put("code", "CLASH_CONTROLLER_UPDATED")
+        .put("externalLan", lan)
+        .put("port", port)
+        .put("restarted", restarted);
+  }
+
+  private static JSONObject rotateSecret() throws Exception {
+    String secret = generateAndSaveSecret();
+    File profile = new File(CLASH_DIR, "profile.yaml");
+    boolean restarted = false;
+    if (profile.isFile() && profile.length() > 0) {
+      rebuild();
+      JSONObject ctl = runControl("status");
+      if (ctl.optBoolean("running")) {
+        start(true);
+        restarted = true;
+      }
+    }
+    return new JSONObject()
+        .put("ok", true)
+        .put("code", "CLASH_SECRET_ROTATED")
+        .put("secret", secret)
+        .put("restarted", restarted);
+  }
+
+  private static JSONObject connections() throws Exception {
+    JSONObject ctl = runControl("status");
+    if (!ctl.optBoolean("running")) {
+      return new JSONObject()
+          .put("ok", true)
+          .put("code", "CLASH_CONNECTIONS")
+          .put("running", false)
+          .put("downloadTotal", 0)
+          .put("uploadTotal", 0)
+          .put("memory", 0)
+          .put("connections", new JSONArray());
+    }
+    JSONObject raw = controllerGet("/connections");
+    JSONArray list = new JSONArray();
+    JSONArray src = raw.optJSONArray("connections");
+    if (src != null) {
+      for (int i = 0; i < src.length(); i++) {
+        JSONObject c = src.optJSONObject(i);
+        if (c == null) continue;
+        JSONObject meta = c.optJSONObject("metadata");
+        String net = meta == null ? "" : meta.optString("network", "");
+        String type = meta == null ? "" : meta.optString("type", "");
+        String srcIp = meta == null ? "" : meta.optString("sourceIP", "");
+        String srcPort = meta == null ? "" : meta.optString("sourcePort", "");
+        String host = meta == null ? "" : meta.optString("host", "");
+        String dstIp = meta == null ? "" : meta.optString("destinationIP", "");
+        String dstPort = meta == null ? "" : meta.optString("destinationPort", "");
+        String destHost = !host.isEmpty() ? host : dstIp;
+        String dest = dstPort.isEmpty() ? destHost : destHost + ":" + dstPort;
+        String source = srcPort.isEmpty() ? srcIp : srcIp + ":" + srcPort;
+        JSONArray chains = c.optJSONArray("chains");
+        list.put(new JSONObject()
+            .put("id", c.optString("id", ""))
+            .put("network", net)
+            .put("type", type)
+            .put("source", source)
+            .put("destination", dest)
+            .put("rule", c.optString("rule", ""))
+            .put("rulePayload", c.optString("rulePayload", ""))
+            .put("chains", chains == null ? new JSONArray() : chains)
+            .put("upload", c.optLong("upload", 0))
+            .put("download", c.optLong("download", 0))
+            .put("start", c.optString("start", "")));
+      }
+    }
+    return new JSONObject()
+        .put("ok", true)
+        .put("code", "CLASH_CONNECTIONS")
+        .put("running", true)
+        .put("downloadTotal", raw.optLong("downloadTotal", 0))
+        .put("uploadTotal", raw.optLong("uploadTotal", 0))
+        .put("memory", raw.optLong("memory", 0))
+        .put("connections", list);
+  }
+
+  private static JSONObject closeConnection(String id) throws Exception {
+    if (id == null || !id.matches("[A-Za-z0-9_-]{1,128}"))
+      throw new Failure("INVALID_CONNECTION_ID");
+    controllerDelete("/connections/" + urlEncode(id));
+    return new JSONObject().put("ok", true).put("code", "CLASH_CONNECTION_CLOSED").put("id", id);
+  }
+
+  private static JSONObject closeAllConnections() throws Exception {
+    controllerDelete("/connections");
+    return new JSONObject().put("ok", true).put("code", "CLASH_CONNECTIONS_CLEARED");
   }
 
   private static JSONObject fetchSubscription(String urlText) throws Exception {
@@ -262,6 +434,8 @@ public final class RootClashMain {
     }
     boolean running = ctl.optBoolean("running", false);
     boolean tunUp = ctl.optBoolean("tunUp", false);
+    ControllerSettings cs = readControllerSettings();
+    String secret = ensureSecret();
     JSONObject out = new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_STATUS")
@@ -271,6 +445,10 @@ public final class RootClashMain {
         .put("tunUp", tunUp)
         .put("device", ClashConfig.TUN_DEVICE)
         .put("netnsId", ctl.optString("netnsId", ""))
+        .put("externalLan", cs.externalLan)
+        .put("controllerPort", cs.port)
+        .put("controllerSecret", secret)
+        .put("lanIpv4", currentLanIpv4())
         .put("subscriptionUrl", readTextIfPresent("subscription.url"))
         .put("savedNode", readTextIfPresent("selected-node.txt"))
         .put("currentNode", "")
@@ -310,7 +488,8 @@ public final class RootClashMain {
 
   private static JSONObject controllerGet(String path) throws Exception {
     String secret = readTextIfPresent("controller.secret");
-    HttpURLConnection conn = (HttpURLConnection) new URL("http://" + ClashConfig.CONTROLLER_ADDR + path).openConnection();
+    ControllerSettings cs = readControllerSettings();
+    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
     conn.setConnectTimeout(3000);
     conn.setReadTimeout(8000);
     conn.setRequestMethod("GET");
@@ -329,7 +508,8 @@ public final class RootClashMain {
 
   private static void controllerPut(String path, String jsonBody) throws Exception {
     String secret = readTextIfPresent("controller.secret");
-    HttpURLConnection conn = (HttpURLConnection) new URL("http://" + ClashConfig.CONTROLLER_ADDR + path).openConnection();
+    ControllerSettings cs = readControllerSettings();
+    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
     conn.setConnectTimeout(3000);
     conn.setReadTimeout(5000);
     conn.setRequestMethod("PUT");
@@ -341,6 +521,22 @@ public final class RootClashMain {
       try (OutputStream out = conn.getOutputStream()) {
         out.write(payload);
       }
+      int code = conn.getResponseCode();
+      if (code < 200 || code >= 300) throw new Failure("CLASH_API_HTTP_" + code);
+    } finally {
+      conn.disconnect();
+    }
+  }
+
+  private static void controllerDelete(String path) throws Exception {
+    String secret = readTextIfPresent("controller.secret");
+    ControllerSettings cs = readControllerSettings();
+    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
+    conn.setConnectTimeout(3000);
+    conn.setReadTimeout(5000);
+    conn.setRequestMethod("DELETE");
+    if (!secret.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + secret);
+    try {
       int code = conn.getResponseCode();
       if (code < 200 || code >= 300) throw new Failure("CLASH_API_HTTP_" + code);
     } finally {

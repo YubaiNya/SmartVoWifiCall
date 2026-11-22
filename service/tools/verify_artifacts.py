@@ -11,14 +11,19 @@ apk=(dist/'NewVoWiFi.apk').read_bytes()
 with zipfile.ZipFile(dist/'NewVoWiFi.apk') as z:
  assert z.testzip() is None
  assert 'AndroidManifest.xml' in z.namelist()
- assert b'Lcom/newvowifi/ims/NewVoWifiImsService;' in z.read('classes.dex')
- assert b'Lcom/newvowifi/ims/root/SimCredentials;' in z.read('classes.dex')
- assert b'Lcom/newvowifi/ims/network/TunEgress;' in z.read('classes.dex')
- assert b'Lcom/newvowifi/ims/policy/ExclusiveRadio;' in z.read('classes.dex')
- assert b'Lcom/newvowifi/ims/clash/ClashConfig;' in z.read('classes.dex')
- assert b'Lcom/newvowifi/ims/root/RootClashMain;' in z.read('classes.dex')
- assert b'com.vowifi.sw' not in z.read('classes.dex')
- assert b'Lcom/vowifi/sw/' not in z.read('classes.dex')
+ dex=b''.join(z.read(n) for n in z.namelist() if n.endswith('.dex'))
+ assert b'Lcom/newvowifi/ims/NewVoWifiImsService;' in dex
+ assert b'Lcom/newvowifi/ims/MainActivity;' in dex
+ assert b'Lcom/newvowifi/ims/LiquidGlassBottomBarKt;' in dex
+ assert b'Lcom/newvowifi/ims/AppScreensKt;' in dex
+ assert b'Lcom/newvowifi/ims/root/SimCredentials;' in dex
+ assert b'Lcom/newvowifi/ims/network/TunEgress;' in dex
+ assert b'Lcom/newvowifi/ims/policy/ExclusiveRadio;' in dex
+ assert b'Lcom/newvowifi/ims/policy/FallbackPolicy;' in dex
+ assert b'Lcom/newvowifi/ims/clash/ClashConfig;' in dex
+ assert b'Lcom/newvowifi/ims/root/RootClashMain;' in dex
+ assert b'com.vowifi.sw' not in dex
+ assert b'Lcom/vowifi/sw/' not in dex
 with zipfile.ZipFile(dist/'NewVoWiFi-module.zip') as z:
  assert z.testzip() is None
  assert z.read('system/priv-app/NewVoWiFi/NewVoWiFi.apk')==apk

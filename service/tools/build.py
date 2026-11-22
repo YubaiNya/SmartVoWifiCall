@@ -1,31 +1,33 @@
-"""Build with installed Android/JDK tools; no Gradle or remote execution required."""
-import hashlib,json,os,pathlib,subprocess,zipfile
+"""Build NewVoWiFi release APK (Gradle + Kotlin/Compose/Miuix/Backdrop) and standalone KernelSU/Magisk module."""
+import hashlib,json,os,pathlib,shutil,subprocess,zipfile
+
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 SDK=pathlib.Path(os.environ.get('ANDROID_HOME','D:/Android/Sdk'))
 BT=SDK/'build-tools/37.0.0'
-JAVA=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin')
-BUILD=ROOT/'build'; OUT=ROOT/'dist'
-for p in [BUILD/'classes',BUILD/'dex',OUT]:p.mkdir(parents=True,exist_ok=True)
-# Remove only compiler output files under these resolved build directories.
-for directory in [BUILD/'classes',BUILD/'dex']:
- for p in directory.rglob('*'):
-  if p.is_file():
-   if not p.resolve().is_relative_to(BUILD.resolve()):raise RuntimeError('Build path escaped workspace')
-   p.unlink()
-def run(args):subprocess.run([str(x) for x in args],check=True,cwd=ROOT)
-sources=sorted((ROOT/'app/src/main/java').rglob('*.java'))
-argfile=BUILD/'sources.txt';argfile.write_text('\n'.join('"'+str(p).replace('\\','/')+'"' for p in sources),encoding='utf-8')
-run([JAVA/'javac.exe','-encoding','UTF-8','-source','11','-target','11','-classpath',ROOT/'deps/android-system.jar','-d',BUILD/'classes','@'+str(argfile)])
-run([JAVA/'jar.exe','cf',BUILD/'classes.jar','-C',BUILD/'classes','.'])
-run([JAVA/'java.exe','-cp',BT/'lib/d8.jar','com.android.tools.r8.D8','--lib',ROOT/'deps/android-system.jar','--min-api','30','--output',BUILD/'dex',BUILD/'classes.jar'])
-run([BT/'aapt2.exe','link','-I',SDK/'platforms/android-37.0/android.jar','--manifest',ROOT/'app/src/main/AndroidManifest.xml','-o',BUILD/'unsigned.apk'])
-with zipfile.ZipFile(BUILD/'unsigned.apk','a',zipfile.ZIP_DEFLATED) as z:
- for p in sorted((BUILD/'dex').glob('*.dex')):z.write(p,p.name)
-run([BT/'zipalign.exe','-f','4',BUILD/'unsigned.apk',BUILD/'aligned.apk'])
+JAVA_HOME=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot')
+JAVA=JAVA_HOME/'bin'
+GRADLE=pathlib.Path('C:/Users/yubai/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x92ynaizyzdaamcbpbhtj/gradle-9.4.1/bin/gradle.bat')
+OUT=ROOT/'dist'
+OUT.mkdir(parents=True,exist_ok=True)
+
+def run(args,env=None):
+ subprocess.run([str(x) for x in args],check=True,cwd=ROOT,env=env)
+
 key=ROOT/'local-signing.p12'
-if not key.exists():run([JAVA/'keytool.exe','-genkeypair','-keystore',key,'-storetype','PKCS12','-storepass','local-development','-keypass','local-development','-alias','newvowifi','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=NewVoWiFi Local Development'])
-run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','sign','--ks',key,'--ks-pass','pass:local-development','--out',OUT/'NewVoWiFi.apk',BUILD/'aligned.apk'])
+if not key.exists():
+ run([JAVA/'keytool.exe','-genkeypair','-keystore',key,'-storetype','PKCS12','-storepass','local-development','-keypass','local-development','-alias','newvowifi','-keyalg','RSA','-keysize','3072','-validity','10000','-dname','CN=NewVoWiFi Local Development'])
+
+env=os.environ.copy()
+env['JAVA_HOME']=str(JAVA_HOME)
+env['ANDROID_HOME']=str(SDK)
+run([GRADLE,'-p',ROOT,':app:assembleRelease','--console=plain'],env=env)
+
+gradle_apk=ROOT/'app/build/outputs/apk/release/app-release.apk'
+if not gradle_apk.exists():
+ raise RuntimeError(f'Expected Gradle release APK at {gradle_apk}')
+shutil.copy2(gradle_apk,OUT/'NewVoWiFi.apk')
 run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','verify',OUT/'NewVoWiFi.apk'])
+
 module=ROOT/'module'
 if module.exists():
  engine_meta=json.loads((ROOT/'deps/engine.source.json').read_text())
@@ -42,6 +44,7 @@ if module.exists():
   z.write(OUT/'NewVoWiFi.apk','system/priv-app/NewVoWiFi/NewVoWiFi.apk')
   z.write(engine_path,'bin/vowifi-engine-arm64')
   z.write(mihomo_path,'bin/mihomo-arm64')
+
 hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.suffix in ['.apk','.zip']}
 (OUT/'SHA256.json').write_text(json.dumps(hashes,indent=2)+'\n')
 print(json.dumps(hashes,indent=2))

@@ -31,7 +31,8 @@ public final class ClashConfig {
       "port", "socks-port", "redir-port", "tproxy-port", "mixed-port",
       "allow-lan", "bind-address", "mode", "log-level", "ipv6",
       "external-controller", "external-controller-tls", "external-controller-unix",
-      "external-controller-pipe", "external-ui", "external-ui-name", "external-ui-url",
+      "external-controller-pipe", "external-controller-cors",
+      "external-ui", "external-ui-name", "external-ui-url",
       "secret", "interface-name", "routing-mark",
       "tun", "ebpf", "dns", "sniffer", "profile",
       "rules", "sub-rules", "rule-providers", "proxy-groups",
@@ -53,10 +54,17 @@ public final class ClashConfig {
   private ClashConfig() {}
 
   public static Built buildRuntimeConfig(String profileYaml, String secret) {
+    return buildRuntimeConfig(profileYaml, secret, false, CONTROLLER_PORT);
+  }
+
+  public static Built buildRuntimeConfig(
+      String profileYaml, String secret, boolean externalControllerLan, int controllerPort) {
     if (profileYaml == null || profileYaml.trim().isEmpty())
       throw new IllegalArgumentException("CLASH_PROFILE_EMPTY");
     if (secret == null || !secret.matches("[A-Za-z0-9_-]{16,128}"))
       throw new IllegalArgumentException("CLASH_SECRET_INVALID");
+    if (controllerPort < 1024 || controllerPort > 65535)
+      throw new IllegalArgumentException("CLASH_CONTROLLER_PORT_INVALID");
 
     String text = profileYaml;
     if (text.startsWith("\uFEFF")) text = text.substring(1);
@@ -162,13 +170,21 @@ public final class ClashConfig {
     out.append("mixed-port: 0\n");
     out.append("ipv6: false\n");
     out.append("unified-delay: true\n");
-    out.append("external-controller: ").append(CONTROLLER_ADDR).append('\n');
+    String controllerBind = (externalControllerLan ? "0.0.0.0" : CONTROLLER_HOST) + ":" + controllerPort;
+    out.append("external-controller: ").append(controllerBind).append('\n');
     out.append("secret: ").append(quoteYaml(secret)).append('\n');
+    if (externalControllerLan) {
+      out.append("external-controller-cors:\n");
+      out.append("  allow-origins:\n");
+      out.append("    - \"*\"\n");
+      out.append("  allow-private-network: true\n");
+    }
     out.append("profile:\n");
     out.append("  store-selected: true\n");
     out.append("  store-fake-ip: false\n");
     out.append("dns:\n");
     out.append("  enable: true\n");
+    out.append("  ipv6: false\n");
     out.append("  listen: 127.0.0.1:1053\n");
     out.append("  enhanced-mode: redir-host\n");
     out.append("  fake-ip-range: 198.19.0.1/16\n");

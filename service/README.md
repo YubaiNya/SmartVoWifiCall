@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.3.2-dev**。模块内包含 APK、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.4.0-dev**。模块内包含 APK（Apple Design + Miuix + Kyant AndroidLiquidGlass 四页面液态玻璃 UI）、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、External Controller 调试与实时连接管理、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.4.0 采用 Apple Design 视觉规范、Miuix (`0.9.4`) 与 Kyant AndroidLiquidGlass (`2.0.1`) 重构为「概览 / 代理 / 连接 / 网络」四页面 UI 与 SukiSU-Ultra 同源三层液态玻璃弹簧底栏；新增内置 Clash External Controller 本机/局域网调试与实时连接查看/断开；新增 `FallbackPolicy` 在所选接口非 TUN、接口不可用或注册超时时自动释放目标卡蜂窝射频并恢复系统 IMS 服务（解决切换失效接口后状态栏 VoWiFi 图标残留与无法回退蜂窝呼出的问题），并移除状态栏常驻通知。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
 
 0.3.2 在 0.3.1 独立 Network Namespace 内置 Clash 的基础上，修复单卡关闭蜂窝协议栈下拨号被 Android `TelephonyConnectionService` 以 `STATE_OUT_OF_SERVICE` 拦截的问题（仅在 VoWiFi `REGISTERED` 时对目标 `subId` 启用 `ITelephony.setVoiceServiceStateOverride`，掉注册/恢复时清除），并修复强停/升级后小米 `ImsServiceController` 跳过重连的问题。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
 

@@ -1,6 +1,6 @@
 id=newvowifi
 name=NewVoWiFi Independent IMS
-version=0.3.2-dev
-versionCode=10
+version=0.4.0-dev
+versionCode=11
 author=Local development
-description=Standalone per-SIM IMS service with bundled engine, isolated built-in Clash (wfctun0, no Android VPN), and per-SIM cellular exclusion.
+description=Standalone per-SIM IMS service with Apple/Miuix Liquid Glass UI, isolated built-in Clash (wfctun0, no Android VPN), External Controller, and Live Connections.
