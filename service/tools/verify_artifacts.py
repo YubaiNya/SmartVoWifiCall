@@ -11,6 +11,7 @@ apk=(dist/'SmartVoWifiCall.apk').read_bytes()
 with zipfile.ZipFile(dist/'SmartVoWifiCall.apk') as z:
  assert z.testzip() is None
  assert 'AndroidManifest.xml' in z.namelist()
+ assert b'ic_launcher' in z.read('resources.arsc') and b'ic_launcher_round' in z.read('resources.arsc')
  dex=b''.join(z.read(n) for n in z.namelist() if n.endswith('.dex'))
  assert b'Lcom/smartvowificall/ims/SmartVoWifiImsService;' in dex
  assert b'Lcom/smartvowificall/ims/MainActivity;' in dex

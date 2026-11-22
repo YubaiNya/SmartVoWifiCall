@@ -4,7 +4,7 @@ root=pathlib.Path(__file__).resolve().parents[1]
 out=root/'dist/SmartVoWifiCall-source.zip'
 # Device repair/provisioning helpers contain incident-specific identifiers and
 # remain in the private workspace. They are not product installation tools.
-public_tools={'build.py','package_source.py','verify_artifacts.py','isolate_engine_log_pool.py'}
+public_tools={'build.py','package_source.py','verify_artifacts.py','isolate_engine_log_pool.py','generate_logo.py'}
 with zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED) as z:
  for dirname in ['app','module','tests','tools','deps','docs']:
   directory=root/dirname
