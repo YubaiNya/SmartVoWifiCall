@@ -1,6 +1,8 @@
 # NewVoWiFi
 
-独立 Android `ImsService` 开发版，当前版本 **0.3.1-dev**。模块内包含 APK、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+独立 Android `ImsService` 开发版，当前版本 **0.3.2-dev**。模块内包含 APK、VoWiFi 引擎、内置 `mihomo` Clash 内核（`wfctun0`）、SIM 配置生成与实时网络快照，无需安装外部 SoftVoWiFi 或外部 VPN 应用。源码位于 `app/src/main/java/com/newvowifi/ims/`。
+
+0.3.2 在 0.3.1 独立 Network Namespace 内置 Clash 的基础上，修复单卡关闭蜂窝协议栈下拨号被 Android `TelephonyConnectionService` 以 `STATE_OUT_OF_SERVICE` 拦截的问题（仅在 VoWiFi `REGISTERED` 时对目标 `subId` 启用 `ITelephony.setVoiceServiceStateOverride`，掉注册/恢复时清除），并修复强停/升级后小米 `ImsServiceController` 跳过重连的问题。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
 
 0.3.1 在 0.3.0 内置 `MetaCubeX/mihomo v1.19.34` 内核的基础上，将 `wfctun0` 与 `iface:wfctun0` 引擎进程迁入独立 Linux Network Namespace（`mihomo-arm64` 留在根命名空间走系统默认路由，根命名空间零 `ip rule` / 零路由改动 / 零 Android VPN），彻底解决引擎 `requireInterfaceRoute` 拒绝非 VPN TUN 的问题并在真实海外订阅下完成端到端 `REGISTERED / WLAN / READY` 实测；App 内支持订阅链接拉取、YAML 导入、节点切换与测速，同时保留 `/data/adb/newvowifi_ims/clash/profile.yaml` 本地维护与外部 TUN 接口下拉选择。详见 [内置 Clash 验证记录](docs/BUILTIN_CLASH_VALIDATION.md)。
 

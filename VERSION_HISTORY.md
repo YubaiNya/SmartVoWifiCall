@@ -1,5 +1,16 @@
 # 版本记录
 
+## v0.3.2-dev — 2026-11-22
+
+应用与模块 versionCode 升为 10。修复海外卡关闭蜂窝协议栈（`enableModemForSlot(slot, false)`）且 VoWiFi 已注册（`REGISTERED / WLAN`）时，拨号仍被 Android `TelephonyConnectionService` 拦截并提示“移动网络不可用。需连接至无线网络才能拨打电话”的问题，同时修复小米 `ImsServiceController` 在应用强停/升级后不重连 `NewMmTelFeature` 的问题。
+
+- **拨号拦截根因**：反汇编真机 `TeleService.apk` 与 `telephony-common.jar` 确认，`GsmCdmaPhone.mergeVoiceServiceStates` 在蜂窝 `mSST.mSS` 处于 `OUT_OF_SERVICE` 且 `dataRegState` 亦为 `OUT_OF_SERVICE`（关闭单卡蜂窝且未走原厂 `vendor.qti.iwlan` PS PDN）时，即使 `ImsPhone` 已在 `IWLAN` 上注册且 `isWifiCallingEnabled=true`，仍返回 `STATE_OUT_OF_SERVICE`，导致 `TelephonyConnectionService.getTelephonyConnection` 在进入 `GsmCdmaPhone.dial()` 之前直接以 `DisconnectCause.OUT_OF_SERVICE` 拒呼。
+- **修复 1（`ITelephony.setVoiceServiceStateOverride`）**：在 [RootIdentityMain.java](service/app/src/main/java/com/newvowifi/ims/root/RootIdentityMain.java)、[RootSupervisor.java](service/app/src/main/java/com/newvowifi/ims/RootSupervisor.java) 与 [RuntimeController.java](service/app/src/main/java/com/newvowifi/ims/RuntimeController.java) 中，仅当该卡满足单卡蜂窝已关闭、独立 IMS 已绑定、`ims == REGISTERED` 且允许计费动作时，针对该 `subId` 调用 `ITelephony.setVoiceServiceStateOverride(subId, true, "root")`；一旦掉注册、清理会话或恢复/禁用/卸载模块时立即清除为 `false`。
+- **修复 2（小米 `ImsServiceController` 重连）**：在 [RuntimeController.java](service/app/src/main/java/com/newvowifi/ims/RuntimeController.java) 检测到 `alreadyBound && !features.containsKey(slot)`（强停/升级后小米 `xiaomi_issue` 补丁跳过相同 feature 列表）时，先执行 `restore` 再 `bind`，触发 `ImsResolver` 立即重新挂载 `NewMmTelFeature`。
+- **真机实测（Xiaomi 15 / Android 17，无拨号、无短信）**：`ksud module install` 升级并 `am force-stop` 重启 `PolicyService` 后，`ImsResolver` 在 12 秒内重新挂载 `NewMmTelFeature`（`featureAttached=true`、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=2, featureState=2`）；`PhoneInterfaceManager` 应用 `setVoiceServiceStateOverride(subId=4, hasService=true)`，`dumpsys telephony.registry` 确认卡槽 1 `mVoiceRegState=0(IN_SERVICE)`、`mDataRegState=1(OUT_OF_SERVICE)`（蜂窝仍关闭）、`Phone-1: isImsRegistered=true / isWifiCallingEnabled=true`，卡槽 0 中国移动 LTE 全程在网未受影响。实际呼出通话留待用户手动测试。
+
+0.3.1-dev 交付物已备份至 `C:\ProjBackup\NewVoWiFi\20261122-220556-before-voice-override-0.3.2\`。
+
 ## v0.3.1-dev — 2026-11-22
 
 应用与模块 versionCode 升为 9。修复 `0.3.0-dev` 中真实订阅导入后内置 Clash `wfctun0` 上 `vowifi-engine-arm64` 报 `selected network unavailable` 无法拉起隧道的问题，将内置 Clash 隔离机制升级为**独立 Linux Network Namespace**，并在 Xiaomi 15 / Android 17 上通过真实海外订阅完成端到端 `REGISTERED / WLAN / READY` 验证（零 Android VPN、零根命名空间路由改动、零手机其他流量代理）。

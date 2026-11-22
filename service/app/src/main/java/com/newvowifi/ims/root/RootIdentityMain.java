@@ -88,12 +88,16 @@ public final class RootIdentityMain {
         if (!identity.iccid.equals(config.optString("iccid"))) throw new Failure("SUBSCRIPTION_CHANGED");
         requireRadioOff(identity);
         output = new JSONObject().put("ok", true).put("code", "TUN_EGRESS_CONFIRMED");
-      }
-      else if (mode.equals("ims-bind") && args.length == 5) {
+      } else if (mode.equals("ims-bind") && args.length == 5) {
         try (ImsLock lock = new ImsLock()) {
           output = bindIms(
               rootContext(), nonNegativeInt(args[1]), nonNegativeInt(args[2]), args[3], args[4]);
         }
+      } else if (mode.equals("voice-service-override") && args.length == 6) {
+        if (!"true".equals(args[5]) && !"false".equals(args[5]))
+          throw new Failure("INVALID_ARGUMENT");
+        output = setVoiceServiceOverride(rootContext(), nonNegativeInt(args[1]),
+            nonNegativeInt(args[2]), args[3], args[4], "true".equals(args[5]));
       } else if (mode.equals("ims-restore") && args.length == 2) {
         try (ImsLock lock = new ImsLock()) {
           output = restoreIms(rootContext(), nonNegativeInt(args[1]));
@@ -375,14 +379,41 @@ public final class RootIdentityMain {
     return new JSONObject().put("ok", true).put("code", "IMS_CONFIG_SELECTED");
   }
 
+  private static void applyVoiceServiceOverride(int subId, boolean hasService) throws Exception {
+    if (subId < 0) return;
+    binderCall("phone", "com.android.internal.telephony.ITelephony",
+        "setVoiceServiceStateOverride",
+        new Class<?>[] {int.class, boolean.class, String.class},
+        new Object[] {subId, hasService, "root"});
+  }
+
+  private static JSONObject setVoiceServiceOverride(
+      Context context, int subId, int slot, String key, String home, boolean hasService)
+      throws Exception {
+    Identity current = requireCurrentIdentity(context, subId, slot);
+    if (!sha256(current.iccid).equals(key) || !current.homePlmn.equals(home))
+      throw new Failure("SUBSCRIPTION_CHANGED");
+    if (hasService) {
+      requireRadioOff(current);
+      if (!IMS_PACKAGE.equals(imsPackage(slot, 1)))
+        throw new Failure("IMS_NOT_BOUND");
+    }
+    applyVoiceServiceOverride(subId, hasService);
+    return new JSONObject().put("ok", true).put("hasService", hasService)
+        .put("code", hasService ? "VOICE_OVERRIDE_ON" : "VOICE_OVERRIDE_OFF");
+  }
+
   private static JSONObject restoreIms(Context context, int slot) throws Exception {
     File journalFile = imsJournal(slot);
     boolean selected = IMS_PACKAGE.equals(imsPackage(slot, 1));
+    int currentSub = currentSubForSlot(context, slot);
     if (!selected && !journalFile.isFile()) {
+      try { applyVoiceServiceOverride(currentSub, false); } catch (Exception ignored) {}
       return new JSONObject().put("ok", true).put("code", "IMS_ALREADY_RELEASED");
     }
     requireIdle(context);
-    int subId = currentSubForSlot(context, slot);
+    int subId = currentSub;
+    try { applyVoiceServiceOverride(subId, false); } catch (Exception ignored) {}
     String f0 = imsPackage(slot, 0), f2 = imsPackage(slot, 2);
     String previous = "";
     if (journalFile.isFile()) {

@@ -168,6 +168,13 @@ final class RootSupervisor {
     if (!response.optBoolean("ok"))
       throw new IOException("IMS_BIND_FAILED");
   }
+  void setVoiceServiceOverride(Sim sim, boolean hasService) throws Exception {
+    JSONObject response = new JSONObject(helper("voice-service-override " + sim.policy.subId + " "
+        + sim.policy.slotId + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)
+        + " " + (hasService ? "true" : "false")));
+    if (!response.optBoolean("ok"))
+      throw new IOException(response.optString("code", "VOICE_OVERRIDE_FAILED"));
+  }
   boolean holdRadio(Sim sim) throws Exception {
     JSONObject result = new JSONObject(helper("radio-hold " + sim.policy.subId + " " + sim.policy.slotId
         + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));

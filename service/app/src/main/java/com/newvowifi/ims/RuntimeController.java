@@ -280,9 +280,17 @@ final class RuntimeController {
           Long previousRebind = lastRebindNanos.get(slotId);
           boolean needsFeature = !features.containsKey(slotId)
               && (previousRebind == null || now - previousRebind >= TimeUnit.SECONDS.toNanos(15));
+          boolean alreadyBound = RegistrationRouting.OWN_PACKAGE.equals(root.currentOverride(slotId));
           if (off && !snapshot.callsActive && !bindings.values().stream().anyMatch(b -> b.callActive)
-              && (!RegistrationRouting.OWN_PACKAGE.equals(root.currentOverride(slotId)) || needsFeature)) {
+              && (!alreadyBound || needsFeature)) {
             lastRebindNanos.put(slotId, now);
+            if (alreadyBound && needsFeature) {
+              // Xiaomi's ImsServiceController ignores updates when mImsFeatures is unchanged
+              // after process death/force-stop; cycle through restore before rebinding.
+              try {
+                root.restore(slotId, prefs.getString("previous." + slotId, ""));
+              } catch (Exception ignored) {}
+            }
             root.bind(sim);
           }
         }
@@ -403,6 +411,7 @@ final class RuntimeController {
       for (Binding b : bindings.values()) {
         b.registered = false;
         b.reported = false;
+        syncVoiceServiceOverride(b, false);
         b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_SERVICE_UNAVAILABLE));
         NewMmTelFeature feature = features.get(b.slot());
         if (feature != null) feature.registrationChanged(false);
@@ -442,8 +451,10 @@ final class RuntimeController {
     boolean keepProvider = enabled() && Boolean.TRUE.equals(radioOff.get(slot));
     if (!keepProvider) root.restore(slot, prefs.getString("previous." + slot, ""));
     Binding old = bindings.remove(slot);
-    if (old != null)
+    if (old != null) {
+      syncVoiceServiceOverride(old, false);
       old.close();
+    }
     (old == null ? registration(slot) : old.registration)
         .onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
     root.stop(prefs.getString("iccid." + slot, ""));
@@ -479,6 +490,7 @@ final class RuntimeController {
         NewMmTelFeature f = features.get(b.slot());
         if (f != null)
           f.registrationChanged(registered);
+        syncVoiceServiceOverride(b, registered && billable());
         b.tunnel = EngineState.text(state, "tunnel");
         try {
           b.engine.getCallSnapshot();
@@ -500,6 +512,7 @@ final class RuntimeController {
         b.registered = false;
         b.reported = false;
         b.ims = "DISCONNECTED";
+        syncVoiceServiceOverride(b, false);
         b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
         NewMmTelFeature f = features.get(b.slot());
         if (f != null)
@@ -516,6 +529,16 @@ final class RuntimeController {
           status = "待处理：" + safeCode(recoveryError);
         }
       }
+    }
+  }
+  private void syncVoiceServiceOverride(Binding b, boolean hasService) {
+    if (b == null) return;
+    if (Boolean.valueOf(hasService).equals(b.voiceServiceOverride)) return;
+    try {
+      root.setVoiceServiceOverride(b.sim, hasService);
+      b.voiceServiceOverride = hasService;
+    } catch (Exception ignored) {
+      // Retried automatically on the next policy tick.
     }
   }
   static ImsReasonInfo reason(int code) {
@@ -537,6 +560,7 @@ final class RuntimeController {
         if (b != null) row.put("ims", b.ims).put("registered", b.registered)
             .put("tunnel", b.tunnel).put("callActive", b.callActive)
             .put("callSnapshotError", b.callSnapshotError)
+            .put("voiceServiceOverride", Boolean.TRUE.equals(b.voiceServiceOverride))
             .put("independentProvider", b.providerBound).put("providerSwitchDeferred", b.providerDeferred);
         sims.put(row);
       }
@@ -569,6 +593,7 @@ final class RuntimeController {
     final EngineSession engine;
     final ImsRegistrationImplBase registration;
     volatile boolean registered, reported, callActive, providerBound, providerDeferred;
+    volatile Boolean voiceServiceOverride;
     volatile String ims = "CONNECTING";
     volatile String tunnel = "UNKNOWN";
     volatile long callSnapshotError;
@@ -596,6 +621,7 @@ final class RuntimeController {
         if (bindings.get(slot()) == this) {
           registered = false;
           reported = false;
+          io.execute(() -> syncVoiceServiceOverride(this, false));
           registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
           NewMmTelFeature f = features.get(slot());
           if (f != null)

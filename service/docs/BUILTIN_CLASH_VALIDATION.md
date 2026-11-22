@@ -88,9 +88,18 @@
   - **手机其他流量零代理**：根网络命名空间 `ip link show wfctun0` 不存在、零 Clash `ip rule`、`ip route get 1.1.1.1` 直走 `wlan0`。
   - **跨挂载命名空间一致性与自愈**：从 `adb shell su`（init mount ns）执行 `clash-control.sh status` 准确返回 `running:true, tunUp:true, netnsId:"net:[4026535807]"`；执行 `clash-control.sh stop` 干净清除进程与 `netns.owner` 后，`PolicyService` 在约 16 秒内自动拉起新 Clash 命名空间并重启引擎恢复 `REGISTERED / WLAN / READY`。
 
+## 0.3.2-dev 修复单卡关蜂窝下拨号被 `STATE_OUT_OF_SERVICE` 拦截与小米重连问题（2026-11-22，versionCode=10）
+
+- **用户实测现象**：卡槽 1 在 `ims=REGISTERED` 且 `isWifiCallingEnabled=true` 状态下尝试拨号时，`Telecom` 立即断开（`Reason: ServiceState.STATE_OUT_OF_SERVICE`），提示“移动网络不可用。需连接至无线网络才能拨打电话。”（此外 `21:47:52` 所选代理节点曾短暂超时掉线，约 15 分钟后恢复）。
+- **根因（实机字节码核实）**：`GsmCdmaPhone.mergeVoiceServiceStates` 在蜂窝 voice/data 均为 `OUT_OF_SERVICE` 时，必须依赖 `mTelecomVoiceServiceStateOverride == STATE_IN_SERVICE` 才会向 `TelephonyConnectionService` 汇报 `STATE_IN_SERVICE`；否则即使 `ImsPhone` 已在 `IWLAN` 注册，也在到达 `GsmCdmaPhone.dial()` 之前被拦截。另发现 `am force-stop` 后小米 `ImsServiceController` 的 `xiaomi_issue` 检查会跳过相同 `mImsFeatures` 的重绑请求。
+- **修复与真机验证**：
+  - 仅在目标卡 `radioOff=true && ims==REGISTERED && billableAllowed==true` 时调用 `ITelephony.setVoiceServiceStateOverride(subId, true, "root")`，掉注册/恢复/卸载时立即清零为 `false`。
+  - `alreadyBound && needsFeature` 时先 `restore` 再 `bind`，解决强停/升级后 `NewMmTelFeature` 不挂载问题。
+  - Xiaomi 15 实测：`featureAttached=true`、`FrameworkProbeMain 4` 返回 `registrationState=2, transportType=2, featureState=2`、`voiceServiceOverride=true`、`dumpsys telephony.registry` 显示卡槽 1 `mVoiceRegState=0(IN_SERVICE), mDataRegState=1(OUT_OF_SERVICE)`、`Phone-1: isImsRegistered=true, isWifiCallingEnabled=true`，卡槽 0 中国移动 LTE 不受影响。未主动拨号或发短信，留待用户实测。
+
 ## 仍存在的验证边界
 
-- 尚未对 `0.3.1-dev` 执行冷重启与真实卸载闭环；未拨号或发短信。
+- 尚未对 `0.3.2-dev` 执行整机冷重启与真实卸载闭环；未由代理执行真实拨号或发短信。
 
 ## 历史记录：0.3.0-dev 首次验证边界（已由 0.3.1-dev 解决）
 
