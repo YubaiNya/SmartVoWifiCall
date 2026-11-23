@@ -151,6 +151,6 @@ python service/tools/verify_artifacts.py
   </a>
 </p>
 
-<p>基于 GPL-3.0 开源 · 特别致谢 <strong>SoftVoWiFi</strong>（底层 VoWiFi 协议引擎与方案启发），以及 mihomo、Miuix、AndroidLiquidGlass</p>
+<p>基于 GPL-3.0 开源 · 特别致谢 <a href="https://github.com/lilyzhaun/softvowifi-client"><strong>SoftVoWiFi</strong></a>（底层 VoWiFi 协议引擎与方案启发），以及 mihomo、Miuix、AndroidLiquidGlass</p>
 
 </div>
