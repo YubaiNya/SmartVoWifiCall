@@ -107,6 +107,16 @@ data class ConnectionRowUi(
 )
 
 @Immutable
+data class TelemetryUploadRecordUi(
+    val logId: String,
+    val timeLabel: String,
+    val triggerLabel: String,
+    val ok: Boolean,
+    val code: String,
+    val sizeLabel: String
+)
+
+@Immutable
 data class AppUiState(
     val appVersion: String = "",
     val enabled: Boolean = false,
@@ -137,7 +147,8 @@ data class AppUiState(
     val connectionsError: String = "",
     val telemetryEnabled: Boolean = false,
     val telemetryEndpoint: String = "",
-    val telemetryLastStatus: String = ""
+    val telemetryLastStatus: String = "",
+    val telemetryHistory: List<TelemetryUploadRecordUi> = emptyList()
 )
 
 @Composable
@@ -1345,6 +1356,7 @@ fun NetworkPage(
     onSaveTelemetryEndpoint: (String) -> Unit,
     onUploadTelemetryNow: () -> Unit,
     onPreviewTelemetry: () -> Unit,
+    onCopyLogId: (String) -> Unit,
     onExportSanitizedLogs: () -> Unit,
     onExportRawLogs: () -> Unit
 ) {
@@ -1418,7 +1430,7 @@ fun NetworkPage(
         AppleMiuixCard(insideMargin = PaddingValues(bottom = 16.dp)) {
             SwitchPreference(
                 title = "上传脱敏遥测日志",
-                summary = "默认关闭。仅上传版本、机型与连接状态，不含卡号、号码、订阅和节点名",
+                summary = "默认关闭。上传脱敏后的完整原始日志、网络请求包体与 SIM 国家/运营商，隐私字段统一显示为 [Hidden]",
                 checked = state.telemetryEnabled,
                 onCheckedChange = onToggleTelemetry
             )
@@ -1470,6 +1482,97 @@ fun NetworkPage(
                     primary = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+            }
+            if (state.telemetryHistory.isNotEmpty()) {
+                HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    Text(
+                        text = "日志上传记录（提供日志 ID 即可查询）",
+                        color = p.textPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for (item in state.telemetryHistory.take(8)) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(p.cardSubtle)
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = item.logId.ifEmpty { "无 ID" },
+                                            color = p.textPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = FontFamily.Monospace,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        StatusPill(
+                                            label = if (item.ok) "成功" else "失败",
+                                            color = if (item.ok) p.accentGreen else p.accentRed,
+                                            showDot = false
+                                        )
+                                    }
+                                    Spacer(Modifier.height(3.dp))
+                                    val detail = buildString {
+                                        append(item.timeLabel)
+                                        append(" · ")
+                                        append(item.triggerLabel)
+                                        if (item.sizeLabel.isNotEmpty()) {
+                                            append(" · ")
+                                            append(item.sizeLabel)
+                                        }
+                                        if (!item.ok && item.code.isNotEmpty()) {
+                                            append(" · ")
+                                            append(item.code)
+                                        }
+                                    }
+                                    Text(
+                                        text = detail,
+                                        color = p.textSecondary,
+                                        fontSize = 11.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                if (item.logId.isNotEmpty()) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Row(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(p.accentBlue.copy(alpha = if (p.dark) 0.20f else 0.10f))
+                                            .clickable { onCopyLogId(item.logId) }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = MiuixIcons.Copy,
+                                            contentDescription = "复制 ID",
+                                            tint = p.accentBlue,
+                                            modifier = Modifier.size(13.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text(
+                                            text = "复制 ID",
+                                            color = p.accentBlue,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {

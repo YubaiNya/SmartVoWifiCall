@@ -94,6 +94,9 @@ public final class EngineSession implements Closeable {
   public void connect() throws IOException {
     connect(DEFAULT_TIMEOUT_MS);
   }
+  public void setPacketObserver(EngineRpcClient.PacketObserver observer) {
+    client.setPacketObserver(observer);
+  }
   public void connect(int timeoutMs) throws IOException {
     client.connect(timeoutMs);
   }

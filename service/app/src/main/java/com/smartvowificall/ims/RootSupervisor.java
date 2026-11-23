@@ -119,10 +119,37 @@ final class RootSupervisor {
   static final class Sim {
     final PolicyEngine.Sim policy;
     final String iccid;
+    final int phoneId, simState, rawSimState, carrierId;
+    final String identityCode, countryIso, carrierName, simOperatorName,
+        networkCountryIso, networkOperatorName, networkPlmn;
+    final boolean embedded, opportunistic;
+    final List<String> identityIssues;
     Sim(JSONObject j) {
       iccid = j.optString("iccid");
       policy = new PolicyEngine.Sim(j.optString("simKey"), j.optInt("subId", -1),
           j.optInt("slotId", -1), j.optBoolean("ready"), j.optString("homePlmn"));
+      phoneId = j.optInt("phoneId", -1);
+      simState = j.optInt("simState", 0);
+      rawSimState = j.optInt("rawSimState", 0);
+      carrierId = j.optInt("carrierId", -1);
+      identityCode = j.optString("identityCode", "");
+      countryIso = j.optString("countryIso", "");
+      carrierName = j.optString("carrierName", j.optString("label", ""));
+      simOperatorName = j.optString("simOperatorName", "");
+      networkCountryIso = j.optString("networkCountryIso", "");
+      networkOperatorName = j.optString("networkOperatorName", "");
+      networkPlmn = j.optString("networkPlmn", "");
+      embedded = j.optBoolean("isEmbedded", false);
+      opportunistic = j.optBoolean("isOpportunistic", false);
+      List<String> issues = new ArrayList<>();
+      JSONArray arr = j.optJSONArray("identityIssues");
+      if (arr != null) {
+        for (int i = 0; i < arr.length(); i++) {
+          String s = arr.optString(i, "");
+          if (!s.isEmpty()) issues.add(s);
+        }
+      }
+      identityIssues = Collections.unmodifiableList(issues);
     }
     EngineSession.Identity identity() {
       return new EngineSession.Identity(iccid, policy.slotId, policy.subId);
@@ -252,14 +279,20 @@ final class RootSupervisor {
         + "echo '=== RADIO & IMS JOURNALS ===';"
         + "for f in /data/adb/smartvowificall_ims/radio/*.json /data/adb/smartvowificall_ims/ims/*.json; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; cat \"$f\"; echo; }; done;"
-        + "echo '=== LAUNCHER LOGS (TAIL 64KB) ===';"
+        + "echo '=== CLASH / MIHOMO LOGS (TAIL 32KB) ===';"
+        + "for f in /data/adb/smartvowificall_ims/clash/*.log; do "
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 32768 \"$f\" 2>/dev/null || true; echo; }; done;"
+        + "echo '=== LAUNCHER LOGS (TAIL 48KB) ===';"
         + "for f in /data/adb/smartvowificall_ims/run/*.launcher.log; do "
-        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 49152 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== ENGINE LOGS (TAIL 64KB) ===';"
         + "for f in /data/adb/smartvowificall_ims/logs/*/*.log /data/adb/smartvowificall_ims/logs/*/diagnostic.jsonl; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== LOGCAT (FILTERED TAIL 400) ===';"
         + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|ImsResolver|ImsServiceController' | tail -n 400 || true";
     return run(script);
+  }
+  String collectClashHttpTrace() throws Exception {
+    return run("[ -f /data/adb/smartvowificall_ims/clash/http-trace.jsonl ] && tail -n 50 /data/adb/smartvowificall_ims/clash/http-trace.jsonl || true");
   }
 }

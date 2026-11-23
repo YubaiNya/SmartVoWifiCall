@@ -3,6 +3,9 @@ package com.smartvowificall.ims.root;
 import android.os.Process;
 import android.system.Os;
 import com.smartvowificall.ims.clash.ClashConfig;
+import com.smartvowificall.ims.telemetry.LogSanitizer;
+import com.smartvowificall.ims.telemetry.NetworkLogBuffer;
+import com.smartvowificall.ims.engine.JsonCodec;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -18,8 +21,16 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Enumeration;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
 import org.json.JSONArray;
@@ -343,6 +354,11 @@ public final class RootClashMain {
     URL current = new URL(urlText);
     HttpURLConnection conn = null;
     for (int hop = 0; hop < 6; hop++) {
+      long started = System.nanoTime();
+      Map<String, Object> reqHeaders = new LinkedHashMap<>();
+      reqHeaders.put("User-Agent", "clash.meta/1.19.34");
+      reqHeaders.put("Accept", "application/yaml, text/yaml, text/plain, */*");
+      reqHeaders.put("Accept-Encoding", "gzip");
       conn = (HttpURLConnection) current.openConnection();
       conn.setInstanceFollowRedirects(false);
       conn.setConnectTimeout(15000);
@@ -352,8 +368,12 @@ public final class RootClashMain {
       conn.setRequestProperty("Accept", "application/yaml, text/yaml, text/plain, */*");
       conn.setRequestProperty("Accept-Encoding", "gzip");
       int status = conn.getResponseCode();
+      long durMs = (System.nanoTime() - started) / 1_000_000L;
+      Map<String, Object> respHeaders = extractHeaders(conn);
       if (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) {
         String loc = conn.getHeaderField("Location");
+        recordHttpTrace("clash_subscription", "GET", current.toString(), status, durMs,
+            reqHeaders, null, respHeaders, Collections.singletonMap("redirect", LogSanitizer.HIDDEN), null);
         conn.disconnect();
         if (loc == null || loc.isEmpty()) throw new Failure("SUBSCRIPTION_FETCH_FAILED");
         current = new URL(current, loc);
@@ -363,6 +383,8 @@ public final class RootClashMain {
         continue;
       }
       if (status < 200 || status >= 300) {
+        recordHttpTrace("clash_subscription", "GET", current.toString(), status, durMs,
+            reqHeaders, null, respHeaders, null, "SUBSCRIPTION_HTTP_" + status);
         conn.disconnect();
         throw new Failure("SUBSCRIPTION_HTTP_" + status);
       }
@@ -370,6 +392,12 @@ public final class RootClashMain {
            InputStream in = "gzip".equalsIgnoreCase(conn.getContentEncoding())
                ? new GZIPInputStream(raw) : raw) {
         byte[] data = readAllLimited(in, MAX_PROFILE_BYTES);
+        Map<String, Object> bodySummary = new LinkedHashMap<>();
+        bodySummary.put("contentType", conn.getContentType() == null ? "" : conn.getContentType());
+        bodySummary.put("bytes", data.length);
+        bodySummary.put("body", LogSanitizer.HIDDEN);
+        recordHttpTrace("clash_subscription", "GET", current.toString(), status, durMs,
+            reqHeaders, null, respHeaders, bodySummary, null);
         return saveProfile(new String(data, StandardCharsets.UTF_8), urlText);
       } finally {
         conn.disconnect();
@@ -489,17 +517,30 @@ public final class RootClashMain {
   private static JSONObject controllerGet(String path) throws Exception {
     String secret = readTextIfPresent("controller.secret");
     ControllerSettings cs = readControllerSettings();
-    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
+    String target = cs.localUrl(path);
+    long started = System.nanoTime();
+    Map<String, Object> reqHeaders = new LinkedHashMap<>();
+    if (!secret.isEmpty()) reqHeaders.put("Authorization", "Bearer " + secret);
+    HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
     conn.setConnectTimeout(3000);
     conn.setReadTimeout(8000);
     conn.setRequestMethod("GET");
     if (!secret.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + secret);
     try {
       int code = conn.getResponseCode();
-      if (code < 200 || code >= 300) throw new Failure("CLASH_API_HTTP_" + code);
+      long durMs = (System.nanoTime() - started) / 1_000_000L;
+      Map<String, Object> respHeaders = extractHeaders(conn);
+      if (code < 200 || code >= 300) {
+        recordHttpTrace("clash_http", "GET", target, code, durMs, reqHeaders, null, respHeaders,
+            null, "CLASH_API_HTTP_" + code);
+        throw new Failure("CLASH_API_HTTP_" + code);
+      }
       try (InputStream in = conn.getInputStream()) {
         byte[] body = readAllLimited(in, MAX_PROFILE_BYTES);
-        return new JSONObject(new String(body, StandardCharsets.UTF_8));
+        String bodyText = new String(body, StandardCharsets.UTF_8);
+        recordHttpTrace("clash_http", "GET", target, code, durMs, reqHeaders, null, respHeaders,
+            NetworkLogBuffer.parseJsonOrText(bodyText, 4096), null);
+        return new JSONObject(bodyText);
       }
     } finally {
       conn.disconnect();
@@ -509,7 +550,12 @@ public final class RootClashMain {
   private static void controllerPut(String path, String jsonBody) throws Exception {
     String secret = readTextIfPresent("controller.secret");
     ControllerSettings cs = readControllerSettings();
-    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
+    String target = cs.localUrl(path);
+    long started = System.nanoTime();
+    Map<String, Object> reqHeaders = new LinkedHashMap<>();
+    reqHeaders.put("Content-Type", "application/json");
+    if (!secret.isEmpty()) reqHeaders.put("Authorization", "Bearer " + secret);
+    HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
     conn.setConnectTimeout(3000);
     conn.setReadTimeout(5000);
     conn.setRequestMethod("PUT");
@@ -522,7 +568,16 @@ public final class RootClashMain {
         out.write(payload);
       }
       int code = conn.getResponseCode();
-      if (code < 200 || code >= 300) throw new Failure("CLASH_API_HTTP_" + code);
+      long durMs = (System.nanoTime() - started) / 1_000_000L;
+      Map<String, Object> respHeaders = extractHeaders(conn);
+      Object reqParsed = NetworkLogBuffer.parseJsonOrText(jsonBody, 2048);
+      if (code < 200 || code >= 300) {
+        recordHttpTrace("clash_http", "PUT", target, code, durMs, reqHeaders, reqParsed,
+            respHeaders, null, "CLASH_API_HTTP_" + code);
+        throw new Failure("CLASH_API_HTTP_" + code);
+      }
+      recordHttpTrace("clash_http", "PUT", target, code, durMs, reqHeaders, reqParsed,
+          respHeaders, "", null);
     } finally {
       conn.disconnect();
     }
@@ -531,16 +586,80 @@ public final class RootClashMain {
   private static void controllerDelete(String path) throws Exception {
     String secret = readTextIfPresent("controller.secret");
     ControllerSettings cs = readControllerSettings();
-    HttpURLConnection conn = (HttpURLConnection) new URL(cs.localUrl(path)).openConnection();
+    String target = cs.localUrl(path);
+    long started = System.nanoTime();
+    Map<String, Object> reqHeaders = new LinkedHashMap<>();
+    if (!secret.isEmpty()) reqHeaders.put("Authorization", "Bearer " + secret);
+    HttpURLConnection conn = (HttpURLConnection) new URL(target).openConnection();
     conn.setConnectTimeout(3000);
     conn.setReadTimeout(5000);
     conn.setRequestMethod("DELETE");
     if (!secret.isEmpty()) conn.setRequestProperty("Authorization", "Bearer " + secret);
     try {
       int code = conn.getResponseCode();
-      if (code < 200 || code >= 300) throw new Failure("CLASH_API_HTTP_" + code);
+      long durMs = (System.nanoTime() - started) / 1_000_000L;
+      Map<String, Object> respHeaders = extractHeaders(conn);
+      if (code < 200 || code >= 300) {
+        recordHttpTrace("clash_http", "DELETE", target, code, durMs, reqHeaders, null, respHeaders,
+            null, "CLASH_API_HTTP_" + code);
+        throw new Failure("CLASH_API_HTTP_" + code);
+      }
+      recordHttpTrace("clash_http", "DELETE", target, code, durMs, reqHeaders, null, respHeaders,
+          "", null);
     } finally {
       conn.disconnect();
+    }
+  }
+
+  private static Map<String, Object> extractHeaders(HttpURLConnection conn) {
+    Map<String, Object> out = new LinkedHashMap<>();
+    try {
+      Map<String, List<String>> raw = conn.getHeaderFields();
+      if (raw != null) {
+        for (Map.Entry<String, List<String>> e : raw.entrySet()) {
+          if (e.getKey() == null || e.getValue() == null || e.getValue().isEmpty()) continue;
+          out.put(e.getKey(), String.join(", ", e.getValue()));
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return out;
+  }
+
+  private static void recordHttpTrace(String channel, String method, String target, int status,
+      long durationMs, Map<String, Object> reqHeaders, Object reqBody,
+      Map<String, Object> respHeaders, Object respBody, String error) {
+    try {
+      Map<String, Object> entry = new LinkedHashMap<>();
+      entry.put("ts", DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'")
+          .withZone(ZoneOffset.UTC).format(Instant.now()));
+      entry.put("channel", channel);
+      entry.put("direction", "req_res");
+      entry.put("method", method);
+      entry.put("target", LogSanitizer.sanitizeUrl(target));
+      entry.put("status", status);
+      entry.put("durationMs", Math.max(0L, durationMs));
+      entry.put("requestHeaders", LogSanitizer.sanitizeStructure(reqHeaders, "requestHeaders"));
+      entry.put("requestBody", LogSanitizer.sanitizeStructure(reqBody, "requestBody"));
+      entry.put("responseHeaders", LogSanitizer.sanitizeStructure(respHeaders, "responseHeaders"));
+      entry.put("responseBody", LogSanitizer.sanitizeStructure(respBody, "responseBody"));
+      if (error != null && !error.isEmpty()) entry.put("error", LogSanitizer.sanitizeText(error));
+      String line = JsonCodec.encode(entry);
+      File f = clashFile("http-trace.jsonl");
+      List<String> lines = new ArrayList<>();
+      if (f.isFile()) {
+        String existing = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
+        for (String l : existing.split("\n")) {
+          if (!l.trim().isEmpty()) lines.add(l.trim());
+        }
+      }
+      lines.add(line);
+      int start = Math.max(0, lines.size() - 50);
+      StringBuilder sb = new StringBuilder();
+      for (int i = start; i < lines.size(); i++) sb.append(lines.get(i)).append('\n');
+      writeAtomic("http-trace.jsonl", sb.toString().getBytes(StandardCharsets.UTF_8));
+    } catch (Throwable ignored) {
+      // Trace logging is strictly best-effort and must never fail Clash operations.
     }
   }
 

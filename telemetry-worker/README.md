@@ -4,9 +4,9 @@
 
 ## 工作流程
 
-1. App 默认关闭遥测；用户手动开启或点击「立即上传脱敏日志」后，向本 Worker 的 `POST /v1/telemetry` 发送严格白名单脱敏 JSON（不含 ICCID、IMSI、IMEI、手机号、节点名、订阅链接、IP 和密钥）。
-2. Worker 校验 schema（`smartvowificall.telemetry.v1`）与 64 KB 体积上限，并执行二次深度脱敏。
-3. Worker 使用服务端加密变量 `GITHUB_TOKEN`，按日期写入私有仓库 `logs/YYYY/MM/DD/<timestamp>-<installId前8位>-<rand>.json`。
+1. App 默认关闭遥测；用户手动开启或点击「立即上传一次脱敏日志」后，向本 Worker 的 `POST /v1/telemetry` 发送完整的脱敏诊断、原始日志、网络请求/RPC 包体结构与 SIM 国家/运营商信息（所有隐私字段均保留结构并统一替换为 `[Hidden]`）。
+2. Worker 校验 schema（`smartvowificall.telemetry.v2` / `v1`）与 512 KB 体积上限，并执行服务端二次深度脱敏（统一替换为 `[Hidden]`）。
+3. Worker 使用服务端加密变量 `GITHUB_TOKEN`，按日志 ID 写入私有仓库 `logs/YYYY/MM/DD/<logId>.json`（例如 `logs/2026/11/23/SVW-20261123-7A4F9C.json`），App 端会保存上传记录并支持一键复制日志 ID 供开发者查询。
 
 ## 三步部署
 

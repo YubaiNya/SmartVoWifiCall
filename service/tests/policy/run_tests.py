@@ -50,6 +50,7 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                  str(SOURCE / "engine/JsonCodec.java"),
                  str(SOURCE / "telemetry/EventRingBuffer.java"),
                  str(SOURCE / "telemetry/LogSanitizer.java"),
+                 str(SOURCE / "telemetry/NetworkLogBuffer.java"),
                  str(SOURCE / "telemetry/TelemetryClient.java"),
                  str(HERE / "TelemetrySanitizerTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetrySanitizerTest"], check=True)

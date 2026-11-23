@@ -481,6 +481,9 @@ public final class RootIdentityMain {
   private static final class Identity {
     int subId, slotId, simState, rawSimState, phoneId = -1, callState = -1, carrierId = -1;
     String iccid = "", homePlmn = "", label = "";
+    String countryIso = "", simOperatorName = "", networkCountryIso = "",
+        networkOperatorName = "", networkPlmn = "";
+    boolean embedded, opportunistic;
     String iccidSource = "UNAVAILABLE";
     boolean activeRecordIccidAvailable;
     final List<String> identityIssues = new ArrayList<>();
@@ -667,6 +670,19 @@ public final class RootIdentityMain {
     return normalizeIccid(found.getIccId());
   }
 
+  private static String perPhoneProp(String key, int phoneId) {
+    try {
+      String values = (String) Class.forName("android.os.SystemProperties")
+                          .getMethod("get", String.class, String.class)
+                          .invoke(null, key, "");
+      if (values == null || values.isEmpty()) return "";
+      String[] perPhone = values.split(",", -1);
+      return phoneId >= 0 && phoneId < perPhone.length ? perPhone[phoneId].trim() : "";
+    } catch (Exception ignored) {
+      return "";
+    }
+  }
+
   private static String currentHomePlmn(int phoneId) throws Exception {
     // This is the live SIM/HPLMN property read by AOSP getSimOperatorNumericForPhone. Do not use
     // gsm.operator.numeric (visited network) or a previously saved SubscriptionInfo/ICCID value.
@@ -695,12 +711,22 @@ public final class RootIdentityMain {
     row.carrierId = info.getCarrierId();
     CharSequence label = info.getCarrierName();
     row.label = label == null ? "" : label.toString();
+    row.countryIso = emptyIfNull(info.getCountryIso());
+    try { row.embedded = info.isEmbedded(); } catch (Throwable ignored) {}
+    try { row.opportunistic = info.isOpportunistic(); } catch (Throwable ignored) {}
     try {
       row.phoneId = subscriptionMapping("getPhoneId", row.subId);
       int currentSlot = subscriptionMapping("getSlotIndex", row.subId);
       if (row.phoneId < 0 || currentSlot != row.slotId) row.identityIssues.add("SUBSCRIPTION_MAPPING_CHANGED");
     } catch (Exception error) {
       row.identityIssues.add(readFailureCode("SUBSCRIPTION_MAPPING", error));
+    }
+    if (row.phoneId >= 0) {
+      if (row.countryIso.isEmpty()) row.countryIso = perPhoneProp("gsm.sim.operator.iso-country", row.phoneId);
+      row.simOperatorName = perPhoneProp("gsm.sim.operator.alpha", row.phoneId);
+      row.networkCountryIso = perPhoneProp("gsm.operator.iso-country", row.phoneId);
+      row.networkOperatorName = perPhoneProp("gsm.operator.alpha", row.phoneId);
+      row.networkPlmn = perPhoneProp("gsm.operator.numeric", row.phoneId);
     }
     try {
       if (row.phoneId >= 0) {
@@ -785,6 +811,14 @@ public final class RootIdentityMain {
                             .put("rawSimState", row.rawSimState)
                             .put("phoneId", row.phoneId)
                             .put("carrierId", row.carrierId)
+                            .put("countryIso", row.countryIso)
+                            .put("carrierName", row.label)
+                            .put("simOperatorName", row.simOperatorName)
+                            .put("networkCountryIso", row.networkCountryIso)
+                            .put("networkOperatorName", row.networkOperatorName)
+                            .put("networkPlmn", row.networkPlmn)
+                            .put("isEmbedded", row.embedded)
+                            .put("isOpportunistic", row.opportunistic)
                             .put("identityCode", row.identityCode())
                             .put("identityIssues", new JSONArray(row.identityIssues))
                            .put("callState", row.callState)

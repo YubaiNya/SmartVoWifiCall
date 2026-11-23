@@ -52,6 +52,7 @@ final class RuntimeController {
   final Map<Integer, String> lastSlotIdentity = new HashMap<>();
   final FallbackPolicy fallback = new FallbackPolicy();
   final EventRingBuffer events = new EventRingBuffer(200);
+  final NetworkLogBuffer networkLogs = new NetworkLogBuffer(80);
   final Set<Integer> fallbackReleasedSlots = ConcurrentHashMap.newKeySet();
   volatile Map<Integer, String> fallbackReasons = Collections.emptyMap();
   final Map<Integer, PolicyEngine.AppliedOverride> applied = new LinkedHashMap<>();
@@ -138,6 +139,67 @@ final class RuntimeController {
       done.accept("接口地址无效（需 HTTPS）：" + safeCode(e));
     }
   }
+  static final class TelemetryUploadRecord {
+    final String logId, trigger, code, path;
+    final long timestampMs;
+    final boolean ok;
+    final int bytes;
+    TelemetryUploadRecord(String logId, long timestampMs, String trigger, boolean ok,
+        String code, String path, int bytes) {
+      this.logId = logId == null ? "" : logId;
+      this.timestampMs = timestampMs;
+      this.trigger = trigger == null ? "manual" : trigger;
+      this.ok = ok;
+      this.code = code == null ? "" : code;
+      this.path = path == null ? "" : path;
+      this.bytes = Math.max(0, bytes);
+    }
+  }
+  List<TelemetryUploadRecord> telemetryUploadHistory() {
+    List<TelemetryUploadRecord> out = new ArrayList<>();
+    String raw = prefs.getString("telemetry_history_json", "");
+    if (raw.isEmpty()) return out;
+    try {
+      JSONArray arr = new JSONArray(raw);
+      for (int i = 0; i < arr.length(); i++) {
+        JSONObject o = arr.optJSONObject(i);
+        if (o == null) continue;
+        out.add(new TelemetryUploadRecord(
+            o.optString("logId", ""),
+            o.optLong("timestampMs", 0L),
+            o.optString("trigger", "manual"),
+            o.optBoolean("ok", false),
+            o.optString("code", ""),
+            o.optString("path", ""),
+            o.optInt("bytes", 0)));
+      }
+    } catch (Exception ignored) {
+    }
+    return out;
+  }
+  private synchronized void recordTelemetryUpload(TelemetryUploadRecord rec) {
+    List<TelemetryUploadRecord> list = new ArrayList<>();
+    list.add(rec);
+    for (TelemetryUploadRecord prev : telemetryUploadHistory()) {
+      if (list.size() >= 20) break;
+      list.add(prev);
+    }
+    JSONArray arr = new JSONArray();
+    for (TelemetryUploadRecord item : list) {
+      try {
+        arr.put(new JSONObject()
+            .put("logId", item.logId)
+            .put("timestampMs", item.timestampMs)
+            .put("trigger", item.trigger)
+            .put("ok", item.ok)
+            .put("code", item.code)
+            .put("path", item.path)
+            .put("bytes", item.bytes));
+      } catch (Exception ignored) {
+      }
+    }
+    prefs.edit().putString("telemetry_history_json", arr.toString()).commit();
+  }
   String telemetryLastStatus() {
     return prefs.getString("telemetry_last_status", "");
   }
@@ -150,6 +212,73 @@ final class RuntimeController {
     return id;
   }
   String buildSanitizedTelemetryJson(String trigger) {
+    long now = System.currentTimeMillis();
+    return buildSanitizedTelemetryJson(LogSanitizer.generateLogId(now), trigger, false);
+  }
+  void buildSanitizedTelemetryPreviewAsync(Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        long now = System.currentTimeMillis();
+        String json = buildSanitizedTelemetryJson(LogSanitizer.generateLogId(now), "manual", true);
+        String pretty;
+        try {
+          pretty = new JSONObject(json).toString(2);
+        } catch (Exception e) {
+          pretty = json;
+        }
+        done.accept(pretty);
+      } catch (Exception e) {
+        done.accept("生成预览失败：" + safeCode(e));
+      }
+    });
+  }
+  private List<Map<String, Object>> collectCombinedNetworkLogs(boolean includeRootTrace) {
+    List<Map<String, Object>> merged = new ArrayList<>();
+    if (includeRootTrace) {
+      try {
+        String lines = root.collectClashHttpTrace();
+        if (lines != null && !lines.isEmpty()) {
+          for (String line : lines.split("\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) continue;
+            try {
+              merged.add(JsonCodec.decodeObject(trimmed));
+            } catch (Exception ignored) {
+            }
+          }
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    merged.addAll(networkLogs.snapshot(80));
+    merged.sort(Comparator.comparing(m -> String.valueOf(m.getOrDefault("ts", ""))));
+    if (merged.size() > 100) {
+      return new ArrayList<>(merged.subList(merged.size() - 100, merged.size()));
+    }
+    return merged;
+  }
+  private List<Map<String, Object>> collectSanitizedClashConnections() {
+    List<Map<String, Object>> out = new ArrayList<>();
+    if (!clash.running) return out;
+    try {
+      JSONObject raw = root.clashConnections();
+      JSONArray arr = raw.optJSONArray("connections");
+      if (arr != null) {
+        int limit = Math.min(arr.length(), 60);
+        for (int i = 0; i < limit; i++) {
+          JSONObject o = arr.optJSONObject(i);
+          if (o == null) continue;
+          try {
+            out.add(JsonCodec.decodeObject(o.toString()));
+          } catch (Exception ignored) {
+          }
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return out;
+  }
+  String buildSanitizedTelemetryJson(String logId, String trigger, boolean includeRootLogs) {
     String versionName = "";
     int versionCode = 0;
     try {
@@ -158,14 +287,31 @@ final class RuntimeController {
       versionCode = (int) pi.getLongVersionCode();
     } catch (Exception ignored) {
     }
-    String abi = Build.SUPPORTED_ABIS != null && Build.SUPPORTED_ABIS.length > 0
-        ? Build.SUPPORTED_ABIS[0] : "";
+    List<String> supportedAbis = Build.SUPPORTED_ABIS == null
+        ? Collections.emptyList() : Arrays.asList(Build.SUPPORTED_ABIS);
+    String abi = supportedAbis.isEmpty() ? "" : supportedAbis.get(0);
     LogSanitizer.DeviceInfo dev = new LogSanitizer.DeviceInfo(
-        Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT, Build.VERSION.RELEASE, abi);
+        Build.MANUFACTURER,
+        Build.BRAND,
+        Build.MODEL,
+        Build.DEVICE,
+        Build.PRODUCT,
+        Build.HARDWARE,
+        Build.BOARD,
+        Build.VERSION.SDK_INT,
+        Build.VERSION.RELEASE,
+        Build.VERSION.SECURITY_PATCH,
+        Build.VERSION.INCREMENTAL,
+        abi,
+        supportedAbis,
+        Locale.getDefault().toLanguageTag(),
+        TimeZone.getDefault().getID(),
+        System.getProperty("os.version", ""),
+        Build.FINGERPRINT);
     ClashState cs = clash;
     LogSanitizer.ClashTelemetry clashTel = new LogSanitizer.ClashTelemetry(
         clashEnabled(), cs.hasProfile, cs.running, cs.tunUp, cs.nodes.size(),
-        cs.externalLan, cs.lastError);
+        cs.externalLan, cs.controllerPort, cs.netnsId, cs.lastError);
     List<LogSanitizer.SimTelemetry> simRows = new ArrayList<>();
     RootSupervisor.Snapshot snap = snapshot;
     InterfaceSnapshot inv = interfaces;
@@ -181,9 +327,25 @@ final class RuntimeController {
         if (!bindingMatches(b, s)) b = null;
         simRows.add(new LogSanitizer.SimTelemetry(
             s.policy.slotId,
+            s.policy.subId,
+            s.phoneId,
             s.policy.ready,
+            s.simState,
+            s.rawSimState,
+            s.identityCode,
+            s.identityIssues,
+            s.countryIso,
+            s.carrierName,
+            s.simOperatorName,
+            s.networkCountryIso,
+            s.networkOperatorName,
+            s.networkPlmn,
             s.policy.homePlmn,
+            s.carrierId,
+            s.embedded,
+            s.opportunistic,
             LogSanitizer.classifyEgress(sel, isTun),
+            sel,
             !preferredClashNode(s.policy.simKey).isEmpty(),
             Boolean.TRUE.equals(radioOff.get(s.policy.slotId)),
             featureMatches(s),
@@ -200,9 +362,39 @@ final class RuntimeController {
     }
     LogSanitizer.ServiceTelemetry svc = new LogSanitizer.ServiceTelemetry(
         enabled(), billable(), status, shutdownComplete, root.commandCount.get(), clashTel, simRows);
+    Map<String, Object> diagMap = null;
+    try {
+      diagMap = JsonCodec.decodeObject(diagnostics().toString());
+    } catch (Exception ignored) {
+    }
+    List<Map<String, Object>> ifaceList = new ArrayList<>();
+    if (inv != null) {
+      for (InterfaceSnapshot.Entry e : inv.entries.values()) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", e.name);
+        m.put("up", e.up);
+        m.put("available", e.available());
+        m.put("type", e.type());
+        m.put("voWifiTun", e.voWifiTun());
+        m.put("owners", new ArrayList<>(e.ownerPackages));
+        m.put("addresses", new ArrayList<>(e.addresses));
+        ifaceList.add(m);
+      }
+    }
+    List<Map<String, Object>> netLogs = collectCombinedNetworkLogs(includeRootLogs);
+    List<Map<String, Object>> clashConns =
+        includeRootLogs ? collectSanitizedClashConnections() : Collections.emptyList();
+    String rootLogsText = "";
+    if (includeRootLogs) {
+      try {
+        rootLogsText = root.collectRootLogs();
+      } catch (Exception e) {
+        rootLogsText = "ROOT_LOG_COLLECTION_FAILED: " + safeCode(e);
+      }
+    }
     return LogSanitizer.buildTelemetryPayload(
-        telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
-        dev, svc, events.snapshot(60));
+        logId, telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
+        dev, svc, diagMap, ifaceList, events.snapshot(120), netLogs, clashConns, rootLogsText);
   }
   void uploadTelemetryNow(String trigger, Consumer<String> done) {
     io.execute(() -> {
@@ -210,29 +402,51 @@ final class RuntimeController {
         done.accept("遥测正在上传中，请稍候");
         return;
       }
+      long now = System.currentTimeMillis();
+      String logId = LogSanitizer.generateLogId(now);
       try {
         String endpoint = telemetryEndpoint();
         if (endpoint.isEmpty()) {
           done.accept("请先填写 Cloudflare Worker 遥测接口地址");
           return;
         }
-        String payload = buildSanitizedTelemetryJson(trigger);
-        TelemetryClient.UploadResult result = TelemetryClient.upload(endpoint, payload, "");
-        long now = System.currentTimeMillis();
+        String payload = buildSanitizedTelemetryJson(logId, trigger, true);
+        TelemetryClient.UploadResult result =
+            TelemetryClient.upload(endpoint, payload, "", logId);
+        String finalLogId = result.logId.isEmpty() ? logId : result.logId;
         String summary = result.ok
-            ? "上传成功（" + result.code + "）"
-            : "上传失败（" + result.code + "）";
+            ? "上传成功 · ID: " + finalLogId
+            : "上传失败（" + result.code + "）· ID: " + finalLogId;
         prefs.edit()
-            .putLong("telemetry_last_upload_ms", now)
+            .putLong("telemetry_last_upload_ms", System.currentTimeMillis())
             .putString("telemetry_last_status", summary)
             .commit();
-        events.record(result.ok ? "I" : "W", "telemetry", "upload " + trigger + " " + result.code);
+        recordTelemetryUpload(new TelemetryUploadRecord(
+            finalLogId, System.currentTimeMillis(), trigger, result.ok,
+            result.code, result.recordPath, result.payloadBytes));
+        Map<String, Object> reqHdrs = new LinkedHashMap<>();
+        reqHdrs.put("Content-Type", "application/json; charset=utf-8");
+        reqHdrs.put("X-SmartVoWifiCall-Schema", LogSanitizer.SCHEMA);
+        reqHdrs.put("X-SmartVoWifiCall-Log-Id", finalLogId);
+        Map<String, Object> reqSummary = new LinkedHashMap<>();
+        reqSummary.put("schema", LogSanitizer.SCHEMA);
+        reqSummary.put("logId", finalLogId);
+        reqSummary.put("trigger", trigger);
+        reqSummary.put("payloadBytes", result.payloadBytes);
+        networkLogs.recordHttp("telemetry_http", "POST", endpoint, result.httpStatus,
+            result.durationMs, reqHdrs, reqSummary, result.responseHeaders, result.responseBody,
+            result.ok ? null : result.code);
+        events.record(result.ok ? "I" : "W", "telemetry",
+            "upload " + trigger + " id=" + finalLogId + " " + result.code);
         done.accept(summary);
       } catch (Exception e) {
         String code = safeCode(e);
-        prefs.edit().putString("telemetry_last_status", "上传失败（" + code + "）").commit();
-        events.record("W", "telemetry", "upload failed: " + code);
-        done.accept("上传失败：" + code);
+        String summary = "上传失败（" + code + "）· ID: " + logId;
+        prefs.edit().putString("telemetry_last_status", summary).commit();
+        recordTelemetryUpload(new TelemetryUploadRecord(
+            logId, System.currentTimeMillis(), trigger, false, code, "", 0));
+        events.record("W", "telemetry", "upload failed id=" + logId + ": " + code);
+        done.accept(summary);
       } finally {
         telemetryInFlight.set(false);
       }
@@ -249,13 +463,18 @@ final class RuntimeController {
     io.execute(() -> {
       try (ZipOutputStream zip = new ZipOutputStream(out)) {
         String modeNote = sanitizedOnly
-            ? "SmartVoWifiCall Sanitized Log Bundle (ICCID/IMSI/IMEI/phone/URL/node/IP redacted)\n"
+            ? "SmartVoWifiCall Sanitized Log Bundle (private fields replaced with [Hidden])\n"
             : "SmartVoWifiCall Raw Full Log Bundle (CONTAINS SENSITIVE DEVICE/SIM DATA - DO NOT SHARE PUBLICLY)\n";
         writeZipEntry(zip, "README.txt", modeNote);
-        writeZipEntry(zip, "telemetry-sanitized.json", buildSanitizedTelemetryJson("manual") + "\n");
+        long now = System.currentTimeMillis();
+        String logId = LogSanitizer.generateLogId(now);
+        writeZipEntry(zip, "telemetry-sanitized.json",
+            buildSanitizedTelemetryJson(logId, "manual", true) + "\n");
         String diag = diagnostics().toString(2) + "\n";
         writeZipEntry(zip, "diagnostics.json",
             sanitizedOnly ? LogSanitizer.sanitizeText(diag) : diag);
+        writeZipEntry(zip, "network-logs.json",
+            JsonCodec.encode(collectCombinedNetworkLogs(true)) + "\n");
         writeZipEntry(zip, "app-events.log", events.formatAll(sanitizedOnly));
         String rootLogs;
         try {
@@ -1099,6 +1318,12 @@ final class RuntimeController {
       if (snap != null) for (RootSupervisor.Sim s : snap.sims) {
         JSONObject row = new JSONObject().put("slot", s.policy.slotId).put("subId", s.policy.subId)
             .put("ready", s.policy.ready).put("homePlmn", s.policy.homePlmn)
+            .put("countryIso", s.countryIso).put("carrierName", s.carrierName)
+            .put("simOperatorName", s.simOperatorName)
+            .put("networkCountryIso", s.networkCountryIso)
+            .put("networkOperatorName", s.networkOperatorName)
+            .put("networkPlmn", s.networkPlmn)
+            .put("carrierId", s.carrierId).put("isEmbedded", s.embedded)
             .put("selectedInterface", selection(s.policy.simKey))
             .put("preferredClashNode", preferredClashNode(s.policy.simKey))
             .put("radioOff", Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
@@ -1163,6 +1388,18 @@ final class RuntimeController {
       this.clashNetnsId = clashNetnsId == null ? "" : clashNetnsId;
       registration = registrationFor(sim);
       engine = new EngineSession(sim.identity(), new AndroidTransport(context.getApplicationInfo().sourceDir), this, billable());
+      engine.setPacketObserver(new EngineRpcClient.PacketObserver() {
+        @Override
+        public void onRpc(String method, long requestId, long durationMs,
+            Map<String, Object> requestFrame, Map<String, Object> responseFrame, String error) {
+          networkLogs.recordRpc(sim.policy.slotId, method, requestId, durationMs,
+              requestFrame, responseFrame, error);
+        }
+        @Override
+        public void onEventFrame(String eventName, Map<String, Object> frame) {
+          networkLogs.recordEngineEvent(sim.policy.slotId, eventName, frame);
+        }
+      });
     }
     int slot() {
       return sim.policy.slotId;

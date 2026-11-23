@@ -41,6 +41,11 @@ public final class EngineRpcClient implements Closeable {
     void onEvent(EngineState.Event event);
     void onDisconnected(Throwable cause);
   }
+  public interface PacketObserver {
+    void onRpc(String method, long requestId, long durationMs,
+        Map<String, Object> requestFrame, Map<String, Object> responseFrame, String error);
+    void onEventFrame(String eventName, Map<String, Object> frame);
+  }
   public static final class RpcException extends IOException {
     public final long code;
     public final Map<String, Object> error;
@@ -76,6 +81,7 @@ public final class EngineRpcClient implements Closeable {
       Executors.newSingleThreadExecutor(daemon("engine-rpc-events"));
   private volatile Connection current;
   private volatile boolean closed;
+  private volatile PacketObserver packetObserver;
 
   public EngineRpcClient(String socketPath, TransportFactory factory, Listener listener) {
     if (socketPath == null || factory == null || listener == null)
@@ -83,6 +89,9 @@ public final class EngineRpcClient implements Closeable {
     this.socketPath = socketPath;
     this.factory = factory;
     this.listener = listener;
+  }
+  public void setPacketObserver(PacketObserver observer) {
+    this.packetObserver = observer;
   }
   private static ThreadFactory daemon(String name) {
     return task -> {
@@ -168,6 +177,7 @@ public final class EngineRpcClient implements Closeable {
         throw new IOException("Engine connection changed");
       pending.put(id, p);
     }
+    long startedNanos = System.nanoTime();
     try {
       writer.execute(() -> {
         if (pending.get(id) != p || current != c)
@@ -180,28 +190,64 @@ public final class EngineRpcClient implements Closeable {
           fail(c, e, true);
         }
       });
-      return p.response.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+      Map<String, Object> result = p.response.get(remainingNanos(deadline), TimeUnit.NANOSECONDS);
+      PacketObserver obs = packetObserver;
+      if (obs != null) {
+        Map<String, Object> respEnvelope = new LinkedHashMap<>();
+        respEnvelope.put("id", id);
+        respEnvelope.put("result", result);
+        try {
+          obs.onRpc(method, id, (System.nanoTime() - startedNanos) / 1_000_000L,
+              envelope, respEnvelope, null);
+        } catch (RuntimeException ignored) {
+        }
+      }
+      return result;
     } catch (TimeoutException e) {
       RequestTimeoutException timeout = new RequestTimeoutException(method, id);
       pending.remove(id, p);
       // An unfinished write can leave a partial JSON line; retire that transport.
       if (!p.written)
         fail(c, timeout, true);
+      notifyRpcError(method, id, startedNanos, envelope, null, "TIMEOUT");
       throw timeout;
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       if (!p.written)
         fail(c, e, true);
+      notifyRpcError(method, id, startedNanos, envelope, null, "INTERRUPTED");
       throw new IOException("Interrupted waiting for engine response", e);
     } catch (ExecutionException e) {
       Throwable cause = e.getCause();
+      if (cause instanceof RpcException) {
+        RpcException rpcErr = (RpcException) cause;
+        Map<String, Object> errEnvelope = new LinkedHashMap<>();
+        errEnvelope.put("id", id);
+        errEnvelope.put("error", rpcErr.error);
+        notifyRpcError(method, id, startedNanos, envelope, errEnvelope, "RPC_" + rpcErr.code);
+      } else {
+        notifyRpcError(method, id, startedNanos, envelope, null,
+            cause == null ? "FAILED" : cause.getClass().getSimpleName());
+      }
       if (cause instanceof IOException)
         throw (IOException) cause;
       throw new IOException("Engine request failed", cause);
     } catch (RejectedExecutionException e) {
+      notifyRpcError(method, id, startedNanos, envelope, null, "CLOSED");
       throw new IOException("Engine client is closed", e);
     } finally {
       pending.remove(id, p);
+    }
+  }
+
+  private void notifyRpcError(String method, long id, long startedNanos,
+      Map<String, Object> requestFrame, Map<String, Object> responseFrame, String error) {
+    PacketObserver obs = packetObserver;
+    if (obs == null) return;
+    try {
+      obs.onRpc(method, id, (System.nanoTime() - startedNanos) / 1_000_000L,
+          requestFrame, responseFrame, error);
+    } catch (RuntimeException ignored) {
     }
   }
 
@@ -211,6 +257,10 @@ public final class EngineRpcClient implements Closeable {
         Map<String, Object> frame = JsonCodec.decodeObject(readLine(c.input));
         String event = EngineState.text(frame, "event");
         if (event != null && !event.isEmpty()) {
+          PacketObserver obs = packetObserver;
+          if (obs != null) {
+            try { obs.onEventFrame(event, frame); } catch (RuntimeException ignored) {}
+          }
           EngineState.Event item =
               new EngineState.Event(event, object(frame.get("data"), "event data"));
           dispatch(() -> {

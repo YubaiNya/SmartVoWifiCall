@@ -9,6 +9,8 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -16,21 +18,33 @@ import java.util.Map;
  * Never embeds any GitHub token and strictly validates endpoint scheme and payload size.
  */
 public final class TelemetryClient {
-  public static final int MAX_PAYLOAD_BYTES = 64 * 1024;
+  public static final int MAX_PAYLOAD_BYTES = 512 * 1024;
   private static final int CONNECT_TIMEOUT_MS = 10000;
-  private static final int READ_TIMEOUT_MS = 15000;
+  private static final int READ_TIMEOUT_MS = 20000;
 
   public static final class UploadResult {
     public final boolean ok;
     public final int httpStatus;
     public final String code;
+    public final String logId;
     public final String recordPath;
+    public final int payloadBytes;
+    public final long durationMs;
+    public final Map<String, Object> responseHeaders;
+    public final String responseBody;
 
-    public UploadResult(boolean ok, int httpStatus, String code, String recordPath) {
+    public UploadResult(boolean ok, int httpStatus, String code, String logId, String recordPath,
+        int payloadBytes, long durationMs, Map<String, Object> responseHeaders,
+        String responseBody) {
       this.ok = ok;
       this.httpStatus = httpStatus;
       this.code = code == null ? "" : code;
+      this.logId = logId == null ? "" : logId;
       this.recordPath = recordPath == null ? "" : recordPath;
+      this.payloadBytes = payloadBytes;
+      this.durationMs = durationMs;
+      this.responseHeaders = responseHeaders == null ? new LinkedHashMap<>() : responseHeaders;
+      this.responseBody = responseBody == null ? "" : responseBody;
     }
   }
 
@@ -71,6 +85,11 @@ public final class TelemetryClient {
 
   public static UploadResult upload(String endpointUrl, String payloadJson, String optionalKey)
       throws IOException {
+    return upload(endpointUrl, payloadJson, optionalKey, "");
+  }
+
+  public static UploadResult upload(String endpointUrl, String payloadJson, String optionalKey,
+      String logIdHint) throws IOException {
     String urlText = normalizeAndValidateEndpoint(endpointUrl);
     if (payloadJson == null || payloadJson.isEmpty()) {
       throw new IllegalArgumentException("TELEMETRY_PAYLOAD_EMPTY");
@@ -80,6 +99,7 @@ public final class TelemetryClient {
       throw new IllegalArgumentException("TELEMETRY_PAYLOAD_TOO_LARGE");
     }
 
+    long started = System.nanoTime();
     HttpURLConnection conn = (HttpURLConnection) new URL(urlText).openConnection();
     conn.setInstanceFollowRedirects(false);
     conn.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -88,8 +108,11 @@ public final class TelemetryClient {
     conn.setDoOutput(true);
     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
     conn.setRequestProperty("Accept", "application/json");
-    conn.setRequestProperty("User-Agent", "SmartVoWifiCall-Telemetry/1.0");
+    conn.setRequestProperty("User-Agent", "SmartVoWifiCall-Telemetry/2.0");
     conn.setRequestProperty("X-SmartVoWifiCall-Schema", LogSanitizer.SCHEMA);
+    if (logIdHint != null && !logIdHint.trim().isEmpty()) {
+      conn.setRequestProperty("X-SmartVoWifiCall-Log-Id", logIdHint.trim());
+    }
     if (optionalKey != null && !optionalKey.trim().isEmpty()) {
       conn.setRequestProperty("X-Telemetry-Key", optionalKey.trim());
     }
@@ -99,11 +122,21 @@ public final class TelemetryClient {
         out.write(body);
       }
       int status = conn.getResponseCode();
+      long durationMs = (System.nanoTime() - started) / 1_000_000L;
+      Map<String, Object> respHeaders = new LinkedHashMap<>();
+      Map<String, List<String>> rawHeaders = conn.getHeaderFields();
+      if (rawHeaders != null) {
+        for (Map.Entry<String, List<String>> e : rawHeaders.entrySet()) {
+          if (e.getKey() == null || e.getValue() == null || e.getValue().isEmpty()) continue;
+          respHeaders.put(e.getKey(), String.join(", ", e.getValue()));
+        }
+      }
       InputStream stream = status >= 200 && status < 400
           ? conn.getInputStream() : conn.getErrorStream();
       String responseText = stream == null ? "" : readLimited(stream, 8192);
       String code = status >= 200 && status < 300 ? "TELEMETRY_STORED" : "HTTP_" + status;
       String path = "";
+      String resolvedLogId = logIdHint == null ? "" : logIdHint;
       if (!responseText.isEmpty()) {
         try {
           Map<String, Object> parsed = JsonCodec.decodeObject(responseText);
@@ -111,11 +144,14 @@ public final class TelemetryClient {
           if (c instanceof String && !((String) c).isEmpty()) code = (String) c;
           Object p = parsed.get("path");
           if (p instanceof String) path = (String) p;
+          Object id = parsed.get("logId");
+          if (id instanceof String && !((String) id).isEmpty()) resolvedLogId = (String) id;
         } catch (IOException ignored) {
         }
       }
       boolean ok = status >= 200 && status < 300;
-      return new UploadResult(ok, status, code, path);
+      return new UploadResult(ok, status, code, resolvedLogId, path, body.length, durationMs,
+          respHeaders, responseText);
     } finally {
       conn.disconnect();
     }

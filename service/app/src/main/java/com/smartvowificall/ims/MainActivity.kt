@@ -266,6 +266,11 @@ class MainActivity : ComponentActivity() {
                     onPreviewTelemetry = {
                         showTelemetryPreviewDialog()
                     },
+                    onCopyLogId = { id ->
+                        val cm = getSystemService(ClipboardManager::class.java)
+                        cm?.setPrimaryClip(ClipData.newPlainText("日志 ID", id))
+                        logFeedback = "已复制日志 ID：$id（提供给开发者即可查询）"
+                    },
                     onExportSanitizedLogs = {
                         pendingExportSanitized = true
                         exportLogsLauncher.launch("smartvowificall-logs-sanitized.zip")
@@ -307,22 +312,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showTelemetryPreviewDialog() {
-        val raw = rt.buildSanitizedTelemetryJson("manual")
-        val pretty = try {
-            org.json.JSONObject(raw).toString(2)
-        } catch (_: Exception) {
-            raw
-        }
-        AlertDialog.Builder(this)
-            .setTitle("脱敏遥测内容预览")
-            .setMessage(pretty)
-            .setPositiveButton("关闭", null)
-            .setNeutralButton("复制") { _, _ ->
-                val cm = getSystemService(ClipboardManager::class.java)
-                cm?.setPrimaryClip(ClipData.newPlainText("遥测预览", pretty))
-                logFeedback = "已复制脱敏遥测 JSON"
+        logFeedback = "正在收集脱敏日志预览…"
+        rt.buildSanitizedTelemetryPreviewAsync { pretty ->
+            runOnUiThread {
+                logFeedback = ""
+                val display = if (pretty.length > 48000) {
+                    pretty.substring(0, 48000) + "\n\n...(预览仅展示前 48KB，共 ${pretty.length / 1024} KB；点“复制”可复制完整内容)..."
+                } else {
+                    pretty
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("脱敏遥测内容预览（[Hidden] 为已隐藏隐私）")
+                    .setMessage(display)
+                    .setPositiveButton("关闭", null)
+                    .setNeutralButton("复制") { _, _ ->
+                        val cm = getSystemService(ClipboardManager::class.java)
+                        cm?.setPrimaryClip(ClipData.newPlainText("遥测预览", pretty))
+                        logFeedback = "已复制完整脱敏遥测 JSON"
+                    }
+                    .show()
             }
-            .show()
+        }
     }
 
     private fun confirmRawLogExport() {
@@ -490,6 +500,29 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val timeFmt = java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.getDefault())
+        val historyList = rt.telemetryUploadHistory().map { rec ->
+            val timeLabel = if (rec.timestampMs > 0L) timeFmt.format(java.util.Date(rec.timestampMs)) else ""
+            val triggerLabel = when (rec.trigger) {
+                "periodic" -> "定时"
+                "state_change" -> "状态变化"
+                else -> "手动"
+            }
+            val sizeLabel = when {
+                rec.bytes <= 0 -> ""
+                rec.bytes < 1024 -> "${rec.bytes} B"
+                else -> "${(rec.bytes + 512) / 1024} KB"
+            }
+            TelemetryUploadRecordUi(
+                logId = rec.logId,
+                timeLabel = timeLabel,
+                triggerLabel = triggerLabel,
+                ok = rec.ok,
+                code = rec.code,
+                sizeLabel = sizeLabel
+            )
+        }
+
         uiState = AppUiState(
             appVersion = installedVersionName,
             enabled = rt.enabled(),
@@ -520,7 +553,8 @@ class MainActivity : ComponentActivity() {
             connectionsError = conns.error,
             telemetryEnabled = rt.telemetryEnabled(),
             telemetryEndpoint = rt.telemetryEndpoint(),
-            telemetryLastStatus = rt.telemetryLastStatus()
+            telemetryLastStatus = rt.telemetryLastStatus(),
+            telemetryHistory = historyList
         )
     }
 }
@@ -596,6 +630,7 @@ private fun MainShell(
     onSaveTelemetryEndpoint: (String) -> Unit,
     onUploadTelemetryNow: () -> Unit,
     onPreviewTelemetry: () -> Unit,
+    onCopyLogId: (String) -> Unit,
     onExportSanitizedLogs: () -> Unit,
     onExportRawLogs: () -> Unit
 ) {
@@ -684,6 +719,7 @@ private fun MainShell(
                         onSaveTelemetryEndpoint = onSaveTelemetryEndpoint,
                         onUploadTelemetryNow = onUploadTelemetryNow,
                         onPreviewTelemetry = onPreviewTelemetry,
+                        onCopyLogId = onCopyLogId,
                         onExportSanitizedLogs = onExportSanitizedLogs,
                         onExportRawLogs = onExportRawLogs
                     )
