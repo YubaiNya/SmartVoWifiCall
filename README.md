@@ -13,22 +13,15 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-1D1D1F?style=flat-square" alt="License GPL-3.0"></a>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.5--dev-0071E3?style=flat-square" alt="Version v0.4.5-dev"></a>
-  <img src="https://img.shields.io/badge/Android-13%E2%80%9317%20Root-1D1D1F?style=flat-square" alt="Android 13-17 Root">
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat-square" alt="Issues"></a>
-  <a href="https://ifdian.net/a/YubaiNya"><img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946CE6?style=flat-square&logo=buy-me-a-coffee&logoColor=white" alt="爱发电"></a>
-  <a href="https://linux.do/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.Do-YubaiNya-1D1D1F?style=flat-square&logo=discourse&logoColor=white" alt="Linux.Do"></a>
-  <a href="https://linux.sb/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.sb-YubaiNya-0071E3?style=flat-square&logo=linux&logoColor=white" alt="Linux.sb"></a>
-  <a href="https://forum.naixi.net/home.php?mod=space&username=yubai"><img src="https://img.shields.io/badge/%E5%A5%B6%E6%98%94%E8%AE%BA%E5%9D%9B-yubai-6E6E73?style=flat-square&logo=discourse&logoColor=white" alt="奶昔论坛"></a>
-</p>
-
-<p>
-  <a href="#为什么做它">为什么做它</a> &nbsp;·&nbsp;
-  <a href="#工作原理">工作原理</a> &nbsp;·&nbsp;
-  <a href="#三步上手">三步上手</a> &nbsp;·&nbsp;
-  <a href="#开发与文档">开发与文档</a> &nbsp;·&nbsp;
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases">下载模块</a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.5--dev-0071E3?style=flat" alt="Release v0.4.5-dev"></a>
+  <img src="https://img.shields.io/badge/Android-13%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 13-17 Root">
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
+  <br>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-1D1D1F?style=flat" alt="License GPL-3.0"></a>
+  <a href="https://ifdian.net/a/YubaiNya"><img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946CE6?style=flat&logo=buy-me-a-coffee&logoColor=white" alt="爱发电"></a>
+  <a href="https://linux.do/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.Do-YubaiNya-1D1D1F?style=flat&logo=discourse&logoColor=white" alt="Linux.Do"></a>
+  <a href="https://linux.sb/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.sb-YubaiNya-0071E3?style=flat&logo=linux&logoColor=white" alt="Linux.sb"></a>
+  <a href="https://forum.naixi.net/home.php?mod=space&username=yubai"><img src="https://img.shields.io/badge/%E5%A5%B6%E6%98%94%E8%AE%BA%E5%9D%9B-yubai-6E6E73?style=flat&logo=discourse&logoColor=white" alt="奶昔论坛"></a>
 </p>
 
 <br>
@@ -88,7 +81,7 @@ flowchart LR
 **适用设备**：已 Root（KernelSU / SukiSU / Magisk）的 arm64 Android 13–17 设备，重点在 Xiaomi 15 / Android 17 上持续验证。
 
 1. **刷入模块并重启**
-   前往 [Releases](https://github.com/YubaiNya/SmartVoWifiCall/releases) 下载 `SmartVoWifiCall-module.zip`，在 KernelSU / Magisk 中刷入后重启。模块会自动安装或覆盖升级随包 APK，保留原有设置。
+   前往 Releases 下载 `SmartVoWifiCall-module.zip`，在 KernelSU / Magisk 中刷入后重启。模块会自动安装或覆盖升级随包 APK，保留原有设置。
 2. **导入代理并选节点**
    打开 SmartVoWifiCall 并授予 Root 权限，在「代理」页填入订阅链接或导入 YAML，选择对应海外卡归属地区的节点。
 3. **开启海外卡网络通话**
@@ -104,16 +97,16 @@ flowchart LR
 
 ## 开发与文档
 
-仓库仅保存源码、测试、模块脚本、文档与交付物校验哈希，不包含签名私钥、个人订阅配置及第三方预编译二进制（来源与 SHA-256 见 [`service/deps/`](./service/deps)）。
+仓库仅保存源码、测试、模块脚本、文档与交付物校验哈希，不包含签名私钥、个人订阅配置及第三方预编译二进制（来源与 SHA-256 见 `service/deps/`）。
 
 | 目录 | 用途 |
 | --- | --- |
-| [`service/app/`](./service/app) | 独立 `ImsService`、策略与回退引擎、Root 辅助与 Compose 界面 |
-| [`service/module/`](./service/module) | 模块安装脚本、引擎控制与 Clash 命名空间隔离脚本 |
-| [`service/tests/`](./service/tests) | 策略、单卡互斥、Clash 净化、通话/音频与生命周期回归测试 |
-| [`service/tools/`](./service/tools) | 一键构建、源码打包与交付物完整性校验脚本 |
-| [`VERSION_HISTORY.md`](./VERSION_HISTORY.md) | 完整版本迭代与真机实测记录 |
-| [`service/dist/SHA256.json`](./service/dist/SHA256.json) | 交付物哈希校验清单 |
+| `service/app/` | 独立 `ImsService`、策略与回退引擎、Root 辅助与 Compose 界面 |
+| `service/module/` | 模块安装脚本、引擎控制与 Clash 命名空间隔离脚本 |
+| `service/tests/` | 策略、单卡互斥、Clash 净化、通话/音频与生命周期回归测试 |
+| `service/tools/` | 一键构建、源码打包与交付物完整性校验脚本 |
+| `VERSION_HISTORY.md` | 完整版本迭代与真机实测记录 |
+| `service/dist/SHA256.json` | 交付物哈希校验清单 |
 
 <details>
 <summary><strong>构建命令与技术验证文档</strong></summary>
@@ -134,11 +127,12 @@ python service/tools/build.py
 python service/tools/verify_artifacts.py
 ```
 
+- [版本迭代记录（VERSION_HISTORY.md）](./VERSION_HISTORY.md)
 - [服务架构与构建详解（service/README.md）](./service/README.md)
 - [内置 Clash 隔离命名空间、节能与实机验证](./service/docs/BUILTIN_CLASH_VALIDATION.md)
 - [通话终结与麦克风上行修复验证](./service/docs/CALL_FIX_VALIDATION.md)
 - [单卡蜂窝互斥（enableModemForSlot）验证](./service/docs/EXCLUSIVE_RADIO_VALIDATION.md)
-- [TUN 出口策略与自动回退验证](./service/docs/TUN_POLICY_VALIDATION.md) · [Provider 路由验证](./service/docs/IMS_FALLBACK_VALIDATION.md)
+- [TUN 出口策略验证](./service/docs/TUN_POLICY_VALIDATION.md) · [Provider 路由验证](./service/docs/IMS_FALLBACK_VALIDATION.md)
 - [单 ZIP 自动安装 APK 验证](./service/docs/AUTO_APK_VALIDATION.md) · [引擎日志池隔离补丁](./service/docs/ENGINE_ISOLATED_LOG_POOL.md)
 
 </details>
@@ -149,8 +143,14 @@ python service/tools/verify_artifacts.py
 
 <div align="center">
 
-<p>如果 SmartVoWifiCall 帮到了你，欢迎在 <strong><a href="https://ifdian.net/a/YubaiNya">爱发电</a></strong> 支持作者，或前往 <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues">Issues</a> 反馈问题与建议。</p>
+<p>如果 SmartVoWifiCall 帮到了你，欢迎赞助支持持续更新。</p>
 
-<p>基于 <a href="./LICENSE">GPL-3.0</a> 开源 · 致谢 <a href="https://github.com/MetaCubeX/mihomo">mihomo</a>、<a href="https://github.com/compose-miuix-ui/miuix">Miuix</a>、<a href="https://github.com/Kyant0/AndroidLiquidGlass">AndroidLiquidGlass</a> 与 VoWiFi Engine</p>
+<p>
+  <a href="https://ifdian.net/a/YubaiNya">
+    <img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946CE6?style=for-the-badge&logo=buy-me-a-coffee&logoColor=white" alt="爱发电赞助作者" height="34">
+  </a>
+</p>
+
+<p>基于 GPL-3.0 开源 · 致谢 mihomo、Miuix、AndroidLiquidGlass 与 VoWiFi Engine</p>
 
 </div>
