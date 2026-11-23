@@ -60,6 +60,8 @@ class MainActivity : ComponentActivity() {
     private var overviewFeedback by mutableStateOf("")
     private var clashFeedback by mutableStateOf("")
     private var connectionsFeedback by mutableStateOf("")
+    private var logFeedback by mutableStateOf("")
+    private var pendingExportSanitized: Boolean = true
     private var connectionsSnapshot by mutableStateOf(RuntimeController.ConnectionsSnapshot.EMPTY)
 
     private val audioPermLauncher =
@@ -73,6 +75,13 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
                 importYamlFromUri(uri)
+            }
+        }
+
+    private val exportLogsLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri: Uri? ->
+            if (uri != null) {
+                exportLogsToUri(uri, pendingExportSanitized)
             }
         }
 
@@ -105,6 +114,7 @@ class MainActivity : ComponentActivity() {
                     overviewFeedback = overviewFeedback,
                     clashFeedback = clashFeedback,
                     connectionsFeedback = connectionsFeedback,
+                    logFeedback = logFeedback,
                     onPollController = {
                         if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                             syncStateFromController()
@@ -230,6 +240,38 @@ class MainActivity : ComponentActivity() {
                         val cm = getSystemService(ClipboardManager::class.java)
                         cm?.setPrimaryClip(ClipData.newPlainText(label, value))
                         connectionsFeedback = "已复制$label"
+                    },
+                    onToggleTelemetry = { on ->
+                        rt.setTelemetryEnabled(on)
+                        logFeedback = if (on) "已开启脱敏遥测上传" else "已关闭遥测上传"
+                        syncStateFromController()
+                    },
+                    onSaveTelemetryEndpoint = { url ->
+                        rt.setTelemetryEndpoint(url) { msg ->
+                            runOnUiThread {
+                                logFeedback = msg
+                                syncStateFromController()
+                            }
+                        }
+                    },
+                    onUploadTelemetryNow = {
+                        logFeedback = "正在上传脱敏遥测日志…"
+                        rt.uploadTelemetryNow("manual") { msg ->
+                            runOnUiThread {
+                                logFeedback = msg
+                                syncStateFromController()
+                            }
+                        }
+                    },
+                    onPreviewTelemetry = {
+                        showTelemetryPreviewDialog()
+                    },
+                    onExportSanitizedLogs = {
+                        pendingExportSanitized = true
+                        exportLogsLauncher.launch("smartvowificall-logs-sanitized.zip")
+                    },
+                    onExportRawLogs = {
+                        confirmRawLogExport()
                     }
                 )
             }
@@ -262,6 +304,57 @@ class MainActivity : ComponentActivity() {
                 syncStateFromController()
             }
             .show()
+    }
+
+    private fun showTelemetryPreviewDialog() {
+        val raw = rt.buildSanitizedTelemetryJson("manual")
+        val pretty = try {
+            org.json.JSONObject(raw).toString(2)
+        } catch (_: Exception) {
+            raw
+        }
+        AlertDialog.Builder(this)
+            .setTitle("脱敏遥测内容预览")
+            .setMessage(pretty)
+            .setPositiveButton("关闭", null)
+            .setNeutralButton("复制") { _, _ ->
+                val cm = getSystemService(ClipboardManager::class.java)
+                cm?.setPrimaryClip(ClipData.newPlainText("遥测预览", pretty))
+                logFeedback = "已复制脱敏遥测 JSON"
+            }
+            .show()
+    }
+
+    private fun confirmRawLogExport() {
+        AlertDialog.Builder(this)
+            .setTitle("导出原始全部日志")
+            .setMessage("原始日志可能包含 SIM 信息、网络地址与运行细节，仅限本地排查问题，请勿直接公开分享。确定导出吗？")
+            .setPositiveButton("导出原始日志") { _, _ ->
+                pendingExportSanitized = false
+                exportLogsLauncher.launch("smartvowificall-logs-raw.zip")
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun exportLogsToUri(uri: Uri, sanitizedOnly: Boolean) {
+        logFeedback = if (sanitizedOnly) "正在打包脱敏日志…" else "正在打包全部原始日志…"
+        val stream = try {
+            contentResolver.openOutputStream(uri)
+        } catch (e: Exception) {
+            logFeedback = "无法创建导出文件：${RuntimeController.safeCode(e)}"
+            return
+        }
+        if (stream == null) {
+            logFeedback = "无法打开导出文件"
+            return
+        }
+        rt.exportFullLogs(sanitizedOnly, stream) { msg ->
+            runOnUiThread {
+                logFeedback = msg
+                syncStateFromController()
+            }
+        }
     }
 
     private fun importYamlFromUri(uri: Uri) {
@@ -424,7 +517,10 @@ class MainActivity : ComponentActivity() {
             uploadTotal = conns.uploadTotal,
             memoryBytes = conns.memory,
             connections = connList,
-            connectionsError = conns.error
+            connectionsError = conns.error,
+            telemetryEnabled = rt.telemetryEnabled(),
+            telemetryEndpoint = rt.telemetryEndpoint(),
+            telemetryLastStatus = rt.telemetryLastStatus()
         )
     }
 }
@@ -476,6 +572,7 @@ private fun MainShell(
     overviewFeedback: String,
     clashFeedback: String,
     connectionsFeedback: String,
+    logFeedback: String,
     onPollController: () -> Unit,
     onPollConnections: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
@@ -494,7 +591,13 @@ private fun MainShell(
     onCloseAllConnections: () -> Unit,
     onUpdateController: (Boolean, Int) -> Unit,
     onRotateSecret: () -> Unit,
-    onCopyText: (String, String) -> Unit
+    onCopyText: (String, String) -> Unit,
+    onToggleTelemetry: (Boolean) -> Unit,
+    onSaveTelemetryEndpoint: (String) -> Unit,
+    onUploadTelemetryNow: () -> Unit,
+    onPreviewTelemetry: () -> Unit,
+    onExportSanitizedLogs: () -> Unit,
+    onExportRawLogs: () -> Unit
 ) {
     val p = LocalApplePalette.current
 
@@ -575,7 +678,14 @@ private fun MainShell(
                     )
                     else -> NetworkPage(
                         state = state,
-                        onRefreshAll = onRefreshAll
+                        logFeedback = logFeedback,
+                        onRefreshAll = onRefreshAll,
+                        onToggleTelemetry = onToggleTelemetry,
+                        onSaveTelemetryEndpoint = onSaveTelemetryEndpoint,
+                        onUploadTelemetryNow = onUploadTelemetryNow,
+                        onPreviewTelemetry = onPreviewTelemetry,
+                        onExportSanitizedLogs = onExportSanitizedLogs,
+                        onExportRawLogs = onExportRawLogs
                     )
                 }
             }

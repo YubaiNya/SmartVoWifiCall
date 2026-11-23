@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.5--dev-0071E3?style=flat" alt="Release v0.4.5-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.6--dev-0071E3?style=flat" alt="Release v0.4.6-dev"></a>
   <img src="https://img.shields.io/badge/Android-13%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 13-17 Root">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
   <br>
@@ -110,6 +110,7 @@ flowchart LR
 | `service/module/` | 模块安装脚本、引擎控制与 Clash 命名空间隔离脚本 |
 | `service/tests/` | 策略、单卡互斥、Clash 净化、通话/音频与生命周期回归测试 |
 | `service/tools/` | 一键构建、源码打包与交付物完整性校验脚本 |
+| `telemetry-worker/` | 可选 Cloudflare Worker 脱敏遥测中转服务（写入私有 GitHub 仓库） |
 | `VERSION_HISTORY.md` | 完整版本迭代与真机实测记录 |
 | `service/dist/SHA256.json` | 交付物哈希校验清单 |
 

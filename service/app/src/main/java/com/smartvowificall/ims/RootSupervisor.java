@@ -243,4 +243,23 @@ final class RootSupervisor {
       throw new IOException("ENGINE_OWNERSHIP_UNKNOWN");
     return state.getBoolean("running");
   }
+  String collectRootLogs() throws Exception {
+    String script = "echo '=== PROCESSES ===';"
+        + "ps -A 2>/dev/null | grep -iE 'smartvowifi|vowifi-engine|mihomo' || true;"
+        + "echo '=== IMS OVERRIDES ===';"
+        + "echo \"slot0=$(cmd phone ims get-ims-service -s 0 -c -f 1 2>/dev/null || true)\";"
+        + "echo \"slot1=$(cmd phone ims get-ims-service -s 1 -c -f 1 2>/dev/null || true)\";"
+        + "echo '=== RADIO & IMS JOURNALS ===';"
+        + "for f in /data/adb/smartvowificall_ims/radio/*.json /data/adb/smartvowificall_ims/ims/*.json; do "
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; cat \"$f\"; echo; }; done;"
+        + "echo '=== LAUNCHER LOGS (TAIL 64KB) ===';"
+        + "for f in /data/adb/smartvowificall_ims/run/*.launcher.log; do "
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
+        + "echo '=== ENGINE LOGS (TAIL 64KB) ===';"
+        + "for f in /data/adb/smartvowificall_ims/logs/*/*.log /data/adb/smartvowificall_ims/logs/*/diagnostic.jsonl; do "
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
+        + "echo '=== LOGCAT (FILTERED TAIL 400) ===';"
+        + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|ImsResolver|ImsServiceController' | tail -n 400 || true";
+    return run(script);
+  }
 }

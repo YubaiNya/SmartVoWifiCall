@@ -1,0 +1,12 @@
+name = "smartvowificall-telemetry"
+main = "src/index.js"
+compatibility_date = "2025-05-01"
+
+[vars]
+GITHUB_REPO = "YubaiNya/SmartVoWifiCall-Telemetry"
+GITHUB_BRANCH = "main"
+
+# Set secret via CLI (never commit tokens):
+#   wrangler secret put GITHUB_TOKEN
+# Optional shared client key (if you want to restrict public writes):
+#   wrangler secret put INGEST_TOKEN

@@ -1,15 +1,22 @@
 package com.smartvowificall.ims;
 import android.content.*;
+import android.content.pm.PackageInfo;
 import android.net.*;
+import android.os.Build;
 import android.telephony.ims.*;
 import android.telephony.ims.stub.*;
 import com.smartvowificall.ims.clash.*;
 import com.smartvowificall.ims.engine.*;
 import com.smartvowificall.ims.network.*;
 import com.smartvowificall.ims.policy.*;
+import com.smartvowificall.ims.telemetry.*;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 import org.json.*;
 
 final class RuntimeController {
@@ -44,6 +51,7 @@ final class RuntimeController {
   final Map<Integer, Long> lastRebindNanos = new HashMap<>();
   final Map<Integer, String> lastSlotIdentity = new HashMap<>();
   final FallbackPolicy fallback = new FallbackPolicy();
+  final EventRingBuffer events = new EventRingBuffer(200);
   final Set<Integer> fallbackReleasedSlots = ConcurrentHashMap.newKeySet();
   volatile Map<Integer, String> fallbackReasons = Collections.emptyMap();
   final Map<Integer, PolicyEngine.AppliedOverride> applied = new LinkedHashMap<>();
@@ -54,6 +62,8 @@ final class RuntimeController {
   volatile boolean shutdownComplete, lastFullSyncSucceeded;
   private volatile boolean clashRestartPending;
   private volatile String lastAutoClashSimKey = "";
+  private final java.util.concurrent.atomic.AtomicBoolean telemetryInFlight =
+      new java.util.concurrent.atomic.AtomicBoolean(false);
   final Map<Integer, NewMmTelFeature> features = new ConcurrentHashMap<>();
   final Map<Integer, ImsRegistrationImplBase> registrations = new ConcurrentHashMap<>();
   RuntimeController(Context c) {
@@ -94,8 +104,178 @@ final class RuntimeController {
         fallbackReleasedSlots.clear();
         lastRebindNanos.clear();
       }
+      events.record("I", "policy", "manual retry requested");
       kick();
     });
+  }
+  boolean telemetryEnabled() {
+    // Strictly opt-in: disabled by default until user enables it.
+    return prefs.getBoolean("telemetry_enabled", false);
+  }
+  void setTelemetryEnabled(boolean enabled) {
+    prefs.edit().putBoolean("telemetry_enabled", enabled).commit();
+    events.record("I", "telemetry", enabled ? "enabled" : "disabled");
+  }
+  String telemetryEndpoint() {
+    return prefs.getString("telemetry_endpoint", "");
+  }
+  void setTelemetryEndpoint(String url, Consumer<String> done) {
+    String trimmed = url == null ? "" : url.trim();
+    if (trimmed.isEmpty()) {
+      prefs.edit().remove("telemetry_endpoint").commit();
+      done.accept("已清空遥测接口地址");
+      return;
+    }
+    try {
+      String normalized = TelemetryClient.normalizeAndValidateEndpoint(trimmed);
+      prefs.edit().putString("telemetry_endpoint", normalized).commit();
+      events.record("I", "telemetry", "endpoint updated");
+      done.accept("已保存遥测接口地址");
+    } catch (IllegalArgumentException e) {
+      done.accept("接口地址无效（需 HTTPS）：" + safeCode(e));
+    }
+  }
+  String telemetryLastStatus() {
+    return prefs.getString("telemetry_last_status", "");
+  }
+  private String telemetryInstallId() {
+    String id = prefs.getString("telemetry_install_id", "");
+    if (id.isEmpty()) {
+      id = UUID.randomUUID().toString();
+      prefs.edit().putString("telemetry_install_id", id).commit();
+    }
+    return id;
+  }
+  String buildSanitizedTelemetryJson(String trigger) {
+    String versionName = "";
+    int versionCode = 0;
+    try {
+      PackageInfo pi = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
+      versionName = pi.versionName == null ? "" : pi.versionName;
+      versionCode = (int) pi.getLongVersionCode();
+    } catch (Exception ignored) {
+    }
+    String abi = Build.SUPPORTED_ABIS != null && Build.SUPPORTED_ABIS.length > 0
+        ? Build.SUPPORTED_ABIS[0] : "";
+    LogSanitizer.DeviceInfo dev = new LogSanitizer.DeviceInfo(
+        Build.MANUFACTURER, Build.MODEL, Build.VERSION.SDK_INT, Build.VERSION.RELEASE, abi);
+    ClashState cs = clash;
+    LogSanitizer.ClashTelemetry clashTel = new LogSanitizer.ClashTelemetry(
+        clashEnabled(), cs.hasProfile, cs.running, cs.tunUp, cs.nodes.size(),
+        cs.externalLan, cs.lastError);
+    List<LogSanitizer.SimTelemetry> simRows = new ArrayList<>();
+    RootSupervisor.Snapshot snap = snapshot;
+    InterfaceSnapshot inv = interfaces;
+    if (snap != null) {
+      for (RootSupervisor.Sim s : snap.sims) {
+        String sel = selection(s.policy.simKey);
+        boolean isTun = false;
+        if (inv != null && !sel.isEmpty()) {
+          InterfaceSnapshot.Selection resolved = inv.selection(sel);
+          isTun = resolved.entry != null && resolved.entry.voWifiTun();
+        }
+        Binding b = bindings.get(s.policy.slotId);
+        if (!bindingMatches(b, s)) b = null;
+        simRows.add(new LogSanitizer.SimTelemetry(
+            s.policy.slotId,
+            s.policy.ready,
+            s.policy.homePlmn,
+            LogSanitizer.classifyEgress(sel, isTun),
+            !preferredClashNode(s.policy.simKey).isEmpty(),
+            Boolean.TRUE.equals(radioOff.get(s.policy.slotId)),
+            featureMatches(s),
+            b != null ? b.ims : "IDLE",
+            b != null && b.registered,
+            b != null ? b.tunnel : "IDLE",
+            b != null && b.callActive,
+            b != null ? b.callSnapshotError : 0L,
+            b != null && Boolean.TRUE.equals(b.voiceServiceOverride.lastApplied()),
+            b != null && b.providerBound,
+            b != null && b.providerDeferred,
+            fallbackReasons.getOrDefault(s.policy.slotId, "")));
+      }
+    }
+    LogSanitizer.ServiceTelemetry svc = new LogSanitizer.ServiceTelemetry(
+        enabled(), billable(), status, shutdownComplete, root.commandCount.get(), clashTel, simRows);
+    return LogSanitizer.buildTelemetryPayload(
+        telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
+        dev, svc, events.snapshot(60));
+  }
+  void uploadTelemetryNow(String trigger, Consumer<String> done) {
+    io.execute(() -> {
+      if (!telemetryInFlight.compareAndSet(false, true)) {
+        done.accept("遥测正在上传中，请稍候");
+        return;
+      }
+      try {
+        String endpoint = telemetryEndpoint();
+        if (endpoint.isEmpty()) {
+          done.accept("请先填写 Cloudflare Worker 遥测接口地址");
+          return;
+        }
+        String payload = buildSanitizedTelemetryJson(trigger);
+        TelemetryClient.UploadResult result = TelemetryClient.upload(endpoint, payload, "");
+        long now = System.currentTimeMillis();
+        String summary = result.ok
+            ? "上传成功（" + result.code + "）"
+            : "上传失败（" + result.code + "）";
+        prefs.edit()
+            .putLong("telemetry_last_upload_ms", now)
+            .putString("telemetry_last_status", summary)
+            .commit();
+        events.record(result.ok ? "I" : "W", "telemetry", "upload " + trigger + " " + result.code);
+        done.accept(summary);
+      } catch (Exception e) {
+        String code = safeCode(e);
+        prefs.edit().putString("telemetry_last_status", "上传失败（" + code + "）").commit();
+        events.record("W", "telemetry", "upload failed: " + code);
+        done.accept("上传失败：" + code);
+      } finally {
+        telemetryInFlight.set(false);
+      }
+    });
+  }
+  private void maybeAutoUploadTelemetry(boolean callsActive) {
+    if (callsActive || !telemetryEnabled()) return;
+    if (telemetryEndpoint().isEmpty()) return;
+    long last = prefs.getLong("telemetry_last_upload_ms", 0L);
+    if (System.currentTimeMillis() - last < TimeUnit.HOURS.toMillis(6)) return;
+    uploadTelemetryNow("periodic", ignored -> {});
+  }
+  void exportFullLogs(boolean sanitizedOnly, OutputStream out, Consumer<String> done) {
+    io.execute(() -> {
+      try (ZipOutputStream zip = new ZipOutputStream(out)) {
+        String modeNote = sanitizedOnly
+            ? "SmartVoWifiCall Sanitized Log Bundle (ICCID/IMSI/IMEI/phone/URL/node/IP redacted)\n"
+            : "SmartVoWifiCall Raw Full Log Bundle (CONTAINS SENSITIVE DEVICE/SIM DATA - DO NOT SHARE PUBLICLY)\n";
+        writeZipEntry(zip, "README.txt", modeNote);
+        writeZipEntry(zip, "telemetry-sanitized.json", buildSanitizedTelemetryJson("manual") + "\n");
+        String diag = diagnostics().toString(2) + "\n";
+        writeZipEntry(zip, "diagnostics.json",
+            sanitizedOnly ? LogSanitizer.sanitizeText(diag) : diag);
+        writeZipEntry(zip, "app-events.log", events.formatAll(sanitizedOnly));
+        String rootLogs;
+        try {
+          rootLogs = root.collectRootLogs();
+        } catch (Exception e) {
+          rootLogs = "ROOT_LOG_COLLECTION_FAILED: " + safeCode(e) + "\n";
+        }
+        writeZipEntry(zip, "root-logs.txt",
+            sanitizedOnly ? LogSanitizer.sanitizeText(rootLogs) : rootLogs);
+        zip.finish();
+        events.record("I", "export", sanitizedOnly ? "exported sanitized zip" : "exported raw zip");
+        done.accept(sanitizedOnly ? "已导出脱敏日志包（ZIP）" : "已导出全部原始日志包（ZIP）");
+      } catch (Exception e) {
+        events.record("W", "export", "failed: " + safeCode(e));
+        done.accept("导出日志失败：" + safeCode(e));
+      }
+    });
+  }
+  private static void writeZipEntry(ZipOutputStream zip, String name, String content) throws Exception {
+    zip.putNextEntry(new ZipEntry(name));
+    byte[] bytes = (content == null ? "" : content).getBytes(StandardCharsets.UTF_8);
+    zip.write(bytes);
+    zip.closeEntry();
   }
   void useBuiltinTunForForeignSims() {
     RootSupervisor.Snapshot snap = snapshot;
@@ -452,6 +632,7 @@ final class RuntimeController {
               || (prevApplied != null && (!prevApplied.simKey.equals(sim.policy.simKey)
                   || prevApplied.subId != sim.policy.subId));
           if (switched) {
+            events.record("I", "esim", "slot " + slotId + " profile switched plmn=" + sim.policy.homePlmn);
             fallback.resetSlot(slotId);
             fallbackReleasedSlots.remove(slotId);
             lastRebindNanos.remove(slotId);
@@ -616,6 +797,7 @@ final class RuntimeController {
         refreshClashState();
       }
       lastFullSyncSucceeded = true;
+      maybeAutoUploadTelemetry(calls);
       long selectedProviders = bindings.values().stream().filter(b -> b.providerBound).count();
       boolean tunRequired = plan.decisions.stream().anyMatch(d -> d.reason == PolicyEngine.Reason.TUN_REQUIRED);
       boolean radioPending = radioOff.values().stream().anyMatch(value -> !value);
@@ -639,6 +821,7 @@ final class RuntimeController {
         if (feature != null) feature.registrationChanged(false);
       }
       status = "待处理：" + safeCode(e);
+      events.record("W", "policy", "tick failed: " + safeCode(e));
     }
   }
   boolean featureMatches(RootSupervisor.Sim sim) {
@@ -823,6 +1006,8 @@ final class RuntimeController {
         if (registered != b.registered || !b.reported) {
           b.registered = registered;
           b.reported = true;
+          events.record("I", "ims", "slot " + b.slot() + " plmn=" + b.sim.policy.homePlmn
+              + " registered=" + registered);
           if (registered)
             b.registration.onRegistered(ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
           else

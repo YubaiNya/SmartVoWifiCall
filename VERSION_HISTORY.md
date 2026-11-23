@@ -1,5 +1,13 @@
 # 版本记录
 
+## v0.4.6-dev — 2026-11-23
+
+应用与模块 versionCode=17，新增可选脱敏遥测日志上传（默认关闭）与手动导出全部日志功能，配套 Cloudflare Worker 中转服务写入私有 GitHub 仓库。
+
+- **脱敏遥测日志（默认关闭）**：新增纯 Java 白名单脱敏器 [LogSanitizer.java](service/app/src/main/java/com/smartvowificall/ims/telemetry/LogSanitizer.java)、内存环形事件缓冲 [EventRingBuffer.java](service/app/src/main/java/com/smartvowificall/ims/telemetry/EventRingBuffer.java) 与 HTTPS 客户端 [TelemetryClient.java](service/app/src/main/java/com/smartvowificall/ims/telemetry/TelemetryClient.java)。仅上传版本、机型、连接状态与错误码，严格剔除 ICCID、IMSI、IMEI、手机号、SIP URI、订阅链接、节点名、IP 与密钥；支持上传前在 App 内完整预览脱敏 JSON。
+- **Cloudflare Worker 中转服务**：新增 [telemetry-worker/](telemetry-worker/)，将 GitHub Fine-grained Token 仅保存在 Worker 服务端加密变量，收到 `smartvowificall.telemetry.v1` 后执行二次脱敏并按日期写入私有仓库 `YubaiNya/SmartVoWifiCall-Telemetry`。
+- **手动导出全部日志**：在「网络 → 日志与遥测」下方新增「导出脱敏日志」与「导出原始全部日志（带隐私确认）」，通过系统文件保存器（SAF）一键导出包含诊断快照、运行事件、引擎日志与过滤后 `logcat` 的 ZIP 压缩包。
+
 ## v0.4.5-dev — 2026-11-23
 
 应用与模块 versionCode=16，优化 Wi-Fi Calling 期间切换 eSIM 配置文件、按 SIM 自动切换内置 Clash 出口节点以及节点切换/刷新即时恢复。

@@ -134,7 +134,10 @@ data class AppUiState(
     val uploadTotal: Long = 0L,
     val memoryBytes: Long = 0L,
     val connections: List<ConnectionRowUi> = emptyList(),
-    val connectionsError: String = ""
+    val connectionsError: String = "",
+    val telemetryEnabled: Boolean = false,
+    val telemetryEndpoint: String = "",
+    val telemetryLastStatus: String = ""
 )
 
 @Composable
@@ -1336,11 +1339,21 @@ private fun ConnectionItemCard(
 @Composable
 fun NetworkPage(
     state: AppUiState,
-    onRefreshAll: () -> Unit
+    logFeedback: String,
+    onRefreshAll: () -> Unit,
+    onToggleTelemetry: (Boolean) -> Unit,
+    onSaveTelemetryEndpoint: (String) -> Unit,
+    onUploadTelemetryNow: () -> Unit,
+    onPreviewTelemetry: () -> Unit,
+    onExportSanitizedLogs: () -> Unit,
+    onExportRawLogs: () -> Unit
 ) {
     val p = LocalApplePalette.current
     val scroll = rememberScrollState()
     val tunCount = state.interfaces.count { it.voWifiTun }
+    var endpointInput by rememberSaveable(state.telemetryEndpoint) {
+        mutableStateOf(state.telemetryEndpoint)
+    }
 
     Column(
         modifier = Modifier
@@ -1351,7 +1364,7 @@ fun NetworkPage(
     ) {
         PageHeader(
             title = "网络",
-            subtitle = "接口与状态"
+            subtitle = "接口与日志"
         )
         Spacer(Modifier.height(8.dp))
 
@@ -1363,7 +1376,7 @@ fun NetworkPage(
             ) {
                 StatusPill(label = "网络信息", color = p.accentGreen)
                 StatusPill(
-                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.4.5-dev",
+                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.4.6-dev",
                     color = p.accentBlue,
                     showDot = false
                 )
@@ -1398,6 +1411,104 @@ fun NetworkPage(
                 primary = false,
                 modifier = Modifier.fillMaxWidth()
             )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        AppleSectionTitle("日志与遥测")
+        AppleMiuixCard(insideMargin = PaddingValues(bottom = 16.dp)) {
+            SwitchPreference(
+                title = "上传脱敏遥测日志",
+                summary = "默认关闭。仅上传版本、机型与连接状态，不含卡号、号码、订阅和节点名",
+                checked = state.telemetryEnabled,
+                onCheckedChange = onToggleTelemetry
+            )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    text = "上传接口地址（Cloudflare Worker → 私有 GitHub 仓库）",
+                    color = p.textSecondary,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                TextField(
+                    value = endpointInput,
+                    onValueChange = { endpointInput = it },
+                    label = "https://your-worker.workers.dev/v1/telemetry",
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (state.telemetryLastStatus.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = "最近上传：${state.telemetryLastStatus}",
+                        color = p.textSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ApplePillButton(
+                        text = "保存地址",
+                        onClick = { onSaveTelemetryEndpoint(endpointInput) },
+                        primary = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ApplePillButton(
+                        text = "预览脱敏内容",
+                        onClick = onPreviewTelemetry,
+                        primary = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                ApplePillButton(
+                    text = "立即上传一次脱敏日志",
+                    onClick = onUploadTelemetryNow,
+                    primary = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    text = "手动导出全部日志",
+                    color = p.textPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "打包应用诊断、运行事件、引擎日志与系统通话日志到本地 ZIP",
+                    color = p.textSecondary,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ApplePillButton(
+                        text = "导出脱敏日志",
+                        onClick = onExportSanitizedLogs,
+                        primary = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ApplePillButton(
+                        text = "导出原始全部日志",
+                        onClick = onExportRawLogs,
+                        primary = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        if (logFeedback.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            FeedbackBanner(text = logFeedback)
         }
 
         Spacer(Modifier.height(16.dp))
