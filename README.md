@@ -22,6 +22,11 @@
   <a href="https://linux.do/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.Do-YubaiNya-1D1D1F?style=flat&logo=discourse&logoColor=white" alt="Linux.Do"></a>
   <a href="https://linux.sb/u/YubaiNya"><img src="https://img.shields.io/badge/Linux.sb-YubaiNya-0071E3?style=flat&logo=linux&logoColor=white" alt="Linux.sb"></a>
   <a href="https://forum.naixi.net/home.php?mod=space&username=yubai"><img src="https://img.shields.io/badge/%E5%A5%B6%E6%98%94%E8%AE%BA%E5%9D%9B-yubai-6E6E73?style=flat&logo=discourse&logoColor=white" alt="奶昔论坛"></a>
+  <br>
+  <a href="https://github.com/lilyzhaun/softvowifi-client"><img src="https://img.shields.io/badge/%E8%87%B4%E8%B0%A2-SoftVoWiFi-1D1D1F?style=flat&logo=github&logoColor=white" alt="SoftVoWiFi"></a>
+  <a href="https://github.com/MetaCubeX/mihomo"><img src="https://img.shields.io/badge/Core-mihomo-6E6E73?style=flat&logo=github&logoColor=white" alt="mihomo"></a>
+  <a href="https://github.com/compose-miuix-ui/miuix"><img src="https://img.shields.io/badge/UI-Miuix-6E6E73?style=flat&logo=github&logoColor=white" alt="Miuix"></a>
+  <a href="https://github.com/Kyant0/AndroidLiquidGlass"><img src="https://img.shields.io/badge/Glass-AndroidLiquidGlass-6E6E73?style=flat&logo=github&logoColor=white" alt="AndroidLiquidGlass"></a>
 </p>
 
 <br>
@@ -151,6 +156,6 @@ python service/tools/verify_artifacts.py
   </a>
 </p>
 
-<p>基于 GPL-3.0 开源 · 特别致谢 <a href="https://github.com/lilyzhaun/softvowifi-client"><strong>SoftVoWiFi</strong></a>（底层 VoWiFi 协议引擎与方案启发），以及 mihomo、Miuix、AndroidLiquidGlass</p>
+<p>基于 GPL-3.0 开源 · 特别致谢 SoftVoWiFi、mihomo、Miuix 与 AndroidLiquidGlass</p>
 
 </div>
