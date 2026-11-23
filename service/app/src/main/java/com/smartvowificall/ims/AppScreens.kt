@@ -1433,7 +1433,7 @@ fun NetworkPage(
                 TextField(
                     value = endpointInput,
                     onValueChange = { endpointInput = it },
-                    label = "https://your-worker.workers.dev/v1/telemetry",
+                    label = "https://smartvowificall-telemetry.yubainya.workers.dev/v1/telemetry",
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )

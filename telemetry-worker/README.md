@@ -19,7 +19,7 @@
    npx wrangler secret put GITHUB_TOKEN
    npx wrangler deploy
    ```
-3. 部署后会得到类似 `https://smartvowificall-telemetry.<你的子域>.workers.dev` 的地址；在 App「网络 → 日志与遥测」填入 `https://<你的Worker域名>/v1/telemetry` 即可使用（或编译前写入 `TelemetryClient.DEFAULT_ENDPOINT`）。
+3. 默认已部署地址：`https://smartvowificall-telemetry.yubainya.workers.dev`（App 默认接口为 `https://smartvowificall-telemetry.yubainya.workers.dev/v1/telemetry`，也可在「网络 → 日志与遥测」自定义为自己的 Worker 域名）。
 
 ## 接口说明
 

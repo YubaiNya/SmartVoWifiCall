@@ -108,6 +108,8 @@ final class RuntimeController {
       kick();
     });
   }
+  static final String DEFAULT_TELEMETRY_ENDPOINT =
+      "https://smartvowificall-telemetry.yubainya.workers.dev/v1/telemetry";
   boolean telemetryEnabled() {
     // Strictly opt-in: disabled by default until user enables it.
     return prefs.getBoolean("telemetry_enabled", false);
@@ -117,13 +119,14 @@ final class RuntimeController {
     events.record("I", "telemetry", enabled ? "enabled" : "disabled");
   }
   String telemetryEndpoint() {
-    return prefs.getString("telemetry_endpoint", "");
+    String saved = prefs.getString("telemetry_endpoint", "");
+    return saved.isEmpty() ? DEFAULT_TELEMETRY_ENDPOINT : saved;
   }
   void setTelemetryEndpoint(String url, Consumer<String> done) {
     String trimmed = url == null ? "" : url.trim();
-    if (trimmed.isEmpty()) {
+    if (trimmed.isEmpty() || DEFAULT_TELEMETRY_ENDPOINT.equals(trimmed)) {
       prefs.edit().remove("telemetry_endpoint").commit();
-      done.accept("已清空遥测接口地址");
+      done.accept("已恢复默认遥测接口地址");
       return;
     }
     try {
