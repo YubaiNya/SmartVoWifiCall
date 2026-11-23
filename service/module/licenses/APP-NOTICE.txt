@@ -1,0 +1,9 @@
+SmartVoWifiCall application source, attribution and third-party notices
+
+SmartVoWifiCall application source is licensed under GPL-3.0 (see APP-GPL-3.0.txt).
+
+Third-party libraries and components used by SmartVoWifiCall:
+- Miuix Compose UI library (top.yukonga.miuix.kmp:miuix-*:0.9.4): Apache-2.0.
+- AndroidLiquidGlass / Backdrop (io.github.kyant0:backdrop-android:2.0.1): Apache-2.0.
+- MetaCubeX/mihomo Android arm64 core (v1.19.34): GPL-3.0 (see MIHOMO-GPL-3.0.txt).
+- Prebuilt arm64 VoWiFi protocol engine (vowifi-engine-arm64) and its Go module notices (see GO-DEPENDENCIES.json and modules/).

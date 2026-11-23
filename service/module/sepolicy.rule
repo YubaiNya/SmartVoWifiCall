@@ -1,0 +1,6 @@
+allow priv_app shell_data_file dir { getattr search }
+allow priv_app shell_data_file sock_file { getattr open read write }
+allow priv_app ksu unix_stream_socket connectto
+allow priv_app_36 shell_data_file dir { getattr search }
+allow priv_app_36 shell_data_file sock_file { getattr open read write }
+allow priv_app_36 ksu unix_stream_socket connectto

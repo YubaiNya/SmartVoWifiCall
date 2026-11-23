@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.smartvowificall.ims.audiotest">
+    <uses-sdk android:minSdkVersion="33" android:targetSdkVersion="37" />
+    <application android:label="VoWiFi Audio Probe" android:hasCode="true"
+        android:testOnly="true" android:allowBackup="false" />
+    <instrumentation
+        android:name="com.smartvowificall.ims.audiotest.AudioProbeInstrumentation"
+        android:targetPackage="com.smartvowificall.ims"
+        android:targetProcesses="com.smartvowificall.ims"
+        android:functionalTest="true" android:handleProfiling="false" />
+</manifest>

@@ -1,0 +1,25 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+ <uses-permission android:name="android.permission.INTERNET"/>
+ <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+ <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
+ <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE"/>
+ <uses-permission android:name="android.permission.MODIFY_PHONE_STATE"/>
+ <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+ <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE"/>
+ <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+ <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+ <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+ <uses-permission android:name="android.permission.WAKE_LOCK"/>
+ <queries><package android:name="com.follow.clash"/></queries>
+ <application android:label="SmartVoWifiCall" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false" android:usesCleartextTraffic="false">
+  <activity android:name=".MainActivity" android:exported="true" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
+  <service android:name=".SmartVoWifiImsService" android:exported="true" android:permission="android.permission.BIND_IMS_SERVICE" android:directBootAware="true">
+   <intent-filter><action android:name="android.telephony.ims.ImsService"/></intent-filter>
+   <meta-data android:name="android.telephony.ims.MMTEL_FEATURE" android:value="true"/>
+  </service>
+  <service android:name=".PolicyService" android:exported="false" android:directBootAware="true" android:foregroundServiceType="specialUse|microphone"><property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="Maintain user-selected per-SIM IMS registration and restore the system provider when its network interface is unavailable"/></service>
+  <receiver android:name=".BootReceiver" android:exported="true" android:directBootAware="true"><intent-filter><action android:name="android.intent.action.BOOT_COMPLETED"/><action android:name="android.intent.action.LOCKED_BOOT_COMPLETED"/><action android:name="android.intent.action.MY_PACKAGE_REPLACED"/></intent-filter></receiver>
+ </application>
+</manifest>
