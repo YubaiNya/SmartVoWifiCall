@@ -220,6 +220,11 @@ public final class EngineSession implements Closeable {
     gate();
     return call("audioStop", callId(callId));
   }
+  /** Triggers fast IKEv2/SIP tunnel teardown and immediate re-registration after network/node switch. */
+  public Map<String, Object> reconnect() throws IOException {
+    gate();
+    return call("reconnect", Collections.emptyMap());
+  }
   /** Text API only. Does not claim Android IMS SMS PDU/acknowledgment compatibility. */
   public Map<String, Object> sendSmsText(String number, String text) throws IOException {
     gate();

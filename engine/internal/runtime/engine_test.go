@@ -170,6 +170,24 @@ func TestEndToEndNativeEngineStack(t *testing.T) {
 	if smsRes["statusCode"].(float64) != 200 {
 		t.Fatalf("SendSMS failed: %+v", smsRes)
 	}
+
+	// Fast network-change reconnect -> re-reaches REGISTERED rapidly
+	recRes := callRPC(9, "reconnect", map[string]any{})["result"].(map[string]any)
+	if recRes["ok"] != true {
+		t.Fatalf("Reconnect failed: %+v", recRes)
+	}
+	time.Sleep(150 * time.Millisecond)
+	reDeadline := time.Now().Add(5 * time.Second)
+	for {
+		st := callRPC(10, "getStatus", map[string]any{})["result"].(map[string]any)
+		if st["ims"] == "REGISTERED" && st["tunnel"] == "CONNECTED" {
+			break
+		}
+		if time.Now().After(reDeadline) {
+			t.Fatalf("engine did not re-register after fast reconnect; last status: %+v", st)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim simauth.Provider) {
@@ -277,7 +295,7 @@ func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim
 		}
 		peerAddr = addr
 		raw := append([]byte(nil), buf[:n]...)
-		if len(raw) >= 4 && binary.BigEndian.Uint32(raw[0:4]) != 0 && serverTun != nil {
+		if len(raw) >= 4 && binary.BigEndian.Uint32(raw[0:4]) == serverChildSPI && serverTun != nil {
 			_ = serverTun.HandleESP(raw)
 			continue
 		}

@@ -1386,6 +1386,9 @@ fun NetworkPage(
     logFeedback: String,
     onRefreshAll: () -> Unit,
     onRunCompatCheck: () -> Unit,
+    onFastReconnect: () -> Unit,
+    onEmergencyRestore: () -> Unit,
+    onOpenRadioInfo: () -> Unit,
     onToggleTelemetry: (Boolean) -> Unit,
     onSelectTelemetryRoute: (String) -> Unit,
     onSaveTelemetryEndpoint: (String) -> Unit,
@@ -1526,6 +1529,41 @@ fun NetworkPage(
             ApplePillButton(
                 text = "运行系统接口兼容性自检",
                 onClick = onRunCompatCheck,
+                primary = false,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        AppleSectionTitle("系统工具与快捷恢复")
+        AppleMiuixCard(insideMargin = PaddingValues(16.dp)) {
+            Text(
+                text = "切网/换节点后可触发秒级隧道重连；遇到异常时可带通话保护一键恢复原厂蜂窝与 IMS，或直达系统 RadioInfo 工程页。",
+                color = p.textSecondary,
+                fontSize = 12.sp
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ApplePillButton(
+                    text = "秒级重连隧道",
+                    onClick = onFastReconnect,
+                    primary = false,
+                    modifier = Modifier.weight(1f)
+                )
+                ApplePillButton(
+                    text = "系统 RadioInfo",
+                    onClick = onOpenRadioInfo,
+                    primary = false,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            ApplePillButton(
+                text = "一键恢复原厂蜂窝与 IMS",
+                onClick = onEmergencyRestore,
                 primary = false,
                 modifier = Modifier.fillMaxWidth()
             )

@@ -25,6 +25,9 @@ final class PcmAudio implements AutoCloseable {
   private EngineRpcClient.Transport transport;
   private AudioRecord record;
   private AudioTrack track;
+  private Object aec;
+  private Object ns;
+  private Object agc;
   private AudioManager.AudioRecordingCallback recordingCallback;
   private PolicyService.AudioLease foreground;
   private final Context context;
@@ -63,8 +66,18 @@ final class PcmAudio implements AutoCloseable {
       lease.awaitReady();
       if (closed.get()) return;
       AudioManager manager = context.getSystemService(AudioManager.class);
-      Log.i("VoWiFiAudio", "capture_ready mode=" + manager.getMode()
-          + " source=VOICE_COMMUNICATION");
+      String commDevice = "default";
+      if (manager != null) {
+        try {
+          Object dev = manager.getClass().getMethod("getCommunicationDevice").invoke(manager);
+          if (dev != null) {
+            Object devType = dev.getClass().getMethod("getType").invoke(dev);
+            commDevice = "type=" + devType;
+          }
+        } catch (Throwable ignored) {}
+      }
+      Log.i("VoWiFiAudio", "capture_ready mode=" + (manager == null ? -1 : manager.getMode())
+          + " source=VOICE_COMMUNICATION device=" + commDevice);
       EngineRpcClient.Transport s = engine.openAudioTransport(EngineSession.DEFAULT_TIMEOUT_MS);
       synchronized (resources) {
         if (closed.get()) {
@@ -92,7 +105,7 @@ final class PcmAudio implements AutoCloseable {
         }
         record = r;
       }
-      AudioTrack t =
+      AudioTrack.Builder trackBuilder =
           new AudioTrack.Builder()
               .setAudioAttributes(new AudioAttributes.Builder()
                                       .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -106,8 +119,12 @@ final class PcmAudio implements AutoCloseable {
               .setBufferSizeInBytes(Math.max(2560,
                   AudioTrack.getMinBufferSize(
                       16000, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)))
-              .setTransferMode(AudioTrack.MODE_STREAM)
-              .build();
+              .setTransferMode(AudioTrack.MODE_STREAM);
+      try {
+        // AudioTrack.PERFORMANCE_MODE_LOW_LATENCY == 1 (API 26+)
+        trackBuilder.getClass().getMethod("setPerformanceMode", int.class).invoke(trackBuilder, 1);
+      } catch (Throwable ignored) {}
+      AudioTrack t = trackBuilder.build();
       synchronized (resources) {
         if (closed.get()) {
           t.release();
@@ -118,6 +135,7 @@ final class PcmAudio implements AutoCloseable {
       if (r.getState() != AudioRecord.STATE_INITIALIZED
           || t.getState() != AudioTrack.STATE_INITIALIZED)
         throw new IOException("AUDIO_UNAVAILABLE");
+      attachHardwareAudioEffects(r.getAudioSessionId());
       if (closed.get())
         return;
       startAttempted = true;
@@ -270,6 +288,48 @@ final class PcmAudio implements AutoCloseable {
     } catch (RejectedExecutionException ignored) { /* Owning runtime has already shut down. */
     }
   }
+  private void attachHardwareAudioEffects(int sessionId) {
+    if (sessionId <= 0) return;
+    Object localAec = createAudioEffect("android.media.audiofx.AcousticEchoCanceler", sessionId);
+    Object localNs = createAudioEffect("android.media.audiofx.NoiseSuppressor", sessionId);
+    Object localAgc = createAudioEffect("android.media.audiofx.AutomaticGainControl", sessionId);
+    synchronized (resources) {
+      if (closed.get()) {
+        releaseEffect(localAec);
+        releaseEffect(localNs);
+        releaseEffect(localAgc);
+        return;
+      }
+      aec = localAec;
+      ns = localNs;
+      agc = localAgc;
+    }
+    Log.i("VoWiFiAudio", "audio_fx aec=" + (localAec != null)
+        + " ns=" + (localNs != null) + " agc=" + (localAgc != null));
+  }
+
+  private static Object createAudioEffect(String className, int sessionId) {
+    try {
+      Class<?> cls = Class.forName(className);
+      if (!Boolean.TRUE.equals(cls.getMethod("isAvailable").invoke(null))) return null;
+      Object fx = cls.getMethod("create", int.class).invoke(null, sessionId);
+      if (fx != null) {
+        fx.getClass().getMethod("setEnabled", boolean.class).invoke(fx, true);
+      }
+      return fx;
+    } catch (Throwable ignored) {
+      return null;
+    }
+  }
+
+  private static void releaseEffect(Object effect) {
+    if (effect != null) {
+      try {
+        effect.getClass().getMethod("release").invoke(effect);
+      } catch (Throwable ignored) {}
+    }
+  }
+
   public void close() {
     if (!closed.compareAndSet(false, true))
       return;
@@ -279,6 +339,9 @@ final class PcmAudio implements AutoCloseable {
     EngineRpcClient.Transport s;
     AudioRecord r;
     AudioTrack t;
+    Object localAec;
+    Object localNs;
+    Object localAgc;
     AudioManager.AudioRecordingCallback callback;
     PolicyService.AudioLease lease;
     synchronized (resources) {
@@ -288,11 +351,20 @@ final class PcmAudio implements AutoCloseable {
       record = null;
       t = track;
       track = null;
+      localAec = aec;
+      aec = null;
+      localNs = ns;
+      ns = null;
+      localAgc = agc;
+      agc = null;
       callback = recordingCallback;
       recordingCallback = null;
       lease = foreground;
       foreground = null;
     }
+    releaseEffect(localAec);
+    releaseEffect(localNs);
+    releaseEffect(localAgc);
     if (r != null) {
       try {
         if (callback != null) r.unregisterAudioRecordingCallback(callback);

@@ -53,9 +53,10 @@ type Engine struct {
 	mediaCall  string
 	audioOn    bool
 	epoch      string
-	stopOnce   sync.Once
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	stopOnce    sync.Once
+	stopCh      chan struct{}
+	reconnectCh chan struct{}
+	wg          sync.WaitGroup
 }
 
 func Start(opts Options) (*Engine, error) {
@@ -91,8 +92,9 @@ func Start(opts Options) (*Engine, error) {
 		startedAt: time.Now(),
 		imsState:  "CONNECTING",
 		tunState:  "CONNECTING",
-		epoch:     fmt.Sprintf("ep-%d", time.Now().UnixNano()),
-		stopCh:    make(chan struct{}),
+		epoch:       fmt.Sprintf("ep-%d", time.Now().UnixNano()),
+		stopCh:      make(chan struct{}),
+		reconnectCh: make(chan struct{}, 1),
 	}
 
 	ctrlPath := filepath.Join(opts.SocketDir, opts.Config.ICCID+".sock")
@@ -165,6 +167,9 @@ func (e *Engine) supervisorLoop() {
 			select {
 			case <-e.stopCh:
 				return
+			case <-e.reconnectCh:
+				backoff = 500 * time.Millisecond
+				continue
 			case <-time.After(backoff):
 			}
 			if backoff < 30*time.Second {
@@ -267,6 +272,10 @@ func (e *Engine) maintainRegistration() {
 	for {
 		select {
 		case <-e.stopCh:
+			e.teardownSession()
+			return
+		case <-e.reconnectCh:
+			e.logger.Info("engine", "fast reconnect requested; tearing down stale tunnel", nil)
 			e.teardownSession()
 			return
 		case <-ticker.C:
@@ -483,6 +492,14 @@ func (e *Engine) SendSMS(ctx context.Context, number, text string) (map[string]a
 		return nil, &rpc.RPCError{Code: 2002, Message: "IMS_NOT_REGISTERED"}
 	}
 	return sc.SendSMS(ctx, number, text)
+}
+
+func (e *Engine) Reconnect() map[string]any {
+	select {
+	case e.reconnectCh <- struct{}{}:
+	default:
+	}
+	return map[string]any{"ok": true, "reconnecting": true}
 }
 
 func (e *Engine) Stop() {

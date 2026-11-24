@@ -42,6 +42,11 @@ type Handler interface {
 	Stop()
 }
 
+// Reconnecter is optionally implemented by Handler to support fast network-change tunnel reconnect.
+type Reconnecter interface {
+	Reconnect() map[string]any
+}
+
 type requestFrame struct {
 	ID     int64          `json:"id"`
 	Method string         `json:"method"`
@@ -241,6 +246,7 @@ func (s *Server) dispatch(method string, params map[string]any) (map[string]any,
 				"rpc.getConfig",
 				"rpc.getStatus",
 				"rpc.ping",
+				"rpc.reconnect",
 				"rpc.stop",
 				"rpc.call.v1",
 				"rpc.audio.v1",
@@ -253,6 +259,11 @@ func (s *Server) dispatch(method string, params map[string]any) (map[string]any,
 		return s.handler.GetStatus(), nil
 	case "getCallSnapshot":
 		return s.handler.GetCallSnapshot()
+	case "reconnect":
+		if r, ok := s.handler.(Reconnecter); ok {
+			return r.Reconnect(), nil
+		}
+		return map[string]any{"ok": false, "code": "UNSUPPORTED"}, nil
 	case "dial":
 		recipient, _ := params["recipient"].(string)
 		if recipient == "" {

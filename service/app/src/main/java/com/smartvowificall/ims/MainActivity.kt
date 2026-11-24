@@ -154,6 +154,21 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     },
+                    onFastReconnect = {
+                        logFeedback = "正在触发 VoWiFi 隧道秒级重连…"
+                        rt.reconnectActiveEnginesAsync { msg ->
+                            runOnUiThread {
+                                logFeedback = msg
+                                syncStateFromController()
+                            }
+                        }
+                    },
+                    onEmergencyRestore = {
+                        confirmEmergencyRestore()
+                    },
+                    onOpenRadioInfo = {
+                        openSystemRadioInfo()
+                    },
                     onToggleClash = { on ->
                         rt.setClashEnabled(on)
                         clashFeedback = if (on) "已开启自动代理" else "已关闭自动代理"
@@ -351,6 +366,42 @@ class MainActivity : ComponentActivity() {
                     .show()
             }
         }
+    }
+
+    private fun confirmEmergencyRestore() {
+        AlertDialog.Builder(this)
+            .setTitle("一键彻底恢复原厂蜂窝与 IMS")
+            .setMessage("将关闭网络通话总开关、停止内置代理、解除全部 IMS 服务覆盖并恢复所有卡槽蜂窝信号（通话中会自动拦截以防掉线）。确认执行？")
+            .setPositiveButton("确认恢复") { _, _ ->
+                logFeedback = "正在恢复原厂蜂窝与 IMS…"
+                rt.emergencyRestoreNativeRadioAndIms { msg ->
+                    runOnUiThread {
+                        logFeedback = msg
+                        overviewFeedback = msg
+                        syncStateFromController()
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun openSystemRadioInfo() {
+        val candidates = listOf(
+            Intent().setClassName("com.android.phone", "com.android.phone.settings.RadioInfo"),
+            Intent().setClassName("com.android.settings", "com.android.settings.RadioInfo"),
+            Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + Uri.encode("*#*#4636#*#*")))
+        )
+        for (intent in candidates) {
+            try {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+                logFeedback = "已打开系统 RadioInfo / 工程测试入口"
+                return
+            } catch (_: Exception) {
+            }
+        }
+        logFeedback = "当前系统 ROM 限制直接拉起 RadioInfo，请在拨号盘输入 *#*#4636#*#*"
     }
 
     private fun confirmRawLogExport() {
@@ -646,6 +697,9 @@ private fun MainShell(
     onUseBuiltinTun: () -> Unit,
     onRefreshAll: () -> Unit,
     onRunCompatCheck: () -> Unit,
+    onFastReconnect: () -> Unit,
+    onEmergencyRestore: () -> Unit,
+    onOpenRadioInfo: () -> Unit,
     onToggleClash: (Boolean) -> Unit,
     onFetchSubscription: (String) -> Unit,
     onImportYaml: () -> Unit,
@@ -749,6 +803,9 @@ private fun MainShell(
                         logFeedback = logFeedback,
                         onRefreshAll = onRefreshAll,
                         onRunCompatCheck = onRunCompatCheck,
+                        onFastReconnect = onFastReconnect,
+                        onEmergencyRestore = onEmergencyRestore,
+                        onOpenRadioInfo = onOpenRadioInfo,
                         onToggleTelemetry = onToggleTelemetry,
                         onSelectTelemetryRoute = onSelectTelemetryRoute,
                         onSaveTelemetryEndpoint = onSaveTelemetryEndpoint,

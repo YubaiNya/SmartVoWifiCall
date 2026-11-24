@@ -1669,6 +1669,53 @@ final class RuntimeController {
     });
   }
 
+  void reconnectActiveEnginesAsync(java.util.function.Consumer<String> callback) {
+    io.execute(() -> {
+      int triggered = 0;
+      for (Binding b : bindings.values()) {
+        if (b != null && b.engine != null && !b.callActive) {
+          try {
+            b.engine.reconnect();
+            triggered++;
+          } catch (Throwable ignored) {}
+        }
+      }
+      events.record("I", "reconnect", "triggered fast reconnect count=" + triggered);
+      if (callback != null) {
+        callback.accept(triggered > 0
+            ? "已向 " + triggered + " 个活跃引擎发送秒级重连指令"
+            : "当前无活跃引擎，已触发常规状态刷新");
+      }
+      retryNow();
+    });
+  }
+
+  void emergencyRestoreNativeRadioAndIms(java.util.function.Consumer<String> callback) {
+    io.execute(() -> {
+      try {
+        RootSupervisor.Snapshot snap = root.snapshot();
+        boolean anyCall = snap.callsActive || bindings.values().stream().anyMatch(b -> b.callActive);
+        if (anyCall) {
+          if (callback != null) callback.accept("检测到通话正在进行，已取消恢复原厂操作以防掉线");
+          return;
+        }
+        prefs.edit().putBoolean("enabled", false).putBoolean("clash_enabled", false).commit();
+        for (Integer slot : new ArrayList<>(bindings.keySet())) {
+          try { clearSlot(slot, true); } catch (Throwable ignored) {}
+        }
+        try { root.restoreAll(); } catch (Throwable ignored) {}
+        try { root.releaseRadios(); } catch (Throwable ignored) {}
+        try { root.clashStop(); } catch (Throwable ignored) {}
+        events.record("W", "restore", "emergency restore native radio and IMS completed");
+        status = "已彻底恢复原厂蜂窝与 IMS";
+        if (callback != null) callback.accept("已彻底恢复原厂蜂窝与 IMS，并停止内置代理");
+        retryNow();
+      } catch (Throwable e) {
+        if (callback != null) callback.accept("恢复原厂失败：" + safeCode(e));
+      }
+    });
+  }
+
   static final class ClashConnection {
     final String id, network, type, source, destination, rule, rulePayload, start;
     final List<String> chains;

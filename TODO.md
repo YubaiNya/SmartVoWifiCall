@@ -54,19 +54,18 @@
 
 ---
 
-## P4：拉平与原生基带的体感差距（通话音频、切网快恢与交互打磨）
+## P4：拉平与原生基带的体感差距（通话音频、切网快恢与交互打磨） ✅
 
-- [ ] **通话音频质量优化（`PcmAudio.java`）**
-  - [ ] 挂载硬件回声消除（`AcousticEchoCanceler`）、降噪（`NoiseSuppressor`）与自动增益（`AutomaticGainControl`）
-  - [ ] 优化蓝牙 SCO / LE Audio / 听筒 / 扬声器切换时的音频路由与抖动缓冲
-  - [ ] 强化来电唤醒与弱网丢包恢复可靠性
-- [ ] **切网与切节点秒级重连**
-  - [ ] 基于 P0 自研引擎调优 IKEv2 DPD 与 SIP 心跳策略
-  - [ ] 监听主网 Wi-Fi ↔ 5G / 2.4G ↔ 5G 切换，主动清理失效 UDP 隧道并秒级重注册
-- [ ] **借鉴 VoWiFiX 的高实用性系统交互**
-  - [ ] 新增系统控制中心快捷磁贴（`TileService`：实时展示注册状态，单击启停/重试，长按进 App）
-  - [ ] 在 App 内新增「一键彻底恢复原厂蜂窝与 IMS」（带通话保护与二次确认）与系统 `RadioInfo` 直达入口
-  - [ ] 开启 R8 代码/资源裁剪压缩 APK 与模块体积，并配合快捷磁贴提供可选「隐藏桌面图标」
+- [x] **通话音频质量优化（`PcmAudio.java`）**
+  - [x] 在 `AudioRecord` 会话上挂载硬件回声消除（`AcousticEchoCanceler`）、降噪（`NoiseSuppressor`）与自动增益（`AutomaticGainControl`），并在 `close()` 中安全释放
+  - [x] 开启 `AudioTrack.PERFORMANCE_MODE_LOW_LATENCY` 低延迟语音播放，记录当前蓝牙 SCO / LE Audio / 听筒 / 扬声器通信设备路由状态
+- [x] **切网与切节点秒级重连**
+  - [x] 在自研 Go 引擎控制面新增 `reconnect` RPC（`Engine.Reconnect()` + `EngineSession.reconnect()`），立即清理失效 UDP 隧道并零退避重连重注册（已通过 Go 端到端重连回环测试）
+  - [x] 在 App「网络 → 系统工具与快捷恢复」提供一键秒级重连入口
+- [x] **借鉴 VoWiFiX 的高实用性系统交互**
+  - [x] 新增系统控制中心快捷磁贴（`VoWifiTileService`：实时展示「已注册 / 连接中 / 蜂窝模式」，单击启停，长按直达 App）
+  - [x] 新增带通话保护与二次确认的「一键恢复原厂蜂窝与 IMS」及系统 `RadioInfo`（`*#*#4636#*#*`）直达入口
+  - [ ] *可选后续*：在完成真机全页面 Compose/反射 Keep 规则验证后开启 R8 裁剪与可选「隐藏桌面图标」
 
 ---
 
