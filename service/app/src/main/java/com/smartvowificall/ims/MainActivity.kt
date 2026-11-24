@@ -145,6 +145,15 @@ class MainActivity : ComponentActivity() {
                             runOnUiThread { syncStateFromController() }
                         }
                     },
+                    onRunCompatCheck = {
+                        logFeedback = "正在运行系统接口兼容性自检…"
+                        rt.runCompatCheckAsync { report ->
+                            runOnUiThread {
+                                logFeedback = report.summary
+                                syncStateFromController()
+                            }
+                        }
+                    },
                     onToggleClash = { on ->
                         rt.setClashEnabled(on)
                         clashFeedback = if (on) "已开启自动代理" else "已关闭自动代理"
@@ -532,11 +541,23 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        val compat = rt.compatReport
+        val compatItems = compat?.items?.map {
+            CompatItemUi(key = it.key, label = it.label, status = it.status, detail = it.detail)
+        } ?: emptyList()
+        val statusLower = rt.status.lowercase()
+        val noRootDetected = rt.rootUnavailable ||
+            (snap == null && (statusLower.contains("root") || statusLower.contains("permission") || statusLower.contains("su")))
+
         uiState = AppUiState(
             appVersion = installedVersionName,
             enabled = rt.enabled(),
             billable = rt.billable(),
             statusText = rt.status,
+            readOnlyNoRoot = noRootDetected,
+            compatMode = compat?.mode ?: "",
+            compatSummary = compat?.summary ?: "",
+            compatItems = compatItems,
             clashEnabled = rt.clashEnabled(),
             clashHasProfile = cs.hasProfile,
             clashRunning = cs.running,
@@ -624,6 +645,7 @@ private fun MainShell(
     onSelectSimInterface: (String, String) -> Unit,
     onUseBuiltinTun: () -> Unit,
     onRefreshAll: () -> Unit,
+    onRunCompatCheck: () -> Unit,
     onToggleClash: (Boolean) -> Unit,
     onFetchSubscription: (String) -> Unit,
     onImportYaml: () -> Unit,
@@ -726,6 +748,7 @@ private fun MainShell(
                         state = state,
                         logFeedback = logFeedback,
                         onRefreshAll = onRefreshAll,
+                        onRunCompatCheck = onRunCompatCheck,
                         onToggleTelemetry = onToggleTelemetry,
                         onSelectTelemetryRoute = onSelectTelemetryRoute,
                         onSaveTelemetryEndpoint = onSaveTelemetryEndpoint,

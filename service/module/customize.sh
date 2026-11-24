@@ -1,6 +1,10 @@
 #!/system/bin/sh
-[ "$(getprop ro.build.version.sdk)" -ge 37 ] || abort "SmartVoWifiCall requires Android 17 / API 37."
+SDK=$(getprop ro.build.version.sdk)
+[ "${SDK:-0}" -ge 34 ] || abort "SmartVoWifiCall requires Android 14-17 (API 34-37); detected API ${SDK:-unknown}."
 [ "$(getprop ro.product.cpu.abi)" = arm64-v8a ] || abort "SmartVoWifiCall requires arm64-v8a."
+if [ "$SDK" -lt 37 ]; then
+ ui_print "- Android API $SDK detected (Android 14-16 compatibility mode enabled; run System Compatibility Self-Check in the app)."
+fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644
 set_perm "$MODPATH/bin/vowifi-engine-arm64" 0 0 0755
 set_perm "$MODPATH/bin/mihomo-arm64" 0 0 0755

@@ -1657,6 +1657,18 @@ final class RuntimeController {
           list, err);
     }
   }
+  volatile com.smartvowificall.ims.policy.CompatReport compatReport;
+  volatile boolean rootUnavailable;
+
+  void runCompatCheckAsync(java.util.function.Consumer<com.smartvowificall.ims.policy.CompatReport> callback) {
+    io.execute(() -> {
+      com.smartvowificall.ims.policy.CompatReport report = root.compatCheck();
+      compatReport = report;
+      rootUnavailable = com.smartvowificall.ims.policy.CompatReport.MODE_READ_ONLY_NO_ROOT.equals(report.mode);
+      if (callback != null) callback.accept(report);
+    });
+  }
+
   static final class ClashConnection {
     final String id, network, type, source, destination, rule, rulePayload, start;
     final List<String> chains;

@@ -117,11 +117,23 @@ data class TelemetryUploadRecordUi(
 )
 
 @Immutable
+data class CompatItemUi(
+    val key: String,
+    val label: String,
+    val status: String,
+    val detail: String
+)
+
+@Immutable
 data class AppUiState(
     val appVersion: String = "",
     val enabled: Boolean = false,
     val billable: Boolean = false,
     val statusText: String = "正在读取设备…",
+    val readOnlyNoRoot: Boolean = false,
+    val compatMode: String = "",
+    val compatSummary: String = "",
+    val compatItems: List<CompatItemUi> = emptyList(),
     val clashEnabled: Boolean = false,
     val clashHasProfile: Boolean = false,
     val clashRunning: Boolean = false,
@@ -218,6 +230,26 @@ fun OverviewPage(
         )
 
         Spacer(Modifier.height(8.dp))
+
+        if (state.readOnlyNoRoot) {
+            AppleMiuixCard(insideMargin = PaddingValues(16.dp)) {
+                StatusPill(label = "只读降级模式", color = p.accentOrange)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "未检测到 Root 权限授权",
+                    color = p.textPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "请在 KernelSU / SukiSU / Magisk 管理器中为 SmartVoWifiCall 授予超级用户权限，并确认模块已激活后重启，然后点击「刷新状态」或在「网络」页运行系统兼容性自检。",
+                    color = p.textSecondary,
+                    fontSize = 12.sp
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         AppleHeroCard(accent = heroAccent) {
             Row(
@@ -1353,6 +1385,7 @@ fun NetworkPage(
     state: AppUiState,
     logFeedback: String,
     onRefreshAll: () -> Unit,
+    onRunCompatCheck: () -> Unit,
     onToggleTelemetry: (Boolean) -> Unit,
     onSelectTelemetryRoute: (String) -> Unit,
     onSaveTelemetryEndpoint: (String) -> Unit,
@@ -1422,6 +1455,77 @@ fun NetworkPage(
             ApplePillButton(
                 text = "刷新网络信息",
                 onClick = onRefreshAll,
+                primary = false,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        AppleSectionTitle("系统接口兼容性自检（Android 14–17）")
+        AppleMiuixCard(insideMargin = PaddingValues(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = state.compatSummary.ifEmpty { "检测 Root、常驻守护、IMS 覆盖、单卡蜂窝与跨基带 SIM AKA 接口" },
+                    color = p.textPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f)
+                )
+                if (state.compatMode.isNotEmpty()) {
+                    Spacer(Modifier.width(8.dp))
+                    val modeColor = when (state.compatMode) {
+                        "READY" -> p.accentGreen
+                        "DEGRADED_COMPAT" -> p.accentOrange
+                        else -> p.accentRed
+                    }
+                    StatusPill(label = state.compatMode, color = modeColor, showDot = false)
+                }
+            }
+            if (state.compatItems.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (item in state.compatItems) {
+                        val badgeColor = when (item.status) {
+                            "OK" -> p.accentGreen
+                            "WARN" -> p.accentOrange
+                            else -> p.accentRed
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(p.cardSubtle)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = item.label,
+                                    color = p.textPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = item.detail,
+                                    color = p.textSecondary,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            StatusPill(label = item.status, color = badgeColor, showDot = false)
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            ApplePillButton(
+                text = "运行系统接口兼容性自检",
+                onClick = onRunCompatCheck,
                 primary = false,
                 modifier = Modifier.fillMaxWidth()
             )

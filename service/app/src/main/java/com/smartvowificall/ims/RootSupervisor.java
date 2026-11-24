@@ -394,6 +394,37 @@ final class RootSupervisor {
   String collectClashHttpTrace() throws Exception {
     return run("[ -f /data/adb/smartvowificall_ims/clash/http-trace.jsonl ] && tail -n 50 /data/adb/smartvowificall_ims/clash/http-trace.jsonl || true");
   }
+  com.smartvowificall.ims.policy.CompatReport compatCheck() {
+    com.smartvowificall.ims.policy.CompatReport.Input in =
+        new com.smartvowificall.ims.policy.CompatReport.Input();
+    in.apiLevel = android.os.Build.VERSION.SDK_INT;
+    try {
+      boolean viaDaemon = false;
+      JSONObject j;
+      try {
+        j = callDaemon("identity", Collections.singletonList("compat-check"), null);
+        viaDaemon = true;
+      } catch (IOException ignored) {
+        triggerDaemonBootstrapAsync();
+        j = new JSONObject(helper("compat-check"));
+      }
+      in.rootAvailable = j.optBoolean("ok", false);
+      in.daemonActive = viaDaemon;
+      in.moduleInstalled = j.optBoolean("moduleInstalled", false);
+      in.engineBinaryReady = j.optBoolean("engineBinaryReady", false);
+      in.imsOverrideVariant = j.optString("imsOverrideVariant", "");
+      in.modemSlotVariant = j.optString("modemSlotVariant", "");
+      in.voiceOverrideVariant = j.optString("voiceOverrideVariant", "");
+      in.iccAuthAvailable = j.optBoolean("iccAuthAvailable", false);
+      in.qrtrAvailable = j.optBoolean("qrtrAvailable", false);
+      in.chipsetFamily = j.optString("chipsetFamily", "generic");
+    } catch (Throwable ignored) {
+      in.rootAvailable = false;
+      in.daemonActive = false;
+    }
+    return com.smartvowificall.ims.policy.CompatReport.evaluate(in);
+  }
+
   com.smartvowificall.ims.telemetry.TelemetryClient.UploadResult uploadTelemetryViaWifiCall(
       String endpoint, String logId, String payloadJson) throws Exception {
     String script =

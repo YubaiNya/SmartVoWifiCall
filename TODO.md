@@ -36,14 +36,12 @@
 
 ---
 
-## P2：正式放开并适配 Android 14–17（扩大可用设备面）
+## P2：正式放开并适配 Android 14–17（扩大可用设备面） ✅
 
-当前 APK `minSdk=33`，但 `service/module/customize.sh` 硬卡 `API >= 37`。
-
-- [ ] 梳理并适配 Android 14 / 15 / 16 / 17（API 34–37）隐藏 Binder 反射签名差异（`ISub`、`ITelephony`、`IPhoneSubInfo`、`setBoundImsServiceOverride`、`enableModemForSlot`）
-- [ ] 在 App 内新增「系统接口兼容性自检」面板（检测 Root 授权、模块同步、高通 QRTR/基带能力、单卡射频与 IMS 覆盖接口可用性）
-- [ ] 实现未授 Root 时的只读降级模式与清晰授权引导
-- [ ] 将 `customize.sh` 正式门槛放宽至 Android 14–17（对未充分验证机型/版本给出温和提示而非直接阻断）
+- [x] 梳理并适配 Android 14 / 15 / 16 / 17（API 34–37）隐藏 Binder 反射签名差异（`ISub.getActiveSubscriptionInfoList`、`ITelephony.setBoundImsServiceOverride` 5/4 参数、`getBoundImsServicePackage`、`isModemEnabledForSlot` 3/2/1 参数、`setVoiceServiceStateOverride` 3/2 参数、`getCallStateForSubscription`、`IPhoneSubInfo`、`IConnectivityManager.getNetworkCapabilities`、`IPackageManager.getPackageUid`）
+- [x] 在 App「网络」页新增「系统接口兼容性自检（Android 14–17）」卡片与 `CompatReport` 评估引擎（检测 API 版本、Root 与常驻守护进程、模块与自研 Go 引擎、IMS 覆盖接口、单卡蜂窝开关、语音状态覆盖与跨基带 SIM AKA 通道）
+- [x] 实现未授 Root 时的「只读降级模式」提示卡片与清晰授权引导
+- [x] 将 `service/module/customize.sh` 正式门槛放宽至 Android 14–17（API 34–37），对 API 34–36 给出温和兼容提示而非直接阻断
 
 ---
 

@@ -139,6 +139,8 @@ public final class RootIdentityMain {
         if (slotId > 1 || !InterfaceSnapshot.validName(args[3]) || !validOutputPath(args[4]))
           throw new Failure("INVALID_ARGUMENT");
         output = prepare(rootContext(), subId, slotId, args[3], args[4]);
+      } else if (mode.equals("compat-check") && args.length == 1) {
+        output = compatCheck();
       } else
         throw new Failure("INVALID_ARGUMENT");
     } catch (Throwable error) {
@@ -201,11 +203,19 @@ public final class RootIdentityMain {
   @SuppressWarnings("unchecked")
   private static List<SubscriptionInfo> activeSubscriptions(Context context) throws Exception {
     // Same ISub call as SubscriptionManager, without its failure-to-empty-list conversion or
-    // UI visibility filter. An unavailable phone service must not look like all SIMs vanished.
-    List<SubscriptionInfo> active = (List<SubscriptionInfo>) binderCall("isub",
-        "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
-        new Class<?>[] {String.class, String.class, boolean.class},
-        new Object[] {"root", null, true});
+    // UI visibility filter. Supports API 34-37 ISub signatures.
+    List<SubscriptionInfo> active;
+    try {
+      active = (List<SubscriptionInfo>) binderCall("isub",
+          "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
+          new Class<?>[] {String.class, String.class, boolean.class},
+          new Object[] {"root", null, true});
+    } catch (NoSuchMethodException ignored) {
+      active = (List<SubscriptionInfo>) binderCall("isub",
+          "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
+          new Class<?>[] {String.class, String.class},
+          new Object[] {"root", null});
+    }
     if (active == null)
       throw new Failure("SUBSCRIPTIONS_UNAVAILABLE");
     return active;
@@ -228,21 +238,39 @@ public final class RootIdentityMain {
 
   private static int subscriptionCallState(int subId) throws Exception {
     // TelephonyManager otherwise converts a dead Binder/RemoteException to IDLE.
-    return (Integer) binderCall("phone", "com.android.internal.telephony.ITelephony",
-        "getCallStateForSubscription", new Class<?>[] {int.class, String.class, String.class},
-        new Object[] {subId, "root", null});
+    try {
+      return (Integer) binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "getCallStateForSubscription", new Class<?>[] {int.class, String.class, String.class},
+          new Object[] {subId, "root", null});
+    } catch (NoSuchMethodException ignored) {
+      return (Integer) binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "getCallStateForSubscription", new Class<?>[] {int.class, String.class},
+          new Object[] {subId, "root"});
+    }
   }
 
   private static int globalCallState() throws Exception {
-    return (Integer) binderCall("telecom", "com.android.internal.telecom.ITelecomService",
-        "getCallStateUsingPackage", new Class<?>[] {String.class, String.class},
-        new Object[] {"root", null});
+    try {
+      return (Integer) binderCall("telecom", "com.android.internal.telecom.ITelecomService",
+          "getCallStateUsingPackage", new Class<?>[] {String.class, String.class},
+          new Object[] {"root", null});
+    } catch (NoSuchMethodException ignored) {
+      return (Integer) binderCall("telecom", "com.android.internal.telecom.ITelecomService",
+          "getCallState", new Class<?>[0], new Object[0]);
+    }
   }
 
   private static String imsPackage(int slot, int feature) throws Exception {
-    Object value = binderCall("phone", "com.android.internal.telephony.ITelephony",
-        "getBoundImsServicePackage", new Class<?>[] {int.class, boolean.class, int.class},
-        new Object[] {slot, true, feature});
+    Object value;
+    try {
+      value = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "getBoundImsServicePackage", new Class<?>[] {int.class, boolean.class, int.class},
+          new Object[] {slot, true, feature});
+    } catch (NoSuchMethodException ignored) {
+      value = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "getBoundImsServicePackage", new Class<?>[] {int.class, int.class, boolean.class, int.class},
+          new Object[] {slot, -10000, true, feature});
+    }
     if (!(value instanceof String))
       throw new Failure("IMS_CONFIG_UNKNOWN");
     String result = (String) value;
@@ -252,10 +280,20 @@ public final class RootIdentityMain {
   }
 
   private static void setMmTel(int slot, String packageName) throws Exception {
-    Object accepted = binderCall("phone", "com.android.internal.telephony.ITelephony",
-        "setBoundImsServiceOverride",
-        new Class<?>[] {int.class, int.class, boolean.class, int[].class, String.class},
-        new Object[] {slot, -10000, true, new int[] {1}, packageName});
+    Object accepted;
+    try {
+      // Android 15-17 (API 35-37) signature with userId (-10000 = USER_CURRENT)
+      accepted = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "setBoundImsServiceOverride",
+          new Class<?>[] {int.class, int.class, boolean.class, int[].class, String.class},
+          new Object[] {slot, -10000, true, new int[] {1}, packageName});
+    } catch (NoSuchMethodException ignored) {
+      // Android 14 (API 34) signature without userId
+      accepted = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "setBoundImsServiceOverride",
+          new Class<?>[] {int.class, boolean.class, int[].class, String.class},
+          new Object[] {slot, true, new int[] {1}, packageName});
+    }
     if (!Boolean.TRUE.equals(accepted))
       throw new Failure("IMS_SET_REJECTED");
     // Queue a getter after the setter on the resolver Handler; this is a configuration barrier,
@@ -416,10 +454,17 @@ public final class RootIdentityMain {
 
   private static void applyVoiceServiceOverride(int subId, boolean hasService) throws Exception {
     if (subId < 0) return;
-    binderCall("phone", "com.android.internal.telephony.ITelephony",
-        "setVoiceServiceStateOverride",
-        new Class<?>[] {int.class, boolean.class, String.class},
-        new Object[] {subId, hasService, "root"});
+    try {
+      binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "setVoiceServiceStateOverride",
+          new Class<?>[] {int.class, boolean.class, String.class},
+          new Object[] {subId, hasService, "root"});
+    } catch (NoSuchMethodException ignored) {
+      binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "setVoiceServiceStateOverride",
+          new Class<?>[] {int.class, boolean.class},
+          new Object[] {subId, hasService});
+    }
   }
 
   private static JSONObject setVoiceServiceOverride(
@@ -512,11 +557,20 @@ public final class RootIdentityMain {
   private static int radioState(Identity identity) throws Exception {
     if (identity.phoneId < 0) throw new Failure("RADIO_STATE_UNKNOWN");
     // Per-slot modem stack status (PhoneConfigurationManager / RIL_REQUEST_ENABLE_MODEM).
-    // On Qualcomm DSDS, setRadioForSubscriber triggers shared LPM across both SIMs;
-    // enableModemForSlot disables only the target slot's cellular stack while preserving
-    // the mainland SIM and UICC QRTR AKA authentication.
-    Object enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
-        new Class<?>[] {int.class, String.class, String.class}, new Object[] {identity.phoneId, "root", null});
+    // Supports API 34-37 isModemEnabledForSlot signatures.
+    Object enabled;
+    try {
+      enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
+          new Class<?>[] {int.class, String.class, String.class}, new Object[] {identity.phoneId, "root", null});
+    } catch (NoSuchMethodException e1) {
+      try {
+        enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
+            new Class<?>[] {int.class, String.class}, new Object[] {identity.phoneId, "root"});
+      } catch (NoSuchMethodException e2) {
+        enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
+            new Class<?>[] {int.class}, new Object[] {identity.phoneId});
+      }
+    }
     if (!(enabled instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
     return ((Boolean) enabled) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
   }
@@ -645,9 +699,16 @@ public final class RootIdentityMain {
   }
 
   private static String currentIccid(int subId) throws Exception {
-    Object value = binderCall("iphonesubinfo", "com.android.internal.telephony.IPhoneSubInfo",
-        "getIccSerialNumberForSubscriber", new Class<?>[] {int.class, String.class, String.class},
-        new Object[] {subId, "root", null});
+    Object value;
+    try {
+      value = binderCall("iphonesubinfo", "com.android.internal.telephony.IPhoneSubInfo",
+          "getIccSerialNumberForSubscriber", new Class<?>[] {int.class, String.class, String.class},
+          new Object[] {subId, "root", null});
+    } catch (NoSuchMethodException ignored) {
+      value = binderCall("iphonesubinfo", "com.android.internal.telephony.IPhoneSubInfo",
+          "getIccSerialNumberForSubscriber", new Class<?>[] {int.class, String.class},
+          new Object[] {subId, "root"});
+    }
     return value instanceof String ? normalizeIccid((String) value) : "";
   }
 
@@ -1174,6 +1235,83 @@ public final class RootIdentityMain {
     for (byte b : digest) out.append(String.format(java.util.Locale.ROOT, "%02x", b & 255));
     return out.toString();
   }
+  private static JSONObject compatCheck() throws Exception {
+    int api = android.os.Build.VERSION.SDK_INT;
+    boolean moduleInstalled = new File("/data/adb/modules/smartvowificall/module.prop").isFile()
+        && !new File("/data/adb/modules/smartvowificall/disable").exists();
+    boolean engineBinaryReady = new File(ENGINE).canExecute();
+
+    String imsVariant = "";
+    String modemVariant = "";
+    String voiceVariant = "";
+    boolean iccAuthAvailable = false;
+    try {
+      Class<?> tel = Class.forName("com.android.internal.telephony.ITelephony");
+      if (hasMethod(tel, "setBoundImsServiceOverride", int.class, int.class, boolean.class, int[].class, String.class)) {
+        imsVariant = "api35_5arg";
+      } else if (hasMethod(tel, "setBoundImsServiceOverride", int.class, boolean.class, int[].class, String.class)) {
+        imsVariant = "api34_4arg";
+      }
+      if (hasMethod(tel, "enableModemForSlot", int.class, boolean.class)) {
+        if (hasMethod(tel, "isModemEnabledForSlot", int.class, String.class, String.class)) {
+          modemVariant = "api35_3arg";
+        } else if (hasMethod(tel, "isModemEnabledForSlot", int.class, String.class)) {
+          modemVariant = "api34_2arg";
+        } else if (hasMethod(tel, "isModemEnabledForSlot", int.class)) {
+          modemVariant = "api34_1arg";
+        }
+      }
+      if (hasMethod(tel, "setVoiceServiceStateOverride", int.class, boolean.class, String.class)) {
+        voiceVariant = "api35_3arg";
+      } else if (hasMethod(tel, "setVoiceServiceStateOverride", int.class, boolean.class)) {
+        voiceVariant = "api34_2arg";
+      }
+      iccAuthAvailable =
+          hasMethod(tel, "getIccAuthentication", int.class, String.class, String.class, int.class, int.class, String.class)
+          || hasMethod(tel, "getIccAuthentication", int.class, String.class, int.class, int.class, String.class);
+    } catch (Throwable ignored) {}
+
+    String soc = (emptyIfNull(android.os.Build.HARDWARE) + " "
+        + emptyIfNull(android.os.Build.BOARD) + " "
+        + perPhoneProp("ro.board.platform", 0) + " "
+        + perPhoneProp("ro.soc.manufacturer", 0)).toLowerCase(java.util.Locale.ROOT);
+    String chipset = "generic";
+    if (soc.contains("qcom") || soc.contains("qualcomm") || soc.contains("sm8") || soc.contains("kona") || soc.contains("kalama") || soc.contains("pineapple") || soc.contains("sun")) {
+      chipset = "qualcomm";
+    } else if (soc.contains("mt6") || soc.contains("mt8") || soc.contains("mediatek") || soc.contains("dimensity")) {
+      chipset = "mediatek";
+    } else if (soc.contains("tensor") || soc.contains("gs101") || soc.contains("gs201") || soc.contains("zuma") || soc.contains("google")) {
+      chipset = "tensor";
+    } else if (soc.contains("exynos") || soc.contains("s5e") || soc.contains("universal")) {
+      chipset = "exynos";
+    }
+    boolean qrtrAvailable = "qualcomm".equals(chipset)
+        || new File("/dev/qrtr").exists()
+        || new File("/sys/bus/qrtr").isDirectory();
+
+    return new JSONObject()
+        .put("ok", true)
+        .put("code", "COMPAT_CHECK")
+        .put("apiLevel", api)
+        .put("moduleInstalled", moduleInstalled)
+        .put("engineBinaryReady", engineBinaryReady)
+        .put("imsOverrideVariant", imsVariant)
+        .put("modemSlotVariant", modemVariant)
+        .put("voiceOverrideVariant", voiceVariant)
+        .put("iccAuthAvailable", iccAuthAvailable)
+        .put("qrtrAvailable", qrtrAvailable)
+        .put("chipsetFamily", chipset);
+  }
+
+  private static boolean hasMethod(Class<?> cls, String name, Class<?>... params) {
+    try {
+      cls.getMethod(name, params);
+      return true;
+    } catch (NoSuchMethodException e) {
+      return false;
+    }
+  }
+
   private static final class Failure extends Exception {
     final String code;
     Failure(String code) {

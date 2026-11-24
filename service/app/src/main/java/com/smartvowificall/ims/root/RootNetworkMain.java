@@ -96,7 +96,14 @@ public final class RootNetworkMain {
     BoundService packages = new BoundService("package", PACKAGES);
     Method all = connectivity.type.getMethod("getAllNetworks");
     Method links = connectivity.type.getMethod("getLinkProperties", Network.class);
-    Method caps = connectivity.type.getMethod("getNetworkCapabilities", Network.class, String.class, String.class);
+    Method caps;
+    boolean capsAttributed = true;
+    try {
+      caps = connectivity.type.getMethod("getNetworkCapabilities", Network.class, String.class, String.class);
+    } catch (NoSuchMethodException ignored) {
+      caps = connectivity.type.getMethod("getNetworkCapabilities", Network.class);
+      capsAttributed = false;
+    }
     Method names = packages.type.getMethod("getPackagesForUid", int.class);
     Object value = all.invoke(connectivity.proxy);
     if (!(value instanceof Network[])) throw new Failure("NETWORK_LIST_UNAVAILABLE");
@@ -117,7 +124,9 @@ public final class RootNetworkMain {
       try {
         if (network == null) { skipped++; continue; }
         LinkProperties link = (LinkProperties) links.invoke(connectivity.proxy, network);
-        NetworkCapabilities capability = (NetworkCapabilities) caps.invoke(connectivity.proxy, network, "root", null);
+        NetworkCapabilities capability = (NetworkCapabilities) (capsAttributed
+            ? caps.invoke(connectivity.proxy, network, "root", null)
+            : caps.invoke(connectivity.proxy, network));
         if (link == null || capability == null || link.getInterfaceName() == null) {
           skipped++; issues.add("NETWORK_DISAPPEARED"); continue;
         }
@@ -135,7 +144,9 @@ public final class RootNetworkMain {
         }
         // A vanished/replaced VPN must not supply an owner for a reused interface name.
         LinkProperties latestLink = (LinkProperties) links.invoke(connectivity.proxy, network);
-        NetworkCapabilities latestCaps = (NetworkCapabilities) caps.invoke(connectivity.proxy, network, "root", null);
+        NetworkCapabilities latestCaps = (NetworkCapabilities) (capsAttributed
+            ? caps.invoke(connectivity.proxy, network, "root", null)
+            : caps.invoke(connectivity.proxy, network));
         if (latestLink == null || latestCaps == null || !iface.equals(latestLink.getInterfaceName())
             || vpn != latestCaps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
             || reportedOwnerUid != latestCaps.getOwnerUid()) {
@@ -282,8 +293,14 @@ public final class RootNetworkMain {
     if (!(user instanceof String) || !(link instanceof String)) return null;
     String packageName = (String) user, iface = (String) link;
     if (packageName.isEmpty() || iface.isEmpty()) return null;
-    int uid = (Integer) packages.type.getMethod("getPackageUid", String.class, long.class, int.class)
-                            .invoke(packages.proxy, packageName, 0L, 0);
+    int uid;
+    try {
+      uid = (Integer) packages.type.getMethod("getPackageUid", String.class, long.class, int.class)
+                .invoke(packages.proxy, packageName, 0L, 0);
+    } catch (NoSuchMethodException ignored) {
+      uid = (Integer) packages.type.getMethod("getPackageUid", String.class, int.class, int.class)
+                .invoke(packages.proxy, packageName, 0, 0);
+    }
     if (uid < 0) throw new Failure("VPN_PACKAGE_UID_UNAVAILABLE");
     Object names = packages.type.getMethod("getPackagesForUid", int.class).invoke(packages.proxy, uid);
     TreeSet<String> verifiedPackages = new TreeSet<>();
