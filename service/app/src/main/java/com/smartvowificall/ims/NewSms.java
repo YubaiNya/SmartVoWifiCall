@@ -63,7 +63,7 @@ final class NewSms extends ImsSmsImplBase {
   }
   @Override
   public void sendSms(int token, int ref, String format, String smsc, boolean retry, byte[] pdu) {
-    final boolean entryAllowed = feature.rt.billable();
+    final boolean entryAllowed = feature.rt.billable(feature.slot);
     final byte[] snapshot = pdu == null ? null : pdu.clone();
     feature.rt.worker.execute(
         () -> acceptSubmit(token, ref, format, retry, snapshot, entryAllowed));
@@ -75,7 +75,7 @@ final class NewSms extends ImsSmsImplBase {
     RuntimeController.Binding binding = feature.binding();
     SmsPduCodec.Submit submit = null;
     try {
-      if (!entryAllowed || !feature.rt.billable() || !ready || binding == null
+      if (!entryAllowed || !feature.rt.billable(feature.slot) || !ready || binding == null
           || !binding.registered || !"3gpp".equals(format)) {
         throw new IllegalStateException("SMS unavailable");
       }
@@ -160,7 +160,7 @@ final class NewSms extends ImsSmsImplBase {
         boolean accepted = false;
         try {
           // Recheck before the side effect; EngineSession gates it again.
-          if (!feature.rt.billable() || feature.binding() != binding || !binding.registered) {
+          if (!feature.rt.billable(feature.slot) || feature.binding() != binding || !binding.registered) {
             throw new IllegalStateException("SMS binding changed");
           }
           Map<String, Object> response =

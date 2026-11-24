@@ -954,9 +954,6 @@ public final class RootIdentityMain {
       throw new Failure("SUBSCRIPTION_CHANGED");
     if (!found.ready)
       throw new Failure(found.identityCode());
-    String mcc = found.homePlmn.substring(0, 3);
-    if (mcc.equals("460") || mcc.equals("461"))
-      throw new Failure("MAINLAND_SIM");
     return found;
   }
 
@@ -967,7 +964,7 @@ public final class RootIdentityMain {
     requireRadioOff(before);
     if (!before.callStateKnown || before.callState != TelephonyManager.CALL_STATE_IDLE)
       throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
-    String dnsTarget = ClashConfig.TUN_DEVICE.equals(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
+    String dnsTarget = ClashConfig.isBuiltinTun(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
     JSONObject template = new JSONObject()
                               .put("enabled", true)
                               .put("transport", TunEgress.selector(iface))
@@ -1000,7 +997,7 @@ public final class RootIdentityMain {
 
   private static void validateConfig(JSONObject config, Identity current, String iface)
       throws Exception {
-    String expectedDns = ClashConfig.TUN_DEVICE.equals(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
+    String expectedDns = ClashConfig.isBuiltinTun(iface) ? ClashConfig.ENGINE_DNS_TARGET : "";
     if (!validPreparedIdentity(current.iccid, current.homePlmn, current.slotId,
             config.optString("iccid", ""), config.optString("mcc", ""), config.optString("mnc", ""),
             config.optInt("slot", -1), config.optString("imsi", ""), config.optString("imei", ""))
@@ -1024,8 +1021,10 @@ public final class RootIdentityMain {
 
   private static void requireTun(String iface) throws Failure {
     try {
-      if (ClashConfig.TUN_DEVICE.equals(iface)) {
-        File owner = new File(ClashConfig.NETNS_OWNER_PATH);
+      int clashId = ClashConfig.instanceForTun(iface);
+      if (clashId >= 0) {
+        ClashConfig.InstanceSpec spec = ClashConfig.spec(clashId);
+        File owner = new File(spec.netnsOwnerPath);
         if (!owner.isFile() || Files.isSymbolicLink(owner.toPath()))
           throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
         String[] parts = new String(Files.readAllBytes(owner.toPath()), StandardCharsets.US_ASCII)
@@ -1038,12 +1037,13 @@ public final class RootIdentityMain {
         String rootNs = Os.readlink("/proc/1/ns/net");
         if (!parts[2].equals(liveNs) || liveNs.equals(rootNs))
           throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+        String dev = spec.tunDevice;
         String flags = run(new ProcessBuilder("/system/bin/nsenter", "--net=" + netnsProc,
             "--", "/system/bin/unshare", "-m", "--", "/system/bin/sh", "-c",
             "mount -o private none / && mount -o private none /sys && mount -t sysfs sysfs /sys "
-                + "&& ip -4 addr show dev wfctun0 | grep -q '" + ClashConfig.TUN_IPV4 + "' "
-                + "&& ip -4 route show default dev wfctun0 | grep -q 'default' "
-                + "&& cat /sys/class/net/wfctun0/tun_flags"),
+                + "&& ip -4 addr show dev " + dev + " | grep -q '" + spec.tunIpv4 + "' "
+                + "&& ip -4 route show default dev " + dev + " | grep -q 'default' "
+                + "&& cat /sys/class/net/" + dev + "/tun_flags"),
             new byte[0], 5000, "TUN_REQUIRED_OR_UNAVAILABLE");
         if (!TunEgress.isTunFlags(flags)) throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
         return;

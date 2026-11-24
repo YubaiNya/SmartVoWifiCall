@@ -59,10 +59,11 @@ final class RuntimeController {
   volatile RootSupervisor.Snapshot snapshot;
   volatile InterfaceSnapshot interfaces;
   volatile ClashState clash = ClashState.EMPTY;
+  volatile ClashState clash1 = ClashState.EMPTY_1;
   volatile String status = "等待启动";
   volatile boolean shutdownComplete, lastFullSyncSucceeded;
-  private volatile boolean clashRestartPending;
-  private volatile String lastAutoClashSimKey = "";
+  private final boolean[] clashRestartPending = new boolean[] { false, false };
+  private final String[] lastAutoClashSimKeys = new String[] { "", "" };
   private final java.util.concurrent.atomic.AtomicBoolean telemetryInFlight =
       new java.util.concurrent.atomic.AtomicBoolean(false);
   final Map<Integer, NewMmTelFeature> features = new ConcurrentHashMap<>();
@@ -76,27 +77,79 @@ final class RuntimeController {
   boolean enabled() {
     return prefs.getBoolean("enabled", false);
   }
+  boolean slotEnabled(int slot) {
+    return slot >= 0 && slot <= 7 && prefs.getBoolean("slot_enabled." + slot, false);
+  }
+  void setSlotEnabled(int slot, boolean v) {
+    if (slot < 0 || slot > 7) return;
+    prefs.edit().putBoolean("slot_enabled." + slot, v).commit();
+    fallback.resetSlot(slot);
+    fallbackReleasedSlots.remove(slot);
+    staleSlotSince.remove(slot);
+    lastRebindNanos.remove(slot);
+    kick();
+  }
+  private void ensureSlotDefaults(RootSupervisor.Snapshot snap) {
+    if (snap == null || !enabled()) return;
+    if (prefs.contains("slot_enabled.0") || prefs.contains("slot_enabled.1")) return;
+    SharedPreferences.Editor ed = prefs.edit();
+    boolean any = false;
+    for (RootSupervisor.Sim s : snap.sims) {
+      if (s.policy.slotId < 0 || s.policy.slotId > 7) continue;
+      // Preserve existing overseas SIM activation on upgrade; keep mainland SIMs off until opted in.
+      boolean enableDefault = !PolicyEngine.isMainlandPlmn(s.policy.homePlmn)
+          && PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE;
+      ed.putBoolean("slot_enabled." + s.policy.slotId, enableDefault);
+      any = true;
+    }
+    if (any) ed.commit();
+  }
   boolean billable() {
+    return billable(0) || billable(1);
+  }
+  boolean billable(int slot) {
+    if (slot >= 0 && slot <= 7 && prefs.contains("slot_billable." + slot)) {
+      return prefs.getBoolean("slot_billable." + slot, false);
+    }
     return prefs.getBoolean("billable", false);
   }
+  ClashState clashState(int instanceId) {
+    return instanceId == 1 ? clash1 : clash;
+  }
+  private void setClashState(int instanceId, ClashState st) {
+    if (instanceId == 1) clash1 = st;
+    else clash = st;
+  }
   boolean clashEnabled() {
-    return prefs.getBoolean("clash_enabled", false);
+    return clashEnabled(0);
+  }
+  boolean clashEnabled(int instanceId) {
+    return instanceId == 1
+        ? prefs.getBoolean("clash_enabled.1", false)
+        : prefs.getBoolean("clash_enabled", false);
   }
   void setClashEnabled(boolean v) {
-    prefs.edit().putBoolean("clash_enabled", v).commit();
+    setClashEnabled(0, v);
+  }
+  void setClashEnabled(int instanceId, boolean v) {
+    String key = instanceId == 1 ? "clash_enabled.1" : "clash_enabled";
+    prefs.edit().putBoolean(key, v).commit();
     if (v) {
       fallback.reset();
       fallbackReleasedSlots.clear();
     }
     kick();
   }
-  String preferredClashNode(String simKey) {
-    return simKey == null || simKey.isEmpty() ? "" : prefs.getString("clash_node." + simKey, "");
+  String preferredClashNode(String simKey, int instanceId) {
+    if (simKey == null || simKey.isEmpty()) return "";
+    if (instanceId == 1) return prefs.getString("clash1_node." + simKey, "");
+    return prefs.getString("clash_node." + simKey, "");
   }
-  private void savePreferredClashNode(String simKey, String node) {
+  private void savePreferredClashNode(String simKey, int instanceId, String node) {
     if (simKey == null || simKey.isEmpty() || node == null || node.isEmpty()) return;
-    if (!node.equals(prefs.getString("clash_node." + simKey, "")))
-      prefs.edit().putString("clash_node." + simKey, node).commit();
+    String key = (instanceId == 1 ? "clash1_node." : "clash_node.") + simKey;
+    if (!node.equals(prefs.getString(key, "")))
+      prefs.edit().putString(key, node).commit();
   }
   void retryNow() {
     policyWorker.execute(() -> {
@@ -271,22 +324,26 @@ final class RuntimeController {
   }
   private List<Map<String, Object>> collectSanitizedClashConnections() {
     List<Map<String, Object>> out = new ArrayList<>();
-    if (!clash.running) return out;
-    try {
-      JSONObject raw = root.clashConnections();
-      JSONArray arr = raw.optJSONArray("connections");
-      if (arr != null) {
-        int limit = Math.min(arr.length(), 60);
-        for (int i = 0; i < limit; i++) {
-          JSONObject o = arr.optJSONObject(i);
-          if (o == null) continue;
-          try {
-            out.add(JsonCodec.decodeObject(o.toString()));
-          } catch (Exception ignored) {
+    for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+      if (!clashState(id).running) continue;
+      try {
+        JSONObject raw = root.clashConnections(id);
+        JSONArray arr = raw.optJSONArray("connections");
+        if (arr != null) {
+          int limit = Math.min(arr.length(), 30);
+          for (int i = 0; i < limit; i++) {
+            JSONObject o = arr.optJSONObject(i);
+            if (o == null) continue;
+            try {
+              Map<String, Object> m = JsonCodec.decodeObject(o.toString());
+              m.put("clashInstance", id);
+              out.add(m);
+            } catch (Exception ignored) {
+            }
           }
         }
+      } catch (Exception ignored) {
       }
-    } catch (Exception ignored) {
     }
     return out;
   }
@@ -341,7 +398,7 @@ final class RuntimeController {
             s.opportunistic,
             LogSanitizer.classifyEgress(sel, isTun),
             sel,
-            !preferredClashNode(s.policy.simKey).isEmpty(),
+            !preferredClashNode(s.policy.simKey, Math.max(0, ClashConfig.instanceForTun(sel))).isEmpty(),
             Boolean.TRUE.equals(radioOff.get(s.policy.slotId)),
             featureMatches(s),
             b != null ? b.ims : "IDLE",
@@ -664,91 +721,98 @@ final class RuntimeController {
     zip.write(bytes);
     zip.closeEntry();
   }
-  void useBuiltinTunForForeignSims() {
+  void useBuiltinTunForSlot(int slot, int clashInstance) {
     RootSupervisor.Snapshot snap = snapshot;
     if (snap == null) return;
+    String tunDev = ClashConfig.tunDeviceForInstance(clashInstance);
     SharedPreferences.Editor ed = prefs.edit();
     for (RootSupervisor.Sim s : snap.sims) {
-      if (PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE)
-        ed.putString("selected." + s.policy.simKey, ClashConfig.TUN_DEVICE);
+      if (s.policy.slotId == slot) {
+        ed.putString("selected." + s.policy.simKey, tunDev);
+      }
     }
-    if (clash.hasProfile) ed.putBoolean("clash_enabled", true);
     ed.commit();
-    fallback.reset();
+    fallback.resetSlot(slot);
     kick();
   }
-  void clashFetchSubscription(String url, Consumer<String> done) {
+  void clashFetchSubscription(int id, String url, Consumer<String> done) {
     io.execute(() -> {
       try {
-        JSONObject r = root.clashFetchSubscription(url);
-        prefs.edit().putBoolean("clash_enabled", true).commit();
-        applyClashUpdate(done, "订阅已更新");
+        root.clashFetchSubscription(id, url);
+        applyClashUpdate(id, done, "订阅已更新");
       } catch (Exception e) {
         done.accept("拉取失败：" + safeCode(e));
       }
     });
   }
-  void clashSaveProfile(String yaml, Consumer<String> done) {
+  void clashSaveProfile(int id, String yaml, Consumer<String> done) {
     io.execute(() -> {
       try {
-        JSONObject r = root.clashSaveProfile(yaml);
-        prefs.edit().putBoolean("clash_enabled", true).commit();
-        applyClashUpdate(done, "配置已导入");
+        root.clashSaveProfile(id, yaml);
+        applyClashUpdate(id, done, "配置已导入");
       } catch (Exception e) {
         done.accept("导入失败：" + safeCode(e));
       }
     });
   }
-  void clashReloadLocal(Consumer<String> done) {
+  void clashReloadLocal(int id, Consumer<String> done) {
     io.execute(() -> {
       try {
-        JSONObject r = root.clashRebuild();
-        applyClashUpdate(done, "配置已重载");
+        root.clashRebuild(id);
+        applyClashUpdate(id, done, "配置已重载");
       } catch (Exception e) {
         done.accept("重载失败：" + safeCode(e));
       }
     });
   }
-  void clashSelectNode(String node, Consumer<String> done) {
+  void clashCopyFrom(int dstId, int srcId, Consumer<String> done) {
+    io.execute(() -> {
+      try {
+        root.clashCopyFrom(dstId, srcId);
+        applyClashUpdate(dstId, done, "已从内核 " + (srcId + 1) + " 复制配置");
+      } catch (Exception e) {
+        done.accept("复制失败：" + safeCode(e));
+      }
+    });
+  }
+  void clashSelectNode(int id, String node, Consumer<String> done) {
     policyWorker.execute(() -> {
       try {
-        root.clashSelectNode(node);
+        String tunDev = ClashConfig.tunDeviceForInstance(id);
+        root.clashSelectNode(id, node);
         RootSupervisor.Snapshot snap = snapshot;
         if (snap != null) {
           for (RootSupervisor.Sim s : snap.sims) {
-            if (PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE
-                && ClashConfig.TUN_DEVICE.equals(selection(s.policy.simKey))) {
-              savePreferredClashNode(s.policy.simKey, node);
-              lastAutoClashSimKey = s.policy.simKey;
+            if (tunDev.equals(selection(s.policy.simKey))) {
+              savePreferredClashNode(s.policy.simKey, id, node);
+              lastAutoClashSimKeys[id] = s.policy.simKey;
             }
           }
         }
         boolean busy = (snap != null && snap.callsActive)
             || bindings.values().stream().anyMatch(b -> b.callActive);
         if (!busy) {
-          // Drop stale UDP/IKE flows pinned to the old node, clear fallback backoff, and recycle
-          // wfctun0 bindings so the engine dials fresh immediately instead of sitting in BACKOFF.
-          try { root.clashCloseAllConnections(); } catch (Exception ignored) {}
-          fallback.reset();
-          fallbackReleasedSlots.clear();
+          try { root.clashCloseAllConnections(id); } catch (Exception ignored) {}
           for (Binding b : new ArrayList<>(bindings.values())) {
-            if (ClashConfig.TUN_DEVICE.equals(b.iface)) {
+            if (tunDev.equals(b.iface)) {
+              fallback.resetSlot(b.slot());
+              fallbackReleasedSlots.remove(b.slot());
               try { clearSlot(b.slot()); } catch (Exception ignored) {}
             }
           }
         }
         refreshClashState();
         kick();
-        done.accept("已切换出口节点：" + node);
+        done.accept("内核 " + (id + 1) + " 已切换节点：" + node);
       } catch (Exception e) {
         done.accept("切换失败：" + safeCode(e));
       }
     });
   }
-  void clashTestDelay(Consumer<String> done) {
+  void clashTestDelay(int id, Consumer<String> done) {
     io.execute(() -> {
       try {
-        JSONObject r = root.clashTestDelay();
+        JSONObject r = root.clashTestDelay(id);
         JSONObject delays = r.optJSONObject("delays");
         int okCount = delays == null ? 0 : delays.length();
         refreshClashState();
@@ -758,26 +822,27 @@ final class RuntimeController {
       }
     });
   }
-  private void applyClashUpdate(Consumer<String> done, String message) {
+  private void applyClashUpdate(int id, Consumer<String> done, String message) {
     policyWorker.execute(() -> {
-      clashRestartPending = true;
+      clashRestartPending[id] = true;
       fallback.reset();
       fallbackReleasedSlots.clear();
       refreshClashState();
       kick();
-      done.accept(message + (enabled() ? "" : "，开启服务后生效"));
+      String suffix = (!enabled() || !clashEnabled(id)) ? "，打开总开关与内核开关后生效" : "";
+      done.accept(message + suffix);
     });
   }
-  void clashRestartCore(Consumer<String> done) {
-    applyClashUpdate(done, "已安排重启，通话中将稍后执行");
+  void clashRestartCore(int id, Consumer<String> done) {
+    applyClashUpdate(id, done, "已安排重启，通话中将稍后执行");
   }
-  void clashSetController(boolean externalLan, int port, Consumer<String> done) {
+  void clashSetController(int id, boolean externalLan, int port, Consumer<String> done) {
     policyWorker.execute(() -> {
       try {
         if (snapshot == null || snapshot.callsActive
             || bindings.values().stream().anyMatch(b -> b.callActive))
           throw new IllegalStateException("CALL_ACTIVE_OR_UNKNOWN");
-        root.clashSetController(externalLan, port);
+        root.clashSetController(id, externalLan, port);
         refreshClashState();
         kick();
         done.accept(externalLan
@@ -788,13 +853,13 @@ final class RuntimeController {
       }
     });
   }
-  void clashRotateSecret(Consumer<String> done) {
+  void clashRotateSecret(int id, Consumer<String> done) {
     policyWorker.execute(() -> {
       try {
         if (snapshot == null || snapshot.callsActive
             || bindings.values().stream().anyMatch(b -> b.callActive))
           throw new IllegalStateException("CALL_ACTIVE_OR_UNKNOWN");
-        root.clashRotateSecret();
+        root.clashRotateSecret(id);
         refreshClashState();
         kick();
         done.accept("控制器密钥已重置并生效");
@@ -803,29 +868,29 @@ final class RuntimeController {
       }
     });
   }
-  void clashFetchConnections(Consumer<ConnectionsSnapshot> done) {
+  void clashFetchConnections(int id, Consumer<ConnectionsSnapshot> done) {
     io.execute(() -> {
       try {
-        done.accept(ConnectionsSnapshot.fromJson(root.clashConnections(), ""));
+        done.accept(ConnectionsSnapshot.fromJson(root.clashConnections(id), ""));
       } catch (Exception e) {
         done.accept(ConnectionsSnapshot.error(safeCode(e)));
       }
     });
   }
-  void clashCloseConnection(String id, Consumer<String> done) {
+  void clashCloseConnection(int id, String connId, Consumer<String> done) {
     io.execute(() -> {
       try {
-        root.clashCloseConnection(id);
+        root.clashCloseConnection(id, connId);
         done.accept("已断开该连接");
       } catch (Exception e) {
         done.accept("断开失败：" + safeCode(e));
       }
     });
   }
-  void clashCloseAllConnections(Consumer<String> done) {
+  void clashCloseAllConnections(int id, Consumer<String> done) {
     io.execute(() -> {
       try {
-        root.clashCloseAllConnections();
+        root.clashCloseAllConnections(id);
         done.accept("已断开全部活跃连接");
       } catch (Exception e) {
         done.accept("断开失败：" + safeCode(e));
@@ -833,50 +898,54 @@ final class RuntimeController {
     });
   }
   void refreshClashState() {
-    try {
-      clash = ClashState.fromJson(root.clashStatus(), "");
-    } catch (Exception e) {
-      clash = clash.withError(safeCode(e));
+    for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+      try {
+        setClashState(id, ClashState.fromJson(root.clashStatus(id), "", id));
+      } catch (Exception e) {
+        setClashState(id, clashState(id).withError(safeCode(e)));
+      }
     }
   }
   private void syncClash(boolean callsActive) {
-    try {
-      ClashState current = ClashState.fromJson(root.clashStatus(), "");
-      if (ServiceLifecycle.shouldStartProxy(enabled(), clashEnabled(), current.hasProfile,
-          callsActive, current.running && current.tunUp, clashRestartPending)) {
-        if (clashRestartPending && current.running) root.clashRestart();
-        else root.clashStart();
-        clashRestartPending = false;
-        current = ClashState.fromJson(root.clashStatus(), "");
+    for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+      try {
+        ClashState current = ClashState.fromJson(root.clashStatus(id), "", id);
+        if (ServiceLifecycle.shouldStartProxy(enabled(), clashEnabled(id), current.hasProfile,
+            callsActive, current.running && current.tunUp, clashRestartPending[id])) {
+          if (clashRestartPending[id] && current.running) root.clashRestart(id);
+          else root.clashStart(id);
+          clashRestartPending[id] = false;
+          current = ClashState.fromJson(root.clashStatus(id), "", id);
+        }
+        setClashState(id, current);
+      } catch (Exception e) {
+        setClashState(id, clashState(id).withError(safeCode(e)));
       }
-      // Stop only after the policy has released all dependent sessions and radios.
-      clash = current;
-    } catch (Exception e) {
-      clash = clash.withError(safeCode(e));
     }
   }
   boolean radioReady(Binding binding) {
     return binding != null && Boolean.TRUE.equals(radioOff.get(binding.slot()));
   }
   void verifyRadioOff(Binding binding) throws Exception {
-    if (!enabled() || !radioReady(binding)) throw new IllegalStateException("CELLULAR_RADIO_NOT_OFF");
+    if (!enabled() || !slotEnabled(binding.slot()) || !radioReady(binding))
+      throw new IllegalStateException("CELLULAR_RADIO_NOT_OFF");
     root.verifyRadioOff(binding.sim);
   }
   void setEnabled(boolean v) {
-    SharedPreferences.Editor edit = prefs.edit().putBoolean("enabled", v);
-    if (v) edit.putBoolean("clash_enabled", true);
-    edit.commit();
+    // Master switch: OFF stops all backend engines & both Clash cores for battery saving.
+    // Built-in Clash cores remain manually controlled by their own switches.
+    prefs.edit().putBoolean("enabled", v).commit();
     shutdownComplete = false;
     fallback.reset();
     fallbackReleasedSlots.clear();
-    if (v) lastAutoClashSimKey = "";
+    if (v) {
+      lastAutoClashSimKeys[0] = "";
+      lastAutoClashSimKeys[1] = "";
+    }
     kick();
   }
   void select(String key, String iface) {
-    SharedPreferences.Editor ed = prefs.edit().putString("selected." + key, iface);
-    if (ClashConfig.TUN_DEVICE.equals(iface) && clash.hasProfile)
-      ed.putBoolean("clash_enabled", true);
-    ed.commit();
+    prefs.edit().putString("selected." + key, iface).commit();
     fallback.reset();
     kick();
   }
@@ -884,13 +953,19 @@ final class RuntimeController {
     return prefs.getString("selected." + key, "");
   }
   void setBillable(boolean v) {
+    setSlotBillable(0, v);
+    setSlotBillable(1, v);
+  }
+  void setSlotBillable(int slot, boolean v) {
     policyWorker.execute(() -> {
-      if (snapshot == null || snapshot.callsActive
-          || bindings.values().stream().anyMatch(b -> b.callActive))
+      Binding existing = bindings.get(slot);
+      if (snapshot == null || (existing != null && existing.callActive))
         return;
-      prefs.edit().putBoolean("billable", v).commit();
-      for (Binding b : bindings.values()) b.close();
-      bindings.clear();
+      prefs.edit().putBoolean("slot_billable." + slot, v).commit();
+      if (existing != null) {
+        existing.close();
+        bindings.remove(slot, existing);
+      }
       kick();
     });
   }
@@ -909,14 +984,14 @@ final class RuntimeController {
   }
   boolean eligible(int slot) {
     RootSupervisor.Snapshot s = snapshot;
-    return s != null
+    return s != null && enabled() && slotEnabled(slot)
         && s.sims.stream().anyMatch(x
             -> x.policy.slotId == slot
                 && PolicyEngine.eligibility(x.policy) == PolicyEngine.Reason.ELIGIBLE);
   }
   boolean matchesSubscription(int slot, int sub) {
     RootSupervisor.Snapshot current = snapshot;
-    return current != null
+    return current != null && enabled() && slotEnabled(slot)
         && current.sims.stream().anyMatch(s
             -> s.policy.slotId == slot && s.policy.subId == sub && s.policy.ready
                 && PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE);
@@ -963,7 +1038,7 @@ final class RuntimeController {
               }
               public void restoreIms() throws Exception { root.restoreAll(); }
               public void releaseRadios() throws Exception { root.releaseRadios(); }
-              public void stopProxy() throws Exception { root.clashStop(); }
+              public void stopProxy() throws Exception { root.clashStopAll(); }
             });
         if (!stopped) {
           status = "通话结束后关闭";
@@ -975,12 +1050,14 @@ final class RuntimeController {
         fallbackReleasedSlots.clear();
         staleSlotSince.clear();
         lastSlotIdentity.clear();
-        lastAutoClashSimKey = "";
+        lastAutoClashSimKeys[0] = "";
+        lastAutoClashSimKeys[1] = "";
         shutdownComplete = true;
         lastFullSyncSucceeded = true;
-        status = "已关闭";
+        status = "已关闭（全后台已停机省电）";
         return;
       }
+      ensureSlotDefaults(snapshot);
       shutdownComplete = false;
       boolean busyPre = snapshot.callsActive || bindings.values().stream().anyMatch(b -> b.callActive);
       syncClash(busyPre);
@@ -989,20 +1066,33 @@ final class RuntimeController {
               .read();
       for (RootSupervisor.Sim s : snapshot.sims) {
         if (!prefs.contains("selected." + s.policy.simKey)
-            && interfaces.preferredVpnInterface != null
-            && PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE)
-          prefs.edit()
-              .putString("selected." + s.policy.simKey, interfaces.preferredVpnInterface)
-              .commit();
+            && PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE) {
+          String defaultIface = null;
+          // Prefer wfctun0 for slot 0 and wfctun1 for slot 1 when available, else preferred VPN.
+          String slotPreferredTun = s.policy.slotId == 1 ? ClashConfig.TUN_DEVICE_1 : ClashConfig.TUN_DEVICE;
+          if (interfaces.selection(slotPreferredTun).available()) {
+            defaultIface = slotPreferredTun;
+          } else if (interfaces.preferredVpnInterface != null) {
+            defaultIface = interfaces.preferredVpnInterface;
+          } else if (s.policy.slotId == 0 || s.policy.slotId == 1) {
+            defaultIface = slotPreferredTun;
+          }
+          if (defaultIface != null && !defaultIface.isEmpty()) {
+            prefs.edit().putString("selected." + s.policy.simKey, defaultIface).commit();
+          }
+        }
       }
       pollBindings();
       boolean calls =
           snapshot.callsActive || bindings.values().stream().anyMatch(b -> b.callActive);
       if (!calls) {
         for (Binding b : new ArrayList<>(bindings.values())) {
-          if (ClashConfig.TUN_DEVICE.equals(b.iface)
-              && (!clash.tunUp || clash.netnsId.isEmpty() || !clash.netnsId.equals(b.clashNetnsId))) {
-            clearSlot(b.slot());
+          int cid = ClashConfig.instanceForTun(b.iface);
+          if (cid >= 0) {
+            ClashState cs = clashState(cid);
+            if (!cs.tunUp || cs.netnsId.isEmpty() || !cs.netnsId.equals(b.clashNetnsId)) {
+              clearSlot(b.slot());
+            }
           }
         }
         // Handle eSIM profile switch BEFORE fallback evaluation and radio-hold so the new profile
@@ -1010,6 +1100,7 @@ final class RuntimeController {
         for (RootSupervisor.Sim sim : snapshot.sims) {
           if (PolicyEngine.eligibility(sim.policy) != PolicyEngine.Reason.ELIGIBLE) continue;
           int slotId = sim.policy.slotId;
+          if (!slotEnabled(slotId)) continue;
           String identity = sim.policy.subId + ":" + sim.policy.simKey;
           String prev = lastSlotIdentity.put(slotId, identity);
           Binding existing = bindings.get(slotId);
@@ -1032,6 +1123,26 @@ final class RuntimeController {
       }
       Map<Integer, Boolean> nextRadioOff = new HashMap<>();
       if (enabled()) {
+        // Immediately release any slot whose individual switch is OFF (no 6s wait needed).
+        for (RootSupervisor.Sim sim : snapshot.sims) {
+          int slotId = sim.policy.slotId;
+          if (slotId < 0 || slotEnabled(slotId)) continue;
+          boolean hasAnyState = bindings.containsKey(slotId) || applied.containsKey(slotId)
+              || Boolean.TRUE.equals(radioOff.get(slotId))
+              || snapshot.heldRadioSlots.contains(slotId);
+          if (hasAnyState && !calls) {
+            if (bindings.containsKey(slotId) || applied.containsKey(slotId)) {
+              clearSlot(slotId, false);
+            }
+            deregisterAndRestoreSlot(sim);
+            try { root.releaseRadio(slotId); } catch (Exception ignored) {}
+            fallback.resetSlot(slotId);
+            fallbackReleasedSlots.remove(slotId);
+            staleSlotSince.remove(slotId);
+            lastSlotIdentity.remove(slotId);
+            lastRebindNanos.remove(slotId);
+          }
+        }
         // Fallback first: a SIM whose VoWiFi path is unusable must not keep its cellular radio off.
         long fallbackNow = System.nanoTime();
         Map<Integer, String> blocked = new HashMap<>();
@@ -1039,12 +1150,14 @@ final class RuntimeController {
         for (RootSupervisor.Sim sim : snapshot.sims) {
           if (PolicyEngine.eligibility(sim.policy) != PolicyEngine.Reason.ELIGIBLE) continue;
           int slotId = sim.policy.slotId;
+          if (!slotEnabled(slotId)) continue;
           boolean held = Boolean.TRUE.equals(radioOff.get(slotId))
               || snapshot.heldRadioSlots.contains(slotId);
           Binding current = bindings.get(slotId);
           if (!bindingMatches(current, sim)) current = null;
           String sel = selection(sim.policy.simKey);
-          boolean clashExplicitlyOff = ClashConfig.TUN_DEVICE.equals(sel) && !clashEnabled();
+          int selCid = ClashConfig.instanceForTun(sel);
+          boolean clashExplicitlyOff = selCid >= 0 && !clashEnabled(selCid);
           String block = fallback.evaluate(slotId, calls, held && !clashExplicitlyOff,
               !sel.isEmpty(), clashExplicitlyOff ? FallbackPolicy.Egress.UNAVAILABLE : egressOf(sim), current != null,
               current != null && current.registered, fallbackNow);
@@ -1057,6 +1170,7 @@ final class RuntimeController {
         for (RootSupervisor.Sim sim : snapshot.sims) {
           if (PolicyEngine.eligibility(sim.policy) != PolicyEngine.Reason.ELIGIBLE) continue;
           int slotId = sim.policy.slotId;
+          if (!slotEnabled(slotId)) continue;
           if (blocked.containsKey(slotId)) {
             if (!calls) {
               if (bindings.containsKey(slotId) || applied.containsKey(slotId)) {
@@ -1069,9 +1183,6 @@ final class RuntimeController {
           fallbackReleasedSlots.remove(slotId);
           boolean off = root.holdRadio(sim);
           nextRadioOff.put(slotId, off);
-          // Reserve this card's ordinary IMS provider even while TUN/registration is absent.
-          // Also re-nudge ImsResolver if it queried empty features before our first snapshot
-          // or still holds a stale MmTelFeature from the previous eSIM profile.
           long now = System.nanoTime();
           Long previousRebind = lastRebindNanos.get(slotId);
           boolean needsFeature = !featureMatches(sim)
@@ -1080,8 +1191,6 @@ final class RuntimeController {
           if (off && !calls && (!alreadyBound || needsFeature)) {
             lastRebindNanos.put(slotId, now);
             if (alreadyBound && needsFeature) {
-              // Xiaomi's ImsServiceController ignores updates when mImsFeatures is unchanged
-              // after process death/force-stop or eSIM profile switch; cycle through restore first.
               try {
                 root.restore(slotId, prefs.getString("previous." + slotId, ""));
               } catch (Exception ignored) {}
@@ -1107,7 +1216,7 @@ final class RuntimeController {
       List<PolicyEngine.Sim> sims = new ArrayList<>();
       for (RootSupervisor.Sim s : snapshot.sims) {
         selected.put(s.policy.simKey, selection(s.policy.simKey));
-        if (enabled() && Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
+        if (enabled() && slotEnabled(s.policy.slotId) && Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
           sims.add(s.policy);
       }
       PolicyEngine.Plan plan = PolicyEngine.evaluate(sims, selected, interfaces, applied, calls);
@@ -1131,7 +1240,6 @@ final class RuntimeController {
         String previous = root.currentOverride(action.slotId);
         if (!previous.isEmpty() && !previous.equals("com.smartvowificall.ims"))
           throw new java.io.IOException("OTHER_CARRIER_OVERRIDE_PRESENT");
-        // Persist intent before changing the remote state so process death remains recoverable.
         if (!prefs.edit()
                  .putString("previous." + action.slotId,
                      previous.equals("com.smartvowificall.ims") ? "" : previous)
@@ -1147,8 +1255,8 @@ final class RuntimeController {
         }
         try {
           root.start(sim, action.interfaceName);
-          connect(sim, action.interfaceName,
-              ClashConfig.TUN_DEVICE.equals(action.interfaceName) ? clash.netnsId : "");
+          int cid = ClashConfig.instanceForTun(action.interfaceName);
+          connect(sim, action.interfaceName, cid >= 0 ? clashState(cid).netnsId : "");
           candidateStarted = true;
         } catch (Exception failure) {
           clear(action);
@@ -1161,14 +1269,14 @@ final class RuntimeController {
             snapshot.sims.stream()
                 .filter(s
                     -> s.policy.simKey.equals(x.simKey) && s.policy.subId == x.subId
-                        && s.policy.slotId == x.slotId)
+                        && s.policy.slotId == x.slotId && slotEnabled(s.policy.slotId))
                 .findFirst()
                 .orElse(null);
         if (sim != null && !bindings.containsKey(x.slotId) && !calls) {
           try {
             root.start(sim, x.interfaceName);
-            connect(sim, x.interfaceName,
-                ClashConfig.TUN_DEVICE.equals(x.interfaceName) ? clash.netnsId : "");
+            int cid = ClashConfig.instanceForTun(x.interfaceName);
+            connect(sim, x.interfaceName, cid >= 0 ? clashState(cid).netnsId : "");
             candidateStarted = true;
           } catch (Exception failure) {
             clearSlot(x.slotId);
@@ -1178,23 +1286,29 @@ final class RuntimeController {
       }
       if (candidateStarted) pollBindings();
       synchronizeProviders();
-      if (!clashEnabled() && (clash.running || clash.tunUp) && !calls && bindings.values().stream()
-          .noneMatch(b -> ClashConfig.TUN_DEVICE.equals(b.iface))) {
-        root.clashStop();
-        refreshClashState();
+      // Stop any built-in Clash instance whose manual switch is OFF once no active binding uses it.
+      for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+        ClashState cs = clashState(id);
+        String tunDev = ClashConfig.tunDeviceForInstance(id);
+        if (!clashEnabled(id) && (cs.running || cs.tunUp) && !calls
+            && bindings.values().stream().noneMatch(b -> tunDev.equals(b.iface))) {
+          root.clashStop(id);
+          refreshClashState();
+        }
       }
       lastFullSyncSucceeded = true;
       maybeAutoUploadTelemetry(calls);
-      long selectedProviders = bindings.values().stream().filter(b -> b.providerBound).count();
+      long regCount = bindings.values().stream().filter(b -> b.registered).count();
+      long enabledSlots = snapshot.sims.stream().filter(s -> slotEnabled(s.policy.slotId)).count();
       boolean tunRequired = plan.decisions.stream().anyMatch(d -> d.reason == PolicyEngine.Reason.TUN_REQUIRED);
       boolean radioPending = radioOff.values().stream().anyMatch(value -> !value);
-      status = enabled() ? (!fallbackReasons.isEmpty()
+      status = enabled() ? (enabledSlots == 0 ? "总开关已开启 · 请开启卡槽开关"
+          : regCount >= 2 ? "双卡网络通话已就绪"
+          : regCount == 1 && fallbackReasons.isEmpty() ? "网络通话已就绪"
+          : !fallbackReasons.isEmpty()
               ? "已切回手机网络（" + FallbackPolicy.describe(fallbackReasons.values().iterator().next()) + "）"
           : radioPending ? "正在切换"
-          : radioOff.isEmpty() ? "等待可用 SIM 卡"
           : tunRequired ? "请选择可用连接"
-          : selectedProviders > 0 && bindings.values().stream().anyMatch(b -> b.registered)
-              ? "网络通话已就绪"
           : "正在连接")
                          : "已关闭";
     } catch (Exception e) {
@@ -1243,40 +1357,44 @@ final class RuntimeController {
         && b.sim.policy.simKey.equals(sim.policy.simKey);
   }
   private void syncPerSimClashNode() {
-    ClashState cs = clash;
-    if (!clashEnabled() || !cs.running || !cs.tunUp || cs.nodes.isEmpty() || snapshot == null) return;
-    RootSupervisor.Sim target = null;
-    for (RootSupervisor.Sim sim : snapshot.sims) {
-      if (PolicyEngine.eligibility(sim.policy) == PolicyEngine.Reason.ELIGIBLE
-          && ClashConfig.TUN_DEVICE.equals(selection(sim.policy.simKey))) {
-        target = sim;
-        break;
+    if (snapshot == null) return;
+    for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+      ClashState cs = clashState(id);
+      if (!clashEnabled(id) || !cs.running || !cs.tunUp || cs.nodes.isEmpty()) continue;
+      String tunDev = ClashConfig.tunDeviceForInstance(id);
+      RootSupervisor.Sim target = null;
+      for (RootSupervisor.Sim sim : snapshot.sims) {
+        if (slotEnabled(sim.policy.slotId)
+            && PolicyEngine.eligibility(sim.policy) == PolicyEngine.Reason.ELIGIBLE
+            && tunDev.equals(selection(sim.policy.simKey))) {
+          target = sim;
+          break;
+        }
       }
-    }
-    if (target == null) return;
-    String simKey = target.policy.simKey;
-    if (simKey.equals(lastAutoClashSimKey)) return;
-    String preferred = preferredClashNode(simKey);
-    if (preferred.isEmpty()) {
-      lastAutoClashSimKey = simKey;
-      return;
-    }
-    boolean available = cs.nodes.stream().anyMatch(n -> preferred.equals(n.name));
-    if (!available) return;
-    lastAutoClashSimKey = simKey;
-    if (preferred.equals(cs.currentNode)) return;
-    try {
-      root.clashSelectNode(preferred);
-      try { root.clashCloseAllConnections(); } catch (Exception ignored) {}
-      refreshClashState();
-      fallback.resetSlot(target.policy.slotId);
-      fallbackReleasedSlots.remove(target.policy.slotId);
-      Binding existing = bindings.get(target.policy.slotId);
-      if (existing != null && ClashConfig.TUN_DEVICE.equals(existing.iface)) {
-        clearSlot(target.policy.slotId, true);
+      if (target == null) continue;
+      String simKey = target.policy.simKey;
+      if (simKey.equals(lastAutoClashSimKeys[id])) continue;
+      String preferred = preferredClashNode(simKey, id);
+      if (preferred.isEmpty()) {
+        lastAutoClashSimKeys[id] = simKey;
+        continue;
       }
-    } catch (Exception ignored) {
-      // Fall back to the currently selected node and retry on next SIM switch.
+      boolean available = cs.nodes.stream().anyMatch(n -> preferred.equals(n.name));
+      if (!available) continue;
+      lastAutoClashSimKeys[id] = simKey;
+      if (preferred.equals(cs.currentNode)) continue;
+      try {
+        root.clashSelectNode(id, preferred);
+        try { root.clashCloseAllConnections(id); } catch (Exception ignored) {}
+        refreshClashState();
+        fallback.resetSlot(target.policy.slotId);
+        fallbackReleasedSlots.remove(target.policy.slotId);
+        Binding existing = bindings.get(target.policy.slotId);
+        if (existing != null && tunDev.equals(existing.iface)) {
+          clearSlot(target.policy.slotId, true);
+        }
+      } catch (Exception ignored) {
+      }
     }
   }
   /**
@@ -1433,13 +1551,15 @@ final class RuntimeController {
         } else if (f != null && f.subId == b.sim.policy.subId && f.simKey.equals(b.sim.policy.simKey)) {
           f.registrationChanged(registered);
         }
-        if (registered && ClashConfig.TUN_DEVICE.equals(b.iface)
-            && preferredClashNode(b.sim.policy.simKey).isEmpty()
-            && !clash.currentNode.isEmpty()) {
-          savePreferredClashNode(b.sim.policy.simKey, clash.currentNode);
-          lastAutoClashSimKey = b.sim.policy.simKey;
+        int cid = ClashConfig.instanceForTun(b.iface);
+        if (registered && cid >= 0) {
+          ClashState cs = clashState(cid);
+          if (preferredClashNode(b.sim.policy.simKey, cid).isEmpty() && !cs.currentNode.isEmpty()) {
+            savePreferredClashNode(b.sim.policy.simKey, cid, cs.currentNode);
+            lastAutoClashSimKeys[cid] = b.sim.policy.simKey;
+          }
         }
-        syncVoiceServiceOverride(b, registered && billable());
+        syncVoiceServiceOverride(b, registered && billable(b.slot()));
         try {
           b.engine.getCallSnapshot();
           b.callSnapshotError = 0;
@@ -1484,7 +1604,7 @@ final class RuntimeController {
     if (b == null) return;
     try {
       b.voiceServiceOverride.synchronize(
-          hasService && bindings.get(b.slot()) == b && b.registered && billable() && radioReady(b),
+          hasService && bindings.get(b.slot()) == b && b.registered && billable(b.slot()) && radioReady(b),
           hasService && frameworkVoiceInService(b), value -> root.setVoiceServiceOverride(b.sim, value));
     } catch (Exception ignored) {
       // Retried automatically on the next policy tick.
@@ -1498,7 +1618,7 @@ final class RuntimeController {
   void onCallEndedRefreshOverride(Binding b) {
     if (b == null) return;
     io.execute(() -> {
-      if (bindings.get(b.slot()) == b && b.registered && billable()) {
+      if (bindings.get(b.slot()) == b && b.registered && billable(b.slot())) {
         syncVoiceServiceOverride(b, true);
       }
       try {
@@ -1507,7 +1627,7 @@ final class RuntimeController {
         Thread.currentThread().interrupt();
         return;
       }
-      if (bindings.get(b.slot()) == b && b.registered && billable()) {
+      if (bindings.get(b.slot()) == b && b.registered && billable(b.slot())) {
         syncVoiceServiceOverride(b, true);
       }
     });
@@ -1534,16 +1654,20 @@ final class RuntimeController {
       JSONArray sims = new JSONArray();
       RootSupervisor.Snapshot snap = snapshot;
       if (snap != null) for (RootSupervisor.Sim s : snap.sims) {
+        String selIface = selection(s.policy.simKey);
+        int selCid = ClashConfig.instanceForTun(selIface);
         JSONObject row = new JSONObject().put("slot", s.policy.slotId).put("subId", s.policy.subId)
             .put("ready", s.policy.ready).put("homePlmn", s.policy.homePlmn)
+            .put("slotEnabled", slotEnabled(s.policy.slotId))
+            .put("slotBillable", billable(s.policy.slotId))
             .put("countryIso", s.countryIso).put("carrierName", s.carrierName)
             .put("simOperatorName", s.simOperatorName)
             .put("networkCountryIso", s.networkCountryIso)
             .put("networkOperatorName", s.networkOperatorName)
             .put("networkPlmn", s.networkPlmn)
             .put("carrierId", s.carrierId).put("isEmbedded", s.embedded)
-            .put("selectedInterface", selection(s.policy.simKey))
-            .put("preferredClashNode", preferredClashNode(s.policy.simKey))
+            .put("selectedInterface", selIface)
+            .put("preferredClashNode", preferredClashNode(s.policy.simKey, Math.max(0, selCid)))
             .put("radioOff", Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
             .put("featureAttached", featureMatches(s));
         String fb = fallbackReasons.get(s.policy.slotId);
@@ -1574,19 +1698,22 @@ final class RuntimeController {
             .put("type",e.type()).put("voWifiTun",e.voWifiTun()).put("owners",new JSONArray(e.ownerPackages)));
       }
       out.put("interfaces", nets);
-      ClashState cs = clash;
-      out.put("clash", new JSONObject()
-          .put("enabled", clashEnabled())
-          .put("hasProfile", cs.hasProfile)
-          .put("running", cs.running)
-          .put("tunUp", cs.tunUp)
-          .put("device", ClashConfig.TUN_DEVICE)
-          .put("netnsId", cs.netnsId)
-          .put("externalLan", cs.externalLan)
-          .put("controllerPort", cs.controllerPort)
-          .put("currentNode", cs.currentNode)
-          .put("nodeCount", cs.nodes.size())
-          .put("lastError", cs.lastError));
+      for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+        ClashState cs = clashState(id);
+        out.put(id == 0 ? "clash" : "clash" + id, new JSONObject()
+            .put("instance", id)
+            .put("enabled", clashEnabled(id))
+            .put("hasProfile", cs.hasProfile)
+            .put("running", cs.running)
+            .put("tunUp", cs.tunUp)
+            .put("device", ClashConfig.tunDeviceForInstance(id))
+            .put("netnsId", cs.netnsId)
+            .put("externalLan", cs.externalLan)
+            .put("controllerPort", cs.controllerPort)
+            .put("currentNode", cs.currentNode)
+            .put("nodeCount", cs.nodes.size())
+            .put("lastError", cs.lastError));
+      }
     } catch (Exception ignored) { }
     return out;
   }
@@ -1605,7 +1732,7 @@ final class RuntimeController {
       this.iface = iface == null ? "" : iface;
       this.clashNetnsId = clashNetnsId == null ? "" : clashNetnsId;
       registration = registrationFor(sim);
-      engine = new EngineSession(sim.identity(), new AndroidTransport(context.getApplicationInfo().sourceDir), this, billable());
+      engine = new EngineSession(sim.identity(), new AndroidTransport(context.getApplicationInfo().sourceDir), this, billable(sim.policy.slotId));
       engine.setPacketObserver(new EngineRpcClient.PacketObserver() {
         @Override
         public void onRpc(String method, long requestId, long durationMs,
@@ -1688,32 +1815,37 @@ final class RuntimeController {
     }
   }
   static final class ClashState {
-    static final ClashState EMPTY = new ClashState(false, false, false, 0, "", "", "", "",
+    static final ClashState EMPTY = new ClashState(0, false, false, false, 0, "", "", "", "",
         false, ClashConfig.CONTROLLER_PORT, "", "", Collections.emptyList(), "");
+    static final ClashState EMPTY_1 = new ClashState(1, false, false, false, 0, "", "", "", "",
+        false, ClashConfig.CONTROLLER_PORT_1, "", "", Collections.emptyList(), "");
+    final int instanceId;
     final boolean hasProfile, running, tunUp, externalLan;
     final int controllerPort;
     final long profileBytes;
     final String subscriptionUrl, savedNode, currentNode, netnsId, controllerSecret, lanIpv4, lastError;
     final List<ClashNode> nodes;
-    ClashState(boolean hasProfile, boolean running, boolean tunUp, long profileBytes,
+    ClashState(int instanceId, boolean hasProfile, boolean running, boolean tunUp, long profileBytes,
         String subscriptionUrl, String savedNode, String currentNode, String netnsId,
         boolean externalLan, int controllerPort, String controllerSecret, String lanIpv4,
         List<ClashNode> nodes, String lastError) {
+      this.instanceId = instanceId;
       this.hasProfile = hasProfile; this.running = running; this.tunUp = tunUp;
       this.profileBytes = profileBytes; this.subscriptionUrl = subscriptionUrl;
       this.savedNode = savedNode; this.currentNode = currentNode;
       this.netnsId = netnsId == null ? "" : netnsId;
       this.externalLan = externalLan;
-      this.controllerPort = controllerPort > 0 ? controllerPort : ClashConfig.CONTROLLER_PORT;
+      int defPort = ClashConfig.spec(instanceId).defaultControllerPort;
+      this.controllerPort = controllerPort > 0 ? controllerPort : defPort;
       this.controllerSecret = controllerSecret == null ? "" : controllerSecret;
       this.lanIpv4 = lanIpv4 == null ? "" : lanIpv4;
       this.nodes = Collections.unmodifiableList(nodes); this.lastError = lastError;
     }
     ClashState withError(String err) {
-      return new ClashState(hasProfile, running, tunUp, profileBytes, subscriptionUrl, savedNode,
+      return new ClashState(instanceId, hasProfile, running, tunUp, profileBytes, subscriptionUrl, savedNode,
           currentNode, netnsId, externalLan, controllerPort, controllerSecret, lanIpv4, nodes, err);
     }
-    static ClashState fromJson(JSONObject j, String err) {
+    static ClashState fromJson(JSONObject j, String err, int instanceId) {
       List<ClashNode> list = new ArrayList<>();
       JSONArray arr = j.optJSONArray("nodes");
       if (arr != null) {
@@ -1723,13 +1855,15 @@ final class RuntimeController {
             list.add(new ClashNode(o.optString("name"), o.optString("type", ""), o.optInt("delay", 0)));
         }
       }
+      int defPort = ClashConfig.spec(instanceId).defaultControllerPort;
       return new ClashState(
+          instanceId,
           j.optBoolean("hasProfile"), j.optBoolean("running"), j.optBoolean("tunUp"),
           j.optLong("profileBytes"), j.optString("subscriptionUrl", ""),
           j.optString("savedNode", ""), j.optString("currentNode", ""),
           j.optString("netnsId", ""),
           j.optBoolean("externalLan", false),
-          j.optInt("controllerPort", ClashConfig.CONTROLLER_PORT),
+          j.optInt("controllerPort", defPort),
           j.optString("controllerSecret", ""),
           j.optString("lanIpv4", ""),
           list, err);
@@ -1777,13 +1911,15 @@ final class RuntimeController {
           if (callback != null) callback.accept("检测到通话正在进行，已取消恢复原厂操作以防掉线");
           return;
         }
-        prefs.edit().putBoolean("enabled", false).putBoolean("clash_enabled", false).commit();
+        prefs.edit().putBoolean("enabled", false)
+            .putBoolean("clash_enabled", false)
+            .putBoolean("clash_enabled.1", false).commit();
         for (Integer slot : new ArrayList<>(bindings.keySet())) {
           try { clearSlot(slot, true); } catch (Throwable ignored) {}
         }
         try { root.restoreAll(); } catch (Throwable ignored) {}
         try { root.releaseRadios(); } catch (Throwable ignored) {}
-        try { root.clashStop(); } catch (Throwable ignored) {}
+        try { root.clashStopAll(); } catch (Throwable ignored) {}
         events.record("W", "restore", "emergency restore native radio and IMS completed");
         status = "已彻底恢复原厂蜂窝与 IMS";
         if (callback != null) callback.accept("已彻底恢复原厂蜂窝与 IMS，并停止内置代理");

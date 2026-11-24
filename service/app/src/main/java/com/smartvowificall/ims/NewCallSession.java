@@ -70,7 +70,7 @@ final class NewCallSession extends ImsCallSessionImplBase {
     return owner != null && feature.binding() == owner;
   }
   boolean canControl() {
-    return ownsBinding() && feature.rt.billable() && feature.rt.radioReady(owner) && owner.engine.isConnected();
+    return ownsBinding() && feature.rt.billable(feature.slot) && feature.rt.radioReady(owner) && owner.engine.isConnected();
   }
 
   public void start(String callee, ImsCallProfile ignored) {

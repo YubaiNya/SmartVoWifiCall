@@ -42,11 +42,21 @@ import org.json.JSONObject;
  */
 public final class RootClashMain {
   private static final String BASE_DIR = "/data/adb/smartvowificall_ims";
-  private static final String CLASH_DIR = BASE_DIR + "/clash";
   private static final String MODULE_DIR = "/data/adb/modules/smartvowificall";
   private static final String CONTROL_SH = MODULE_DIR + "/clash-control.sh";
   private static final int MAX_PROFILE_BYTES = 4 * 1024 * 1024;
   private static final String DELAY_TEST_URL = "http://www.gstatic.com/generate_204";
+  private static final ThreadLocal<ClashConfig.InstanceSpec> ACTIVE_SPEC =
+      ThreadLocal.withInitial(() -> ClashConfig.spec(0));
+
+  private static ClashConfig.InstanceSpec currentSpec() {
+    ClashConfig.InstanceSpec s = ACTIVE_SPEC.get();
+    return s != null ? s : ClashConfig.spec(0);
+  }
+
+  private static String currentDir() {
+    return currentSpec().dirPath;
+  }
 
   private RootClashMain() {}
 
@@ -67,43 +77,58 @@ public final class RootClashMain {
 
   private static JSONObject execute(String[] args, InputStream in) {
     JSONObject output;
+    ACTIVE_SPEC.set(ClashConfig.spec(0));
     try {
       if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
-      String mode = args == null || args.length == 0 ? "status" : args[0];
-      if (mode.equals("status") && (args == null || args.length <= 1)) {
+      String[] effArgs = args == null ? new String[0] : args;
+      if (effArgs.length > 0 && effArgs[0] != null && effArgs[0].startsWith("--instance=")) {
+        String idStr = effArgs[0].substring("--instance=".length());
+        if (!idStr.matches("[0-9]+")) throw new Failure("CLASH_INSTANCE_INVALID");
+        ACTIVE_SPEC.set(ClashConfig.spec(Integer.parseInt(idStr)));
+        String[] shifted = new String[effArgs.length - 1];
+        System.arraycopy(effArgs, 1, shifted, 0, shifted.length);
+        effArgs = shifted;
+      }
+      String mode = effArgs.length == 0 ? "status" : effArgs[0];
+      if (mode.equals("status") && effArgs.length <= 1) {
         output = status();
-      } else if (mode.equals("save-profile") && args.length == 1) {
+      } else if (mode.equals("save-profile") && effArgs.length == 1) {
         byte[] raw = readAllLimited(in, MAX_PROFILE_BYTES);
         output = saveProfile(new String(raw, StandardCharsets.UTF_8), null);
-      } else if (mode.equals("fetch-subscription") && args.length == 1) {
+      } else if (mode.equals("fetch-subscription") && effArgs.length == 1) {
         String url = new String(readAllLimited(in, 4096), StandardCharsets.UTF_8).trim();
         output = fetchSubscription(url);
-      } else if (mode.equals("rebuild") && args.length == 1) {
+      } else if (mode.equals("copy-from") && effArgs.length == 2) {
+        if (!effArgs[1].matches("[0-9]+")) throw new Failure("CLASH_INSTANCE_INVALID");
+        output = copyFromInstance(Integer.parseInt(effArgs[1]));
+      } else if (mode.equals("rebuild") && effArgs.length == 1) {
         output = rebuild();
-      } else if (mode.equals("start") && args.length == 1) {
+      } else if (mode.equals("start") && effArgs.length == 1) {
         output = start(false);
-      } else if (mode.equals("restart") && args.length == 1) {
+      } else if (mode.equals("restart") && effArgs.length == 1) {
         output = start(true);
-      } else if (mode.equals("stop") && args.length == 1) {
+      } else if (mode.equals("stop") && effArgs.length == 1) {
         output = runControl("stop");
-      } else if (mode.equals("select-node") && args.length == 1) {
+      } else if (mode.equals("stop-all") && effArgs.length == 1) {
+        output = runControl("stop", "all");
+      } else if (mode.equals("select-node") && effArgs.length == 1) {
         String node = new String(readAllLimited(in, 1024), StandardCharsets.UTF_8).trim();
         output = selectNode(node);
-      } else if (mode.equals("test-delay") && args.length == 1) {
+      } else if (mode.equals("test-delay") && effArgs.length == 1) {
         output = testDelay();
-      } else if (mode.equals("set-controller") && args.length == 1) {
+      } else if (mode.equals("set-controller") && effArgs.length == 1) {
         String body = new String(readAllLimited(in, 1024), StandardCharsets.UTF_8).trim();
         output = setController(new JSONObject(body));
-      } else if (mode.equals("rotate-secret") && args.length == 1) {
+      } else if (mode.equals("rotate-secret") && effArgs.length == 1) {
         output = rotateSecret();
-      } else if (mode.equals("connections") && args.length == 1) {
+      } else if (mode.equals("connections") && effArgs.length == 1) {
         output = connections();
-      } else if (mode.equals("close-connection") && args.length == 1) {
+      } else if (mode.equals("close-connection") && effArgs.length == 1) {
         String id = new String(readAllLimited(in, 256), StandardCharsets.UTF_8).trim();
         output = closeConnection(id);
-      } else if (mode.equals("close-all-connections") && args.length == 1) {
+      } else if (mode.equals("close-all-connections") && effArgs.length == 1) {
         output = closeAllConnections();
-      } else if (mode.equals("sync-uplink") && args.length == 1) {
+      } else if (mode.equals("sync-uplink") && effArgs.length == 1) {
         output = syncUplink();
       } else {
         throw new Failure("INVALID_ARGUMENT");
@@ -118,12 +143,14 @@ public final class RootClashMain {
       try {
         output.put("ok", false).put("code", code);
       } catch (Exception ignored) {}
+    } finally {
+      ACTIVE_SPEC.remove();
     }
     return output;
   }
 
   private static void ensureDirs() throws Exception {
-    for (String path : new String[] {BASE_DIR, CLASH_DIR}) {
+    for (String path : new String[] {BASE_DIR, currentDir()}) {
       File dir = new File(path);
       if (!dir.getAbsolutePath().equals(dir.getCanonicalPath()) || Files.isSymbolicLink(dir.toPath()))
         throw new Failure("CLASH_PATH_INVALID");
@@ -134,7 +161,7 @@ public final class RootClashMain {
 
   private static File clashFile(String name) throws Exception {
     ensureDirs();
-    File f = new File(CLASH_DIR, name);
+    File f = new File(currentDir(), name);
     if (!f.getCanonicalPath().equals(f.getAbsolutePath()) || Files.isSymbolicLink(f.toPath()))
       throw new Failure("CLASH_PATH_INVALID");
     return f;
@@ -142,7 +169,7 @@ public final class RootClashMain {
 
   private static void writeAtomic(String name, byte[] data) throws Exception {
     File dest = clashFile(name);
-    File tmp = File.createTempFile(".clash-", ".tmp", new File(CLASH_DIR));
+    File tmp = File.createTempFile(".clash-", ".tmp", new File(currentDir()));
     try {
       Os.chmod(tmp.getAbsolutePath(), 0600);
       try (FileOutputStream out = new FileOutputStream(tmp)) {
@@ -157,7 +184,7 @@ public final class RootClashMain {
   }
 
   private static String readTextIfPresent(String name) throws Exception {
-    File f = new File(CLASH_DIR, name);
+    File f = new File(currentDir(), name);
     if (!f.isFile() || Files.isSymbolicLink(f.toPath())) return "";
     return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8).trim();
   }
@@ -191,16 +218,17 @@ public final class RootClashMain {
   }
 
   private static ControllerSettings readControllerSettings() {
+    int defPort = currentSpec().defaultControllerPort;
     try {
       String raw = readTextIfPresent("controller.json");
       if (!raw.isEmpty()) {
         JSONObject j = new JSONObject(raw);
         boolean lan = j.optBoolean("externalLan", false);
-        int port = j.optInt("port", ClashConfig.CONTROLLER_PORT);
+        int port = j.optInt("port", defPort);
         if (port >= 1024 && port <= 65535) return new ControllerSettings(lan, port);
       }
     } catch (Exception ignored) {}
-    return new ControllerSettings(false, ClashConfig.CONTROLLER_PORT);
+    return new ControllerSettings(false, defPort);
   }
 
   private static String currentLanIpv4() {
@@ -291,12 +319,28 @@ public final class RootClashMain {
     }
   }
 
+  private static JSONObject copyFromInstance(int srcId) throws Exception {
+    ClashConfig.InstanceSpec src = ClashConfig.spec(srcId);
+    if (src.id == currentSpec().id) throw new Failure("CLASH_COPY_SAME_INSTANCE");
+    File srcProfile = new File(src.dirPath, "profile.yaml");
+    if (!srcProfile.isFile() || Files.isSymbolicLink(srcProfile.toPath()) || srcProfile.length() <= 0)
+      throw new Failure("CLASH_SOURCE_PROFILE_MISSING");
+    byte[] bytes = Files.readAllBytes(srcProfile.toPath());
+    if (bytes.length > MAX_PROFILE_BYTES) throw new Failure("CLASH_PROFILE_TOO_LARGE");
+    String srcSub = "";
+    File srcSubFile = new File(src.dirPath, "subscription.url");
+    if (srcSubFile.isFile() && !Files.isSymbolicLink(srcSubFile.toPath())) {
+      srcSub = new String(Files.readAllBytes(srcSubFile.toPath()), StandardCharsets.UTF_8).trim();
+    }
+    return saveProfile(new String(bytes, StandardCharsets.UTF_8), srcSub.isEmpty() ? null : srcSub);
+  }
+
   private static JSONObject saveProfile(String rawYaml, String subscriptionUrl) throws Exception {
     String secret = ensureSecret();
     ControllerSettings cs = readControllerSettings();
     String uplink = detectPhysicalUplink();
-    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(
-        rawYaml, secret, cs.externalLan, cs.port, uplink);
+    ClashConfig.Built built = ClashConfig.buildRuntimeConfigForInstance(
+        currentSpec().id, rawYaml, secret, cs.externalLan, cs.port, uplink);
     writeAtomic("profile.yaml", rawYaml.getBytes(StandardCharsets.UTF_8));
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     if (subscriptionUrl != null) {
@@ -305,13 +349,14 @@ public final class RootClashMain {
     return new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_PROFILE_SAVED")
+        .put("instanceId", currentSpec().id)
         .put("uplink", uplink)
         .put("proxyCount", built.proxyNames.size())
         .put("providerCount", built.providerNames.size());
   }
 
   private static JSONObject rebuild() throws Exception {
-    File profile = new File(CLASH_DIR, "profile.yaml");
+    File profile = new File(currentDir(), "profile.yaml");
     if (!profile.isFile() || Files.isSymbolicLink(profile.toPath()))
       throw new Failure("CLASH_PROFILE_MISSING");
     byte[] bytes = Files.readAllBytes(profile.toPath());
@@ -319,12 +364,13 @@ public final class RootClashMain {
     String secret = ensureSecret();
     ControllerSettings cs = readControllerSettings();
     String uplink = detectPhysicalUplink();
-    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(
-        new String(bytes, StandardCharsets.UTF_8), secret, cs.externalLan, cs.port, uplink);
+    ClashConfig.Built built = ClashConfig.buildRuntimeConfigForInstance(
+        currentSpec().id, new String(bytes, StandardCharsets.UTF_8), secret, cs.externalLan, cs.port, uplink);
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     return new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_RUNTIME_BUILT")
+        .put("instanceId", currentSpec().id)
         .put("uplink", uplink)
         .put("proxyCount", built.proxyNames.size())
         .put("providerCount", built.providerNames.size());
@@ -332,11 +378,11 @@ public final class RootClashMain {
 
   private static JSONObject setController(JSONObject input) throws Exception {
     boolean lan = input.optBoolean("externalLan", false);
-    int port = input.optInt("port", ClashConfig.CONTROLLER_PORT);
+    int port = input.optInt("port", currentSpec().defaultControllerPort);
     if (port < 1024 || port > 65535) throw new Failure("CLASH_CONTROLLER_PORT_INVALID");
     JSONObject saved = new JSONObject().put("externalLan", lan).put("port", port);
     writeAtomic("controller.json", (saved.toString() + "\n").getBytes(StandardCharsets.UTF_8));
-    File profile = new File(CLASH_DIR, "profile.yaml");
+    File profile = new File(currentDir(), "profile.yaml");
     boolean restarted = false;
     if (profile.isFile() && profile.length() > 0) {
       rebuild();
@@ -356,7 +402,7 @@ public final class RootClashMain {
 
   private static JSONObject rotateSecret() throws Exception {
     String secret = generateAndSaveSecret();
-    File profile = new File(CLASH_DIR, "profile.yaml");
+    File profile = new File(currentDir(), "profile.yaml");
     boolean restarted = false;
     if (profile.isFile() && profile.length() > 0) {
       rebuild();
@@ -544,7 +590,8 @@ public final class RootClashMain {
   }
 
   private static JSONObject status() throws Exception {
-    File profile = new File(CLASH_DIR, "profile.yaml");
+    ClashConfig.InstanceSpec spec = currentSpec();
+    File profile = new File(spec.dirPath, "profile.yaml");
     boolean hasProfile = profile.isFile() && profile.length() > 0;
     JSONObject ctl;
     try {
@@ -559,11 +606,12 @@ public final class RootClashMain {
     JSONObject out = new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_STATUS")
+        .put("instanceId", spec.id)
         .put("hasProfile", hasProfile)
         .put("profileBytes", hasProfile ? profile.length() : 0)
         .put("running", running)
         .put("tunUp", tunUp)
-        .put("device", ClashConfig.TUN_DEVICE)
+        .put("device", spec.tunDevice)
         .put("netnsId", ctl.optString("netnsId", ""))
         .put("externalLan", cs.externalLan)
         .put("controllerPort", cs.port)
@@ -783,7 +831,11 @@ public final class RootClashMain {
   }
 
   private static JSONObject runControl(String action) throws Exception {
-    java.lang.Process p = new ProcessBuilder("/system/bin/sh", CONTROL_SH, action).start();
+    return runControl(action, String.valueOf(currentSpec().id));
+  }
+
+  private static JSONObject runControl(String action, String instanceArg) throws Exception {
+    java.lang.Process p = new ProcessBuilder("/system/bin/sh", CONTROL_SH, action, instanceArg).start();
     ByteArrayOutputStream stdout = new ByteArrayOutputStream();
     Thread tOut = new Thread(() -> drain(p.getInputStream(), stdout, 262144));
     Thread tErr = new Thread(() -> drain(p.getErrorStream(), null, 0));

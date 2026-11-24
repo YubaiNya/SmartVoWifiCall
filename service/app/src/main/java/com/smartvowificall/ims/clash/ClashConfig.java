@@ -11,12 +11,18 @@ import java.util.*;
  * - Outbound proxy sockets follow the normal Android system routing table.
  */
 public final class ClashConfig {
+  public static final int INSTANCE_COUNT = 2;
   public static final String TUN_DEVICE = "wfctun0";
+  public static final String TUN_DEVICE_1 = "wfctun1";
   public static final String TUN_IPV4 = "198.19.0.1";
+  public static final String TUN_IPV4_1 = "198.19.1.1";
   public static final String TUN_CIDR = "198.19.0.1/30";
+  public static final String TUN_CIDR_1 = "198.19.1.1/30";
   public static final String NETNS_OWNER_PATH = "/data/adb/smartvowificall_ims/clash/netns.owner";
+  public static final String NETNS_OWNER_PATH_1 = "/data/adb/smartvowificall_ims/clash1/netns.owner";
   public static final String CONTROLLER_HOST = "127.0.0.1";
   public static final int CONTROLLER_PORT = 19090;
+  public static final int CONTROLLER_PORT_1 = 19091;
   public static final String CONTROLLER_ADDR = CONTROLLER_HOST + ":" + CONTROLLER_PORT;
   public static final String PROXY_GROUP = "WFC-PROXY";
   public static final String ENGINE_DNS_TARGET = "1.1.1.1";
@@ -25,6 +31,63 @@ public final class ClashConfig {
   public static final int RULE_PREF_SRC = 1051;
   /** Android AOSP FWMARK_PROTECTED_FROM_VPN (0x20000): bypasses system tun0 VPN. */
   public static final int VPN_PROTECT_MARK = 0x20000;
+
+  public static final class InstanceSpec {
+    public final int id;
+    public final String dirName;
+    public final String dirPath;
+    public final String tunDevice;
+    public final String tunIpv4;
+    public final String tunCidr;
+    public final String fakeIpRange;
+    public final String dnsListen;
+    public final int defaultControllerPort;
+    public final String netnsOwnerPath;
+    public final String displayName;
+
+    InstanceSpec(int id, String dirName, String tunDevice, String tunIpv4, String tunCidr,
+        String fakeIpRange, String dnsListen, int defaultControllerPort, String displayName) {
+      this.id = id;
+      this.dirName = dirName;
+      this.dirPath = "/data/adb/smartvowificall_ims/" + dirName;
+      this.tunDevice = tunDevice;
+      this.tunIpv4 = tunIpv4;
+      this.tunCidr = tunCidr;
+      this.fakeIpRange = fakeIpRange;
+      this.dnsListen = dnsListen;
+      this.defaultControllerPort = defaultControllerPort;
+      this.netnsOwnerPath = this.dirPath + "/netns.owner";
+      this.displayName = displayName;
+    }
+  }
+
+  private static final InstanceSpec[] INSTANCES = new InstanceSpec[] {
+      new InstanceSpec(0, "clash", TUN_DEVICE, TUN_IPV4, TUN_CIDR,
+          "198.19.0.1/16", "127.0.0.1:1053", CONTROLLER_PORT, "内核 1"),
+      new InstanceSpec(1, "clash1", TUN_DEVICE_1, TUN_IPV4_1, TUN_CIDR_1,
+          "198.19.1.1/16", "127.0.0.1:1054", CONTROLLER_PORT_1, "内核 2"),
+  };
+
+  public static InstanceSpec spec(int instanceId) {
+    if (instanceId < 0 || instanceId >= INSTANCES.length) {
+      throw new IllegalArgumentException("CLASH_INSTANCE_INVALID");
+    }
+    return INSTANCES[instanceId];
+  }
+
+  public static int instanceForTun(String iface) {
+    if (TUN_DEVICE.equals(iface)) return 0;
+    if (TUN_DEVICE_1.equals(iface)) return 1;
+    return -1;
+  }
+
+  public static boolean isBuiltinTun(String iface) {
+    return instanceForTun(iface) >= 0;
+  }
+
+  public static String tunDeviceForInstance(int instanceId) {
+    return spec(instanceId).tunDevice;
+  }
 
   private static final Set<String> RESERVED_TARGETS = new HashSet<>(Arrays.asList(
       "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"));
@@ -78,6 +141,13 @@ public final class ClashConfig {
   public static Built buildRuntimeConfig(
       String profileYaml, String secret, boolean externalControllerLan, int controllerPort,
       String physicalUplink) {
+    return buildRuntimeConfigForInstance(0, profileYaml, secret, externalControllerLan, controllerPort, physicalUplink);
+  }
+
+  public static Built buildRuntimeConfigForInstance(
+      int instanceId, String profileYaml, String secret, boolean externalControllerLan,
+      int controllerPort, String physicalUplink) {
+    InstanceSpec spec = spec(instanceId);
     if (profileYaml == null || profileYaml.trim().isEmpty())
       throw new IllegalArgumentException("CLASH_PROFILE_EMPTY");
     if (secret == null || !secret.matches("[A-Za-z0-9_-]{16,128}"))
@@ -208,9 +278,9 @@ public final class ClashConfig {
     out.append("dns:\n");
     out.append("  enable: true\n");
     out.append("  ipv6: false\n");
-    out.append("  listen: 127.0.0.1:1053\n");
+    out.append("  listen: ").append(spec.dnsListen).append('\n');
     out.append("  enhanced-mode: redir-host\n");
-    out.append("  fake-ip-range: 198.19.0.1/16\n");
+    out.append("  fake-ip-range: ").append(spec.fakeIpRange).append('\n');
     out.append("  respect-rules: false\n");
     out.append("  default-nameserver:\n");
     out.append("    - 223.5.5.5\n");
@@ -223,7 +293,7 @@ public final class ClashConfig {
     out.append("    - tcp://8.8.8.8:53#").append(PROXY_GROUP).append('\n');
     out.append("tun:\n");
     out.append("  enable: true\n");
-    out.append("  device: ").append(TUN_DEVICE).append('\n');
+    out.append("  device: ").append(spec.tunDevice).append('\n');
     out.append("  stack: gvisor\n");
     out.append("  auto-route: false\n");
     out.append("  auto-redirect: false\n");
@@ -232,7 +302,7 @@ public final class ClashConfig {
     out.append("  dns-hijack:\n");
     out.append("    - any:53\n");
     out.append("  inet4-address:\n");
-    out.append("    - ").append(TUN_CIDR).append('\n');
+    out.append("    - ").append(spec.tunCidr).append('\n');
     out.append("  mtu: 1400\n");
     out.append("proxy-groups:\n");
     out.append("  - name: ").append(PROXY_GROUP).append('\n');

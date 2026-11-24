@@ -30,18 +30,21 @@ public final class VoWifiTileService extends TileService {
     if (tile == null) return;
     RuntimeController rt = RuntimeController.get(this);
     boolean enabled = rt.enabled();
-    boolean anyRegistered = false;
+    int registeredCount = 0;
     boolean anyConnecting = false;
     for (RuntimeController.Binding b : rt.bindings.values()) {
-      if (b.registered) anyRegistered = true;
+      if (b.registered) registeredCount++;
       else if ("CONNECTING".equals(b.tunnel) || "REGISTERING".equals(b.ims)) anyConnecting = true;
     }
     tile.setLabel("Wi-Fi 通话");
     tile.setIcon(Icon.createWithResource(this, R.mipmap.ic_launcher));
     if (!enabled) {
       tile.setState(Tile.STATE_INACTIVE);
-      if (Build.VERSION.SDK_INT >= 29) tile.setSubtitle("蜂窝模式");
-    } else if (anyRegistered) {
+      if (Build.VERSION.SDK_INT >= 29) tile.setSubtitle("省电已关闭");
+    } else if (registeredCount >= 2) {
+      tile.setState(Tile.STATE_ACTIVE);
+      if (Build.VERSION.SDK_INT >= 29) tile.setSubtitle("双卡已注册");
+    } else if (registeredCount == 1) {
       tile.setState(Tile.STATE_ACTIVE);
       if (Build.VERSION.SDK_INT >= 29) tile.setSubtitle("已注册");
     } else {

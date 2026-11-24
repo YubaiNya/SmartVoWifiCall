@@ -47,10 +47,14 @@ public final class PolicyNetworkTest {
     }
 
     public static void main(String[] ignored) {
-        for (String plmn : Arrays.asList("46000", "460001", "46100", "461999"))
-            check(PolicyEngine.eligibility(sim("a", 19, 1, plmn)) == Reason.MAINLAND_HOME, "mainland " + plmn);
-        for (String plmn : Arrays.asList("45400", "45501", "46692", "23430", "310260", "90170"))
+        for (String plmn : Arrays.asList("46000", "460001", "46100", "461999")) {
+            check(PolicyEngine.eligibility(sim("a", 19, 1, plmn)) == Reason.ELIGIBLE, "mainland now eligible when opted in: " + plmn);
+            check(PolicyEngine.isMainlandPlmn(plmn), "mainland plmn classified: " + plmn);
+        }
+        for (String plmn : Arrays.asList("45400", "45501", "46692", "23430", "310260", "90170")) {
             check(PolicyEngine.eligibility(sim("a", 19, 1, plmn)) == Reason.ELIGIBLE, "non-mainland numeric " + plmn);
+            check(!PolicyEngine.isMainlandPlmn(plmn), "non-mainland plmn classified: " + plmn);
+        }
         for (String plmn : Arrays.asList(null, "", "234", "2343000", " 23430", "2343A", "２３４３０"))
             check(PolicyEngine.eligibility(sim("a", 19, 1, plmn)) == Reason.INVALID_HOME_PLMN, "invalid home PLMN");
         check(PolicyEngine.eligibility(new Sim("a", 19, 1, false, "23430")) == Reason.SIM_NOT_READY, "not ready stays OEM");
@@ -84,8 +88,8 @@ public final class PolicyNetworkTest {
         check(evaluate(foreign, "vpnCustom42", Collections.emptyMap(), true).actions.isEmpty(), "new takeover also waits during calls");
         check(evaluate(new Sim("card-a", 19, 1, false, null), "vpnCustom42", applied(old), false).actions.get(0).kind == Kind.CLEAR,
                 "SIM becomes unreadable restores OEM");
-        check(evaluate(sim("card-a", 19, 1, "46000"), "vpnCustom42", applied(old), false).actions.get(0).kind == Kind.CLEAR,
-                "current home identity changes to mainland restores OEM");
+        check(evaluate(sim("card-a", 19, 1, "46000"), "vpnCustom42", applied(old), false).actions.isEmpty(),
+                "domestic PLMN remains eligible when slot is explicitly enabled");
 
         Plan subChanged = evaluate(sim("card-a", 25, 1, "23430"), "vpnCustom42", applied(old), false);
         check(subChanged.actions.size() == 2 && subChanged.actions.get(0).kind == Kind.CLEAR
@@ -100,7 +104,8 @@ public final class PolicyNetworkTest {
         check(removed.actions.size() == 1 && removed.actions.get(0).kind == Kind.CLEAR, "removed SIM clears owned override");
         Map<String, String> bothSelections = selections("card-a", "vpnCustom42"); bothSelections.put("mainland", "vpnCustom42");
         Plan dual = PolicyEngine.evaluate(Arrays.asList(foreign, sim("mainland", 20, 0, "46000")), bothSelections, inventory, Collections.emptyMap(), false);
-        check(dual.actions.size() == 1 && dual.actions.get(0).slotId == 1, "mainland other slot untouched");
+        check(dual.actions.size() == 2 && dual.actions.get(0).kind == Kind.TAKEOVER && dual.actions.get(1).kind == Kind.TAKEOVER,
+                "dual SIM simultaneous VoWiFi takeover supported for both slots");
 
         InterfaceSnapshot.Builder parsed = new InterfaceSnapshot.Builder();
         InterfaceParser.ipOutput("IFACE\tcustom@literal\nIFACE\trmnet_data0\nIFACE\tdummy0\n"
@@ -171,11 +176,18 @@ public final class PolicyNetworkTest {
         fl.ownerPackages.add(InterfaceSnapshot.FLCLASH_PACKAGE);
         InterfaceSnapshot.MutableEntry wfc = builtin.entry("wfctun0");
         wfc.up = true; wfc.address("198.19.0.1"); wfc.tunDevice = true;
+        InterfaceSnapshot.MutableEntry wfc1 = builtin.entry("wfctun1");
+        wfc1.up = true; wfc1.address("198.19.1.1"); wfc1.tunDevice = true;
         InterfaceSnapshot builtSnap = builtin.build();
         check("wfctun0".equals(builtSnap.preferredVpnInterface), "built-in Clash wfctun0 preferred over external FlClash when ready");
         check("内置 Clash".equals(builtSnap.entries.get("wfctun0").type()), "built-in Clash interface clearly labeled");
+        check("内置 Clash 2".equals(builtSnap.entries.get("wfctun1").type()), "built-in Clash 2 interface clearly labeled");
+        check(InterfaceSnapshot.isBuiltinClashTun("wfctun0") && InterfaceSnapshot.isBuiltinClashTun("wfctun1"),
+                "both wfctun0 and wfctun1 recognized as built-in Clash TUNs");
         wfc.tunDevice = false;
-        check("tun0".equals(builtin.build().preferredVpnInterface), "spoofed non-TUN wfctun0 falls back to verified FlClash");
+        check("wfctun1".equals(builtin.build().preferredVpnInterface), "falls back to ready wfctun1 when wfctun0 is unavailable");
+        wfc1.tunDevice = false;
+        check("tun0".equals(builtin.build().preferredVpnInterface), "spoofed non-TUN wfctun0/wfctun1 falls back to verified FlClash");
         System.out.println("PASS " + checks + " policy/network assertions; no Android, root, calls or SMS executed.");
     }
 }

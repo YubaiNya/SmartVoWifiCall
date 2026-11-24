@@ -35,7 +35,7 @@ public final class CarrierProfilesTest {
     CarrierProfiles.OemQuirk xiaomi = builtIn.findOem("Xiaomi");
     check(xiaomi != null && "enableModemForSlot".equals(xiaomi.radioPolicy), "Xiaomi OEM quirk");
 
-    // Overlay merges updates and refuses mainland China MCC 460/461 entries
+    // Overlay merges updates including domestic PLMN entries (no longer restricted)
     String overlay = "{\"carriers\":["
         + "{\"plmn\":\"45403\",\"name\":\"3HK Custom\",\"region\":\"香港 (HK)\",\"strictHomeIp\":true,\"epdgFqdn\":\"custom.epdg.3hk.example\",\"paniPolicy\":\"sanitize\",\"note\":\"override\"},"
         + "{\"plmn\":\"46000\",\"name\":\"Mainland\",\"region\":\"CN\",\"strictHomeIp\":false}"
@@ -43,7 +43,8 @@ public final class CarrierProfilesTest {
     CarrierProfiles merged = CarrierProfiles.parseAndMerge(raw, overlay);
     check("3HK Custom".equals(merged.findByPlmn("45403").name), "overlay updates carrier");
     check("custom.epdg.3hk.example".equals(merged.findByPlmn("45403").epdgFqdn), "overlay updates ePDG");
-    check(merged.findByPlmn("46000") == null, "mainland PLMN excluded from carrier registry");
+    check(merged.findByPlmn("46000") != null && "Mainland".equals(merged.findByPlmn("46000").name),
+        "mainland PLMN allowed in carrier registry");
 
     System.out.println("PASS " + checks + " carrier & OEM compatibility registry assertions.");
   }

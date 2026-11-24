@@ -2,18 +2,43 @@
 set -eu
 MODDIR=${0%/*}
 BASE=/data/adb/smartvowificall_ims
-CLASH_DIR="$BASE/clash"
 BIN="$MODDIR/bin/mihomo-arm64"
-TUN_DEV=wfctun0
-TUN_IP=198.19.0.1
+action=${1:-}
+instance=${2:-0}
+fail() { printf '{"ok":false,"code":"%s"}\n' "$1"; exit "${2:-1}"; }
+
+if [ "$action" = stop ] && [ "$instance" = all ]; then
+ sh "$0" stop 0 >/dev/null 2>&1 || :
+ sh "$0" stop 1 >/dev/null 2>&1 || :
+ printf '{"ok":true,"code":"CLASH_STOPPED_ALL"}\n'
+ exit 0
+fi
+
+case "$instance" in
+ 0)
+  CLASH_DIR="$BASE/clash"
+  TUN_DEV=wfctun0
+  TUN_IP=198.19.0.1
+  ROUTE_TABLE=209
+  PREF_OIF=1050
+  PREF_SRC=1051
+  ;;
+ 1)
+  CLASH_DIR="$BASE/clash1"
+  TUN_DEV=wfctun1
+  TUN_IP=198.19.1.1
+  ROUTE_TABLE=210
+  PREF_OIF=1052
+  PREF_SRC=1053
+  ;;
+ *)
+  fail INVALID_INSTANCE 64
+  ;;
+esac
+
 NETNS_OWNER_FILE="$CLASH_DIR/netns.owner"
 LEGACY_NETNS_FILE="$CLASH_DIR/netns"
 LEGACY_NETNS_ID_FILE="$CLASH_DIR/netns.id"
-ROUTE_TABLE=209
-PREF_OIF=1050
-PREF_SRC=1051
-action=${1:-}
-fail() { printf '{"ok":false,"code":"%s"}\n' "$1"; exit "${2:-1}"; }
 
 if [ "$action" != status ]; then
  mkdir -p "$BASE" "$CLASH_DIR"

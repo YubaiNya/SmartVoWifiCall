@@ -15,7 +15,12 @@ import java.util.Set;
 public final class InterfaceSnapshot {
   public static final String FLCLASH_PACKAGE = "com.follow.clash";
   public static final String BUILTIN_CLASH_TUN = "wfctun0";
+  public static final String BUILTIN_CLASH_TUN_1 = "wfctun1";
   public static final String BUILTIN_CLASH_IPV4 = "198.19.0.1";
+  public static final String BUILTIN_CLASH_IPV4_1 = "198.19.1.1";
+  public static boolean isBuiltinClashTun(String name) {
+    return BUILTIN_CLASH_TUN.equals(name) || BUILTIN_CLASH_TUN_1.equals(name);
+  }
   public final Map<String, Entry> entries;
   public final List<String> failures;
   /** Prefers built-in Clash wfctun0 when UP with its dedicated IP; otherwise verified FlClash VPN. */
@@ -33,6 +38,11 @@ public final class InterfaceSnapshot {
     for (Entry e : entries) {
       if (BUILTIN_CLASH_TUN.equals(e.name) && e.available() && e.voWifiTun()
           && e.addresses.contains(BUILTIN_CLASH_IPV4))
+        return e.name;
+    }
+    for (Entry e : entries) {
+      if (BUILTIN_CLASH_TUN_1.equals(e.name) && e.available() && e.voWifiTun()
+          && e.addresses.contains(BUILTIN_CLASH_IPV4_1))
         return e.name;
     }
     List<Entry> candidates = new ArrayList<>();
@@ -154,6 +164,8 @@ public final class InterfaceSnapshot {
     public String type() {
       if (BUILTIN_CLASH_TUN.equals(name) && voWifiTun())
         return "内置 Clash";
+      if (BUILTIN_CLASH_TUN_1.equals(name) && voWifiTun())
+        return "内置 Clash 2";
       if (transports.contains(4))
         return "VPN";
       if (loopback)

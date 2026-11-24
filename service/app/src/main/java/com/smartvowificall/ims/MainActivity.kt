@@ -33,6 +33,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.smartvowificall.ims.clash.ClashConfig
+import com.smartvowificall.ims.policy.FallbackPolicy
 import com.smartvowificall.ims.policy.PolicyEngine
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -62,19 +64,23 @@ class MainActivity : ComponentActivity() {
     private var connectionsFeedback by mutableStateOf("")
     private var logFeedback by mutableStateOf("")
     private var pendingExportSanitized: Boolean = true
+    private var pendingBillableSlot: Int = 0
+    private var pendingImportClashId: Int = 0
+    private var connectionsCoreId by mutableIntStateOf(0)
     private var connectionsSnapshot by mutableStateOf(RuntimeController.ConnectionsSnapshot.EMPTY)
 
     private val audioPermLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            rt.setBillable(granted)
-            overviewFeedback = if (granted) "已启用通话与短信" else "未授予麦克风权限，通话与短信发送未启用"
+            val slot = pendingBillableSlot
+            rt.setSlotBillable(slot, granted)
+            overviewFeedback = if (granted) "已启用卡槽 ${slot + 1} 通话与短信" else "未授予麦克风权限，卡槽 ${slot + 1} 通话与短信未启用"
             syncStateFromController()
         }
 
     private val importYamlLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
             if (uri != null) {
-                importYamlFromUri(uri)
+                importYamlFromUri(pendingImportClashId, uri)
             }
         }
 
@@ -100,16 +106,24 @@ class MainActivity : ComponentActivity() {
         setContent {
             SmartVoWifiCallTheme {
                 var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+                var selectedClashId by rememberSaveable { mutableIntStateOf(0) }
                 var connectionsPaused by rememberSaveable { mutableStateOf(false) }
                 val refreshConnections = {
-                    pollConnections { selectedTab == 2 && !connectionsPaused }
+                    pollConnections(selectedClashId) { selectedTab == 2 && !connectionsPaused }
                 }
                 MainShell(
                     state = uiState,
                     lifecycle = lifecycle,
                     selectedTab = selectedTab,
+                    selectedClashId = selectedClashId,
                     connectionsPaused = connectionsPaused,
                     onSelectTab = { selectedTab = it },
+                    onSelectClashId = { cid ->
+                        selectedClashId = cid
+                        if (selectedTab == 2 && !connectionsPaused) {
+                            pollConnections(cid) { selectedTab == 2 && !connectionsPaused }
+                        }
+                    },
                     onToggleConnectionsPause = { connectionsPaused = !connectionsPaused },
                     overviewFeedback = overviewFeedback,
                     clashFeedback = clashFeedback,
@@ -123,19 +137,25 @@ class MainActivity : ComponentActivity() {
                     onPollConnections = refreshConnections,
                     onToggleEnabled = { on ->
                         rt.setEnabled(on)
-                        overviewFeedback = if (on) "正在切换至网络通话…" else "正在恢复蜂窝网络…"
+                        overviewFeedback = if (on) "总开关已开启，正在按卡槽与内核设置同步…" else "总开关已关闭，正在停止全部引擎与内置内核以省电…"
                         syncStateFromController()
                     },
-                    onRequestBillableToggle = { on -> handleBillableToggle(on) },
+                    onToggleSlotEnabled = { slot, on ->
+                        rt.setSlotEnabled(slot, on)
+                        overviewFeedback = if (on) "已开启卡槽 ${slot + 1} 网络通话" else "已关闭卡槽 ${slot + 1} 网络通话，正在恢复原厂蜂窝…"
+                        syncStateFromController()
+                    },
+                    onRequestSlotBillableToggle = { slot, on -> handleSlotBillableToggle(slot, on) },
                     onSelectSimInterface = { simKey, iface ->
                         rt.select(simKey, iface)
                         overviewFeedback = "已将出口切换为 $iface"
                         syncStateFromController()
                     },
-                    onUseBuiltinTun = {
-                        rt.useBuiltinTunForForeignSims()
-                        overviewFeedback = "海外卡已选择内置代理"
-                        clashFeedback = "海外卡已选择内置代理"
+                    onUseBuiltinTunForSlot = { slot, cid ->
+                        val tunDev = ClashConfig.tunDeviceForInstance(cid)
+                        rt.useBuiltinTunForSlot(slot, cid)
+                        overviewFeedback = "卡槽 ${slot + 1} 已绑定内置内核 ${cid + 1}（$tunDev）"
+                        clashFeedback = "卡槽 ${slot + 1} 已绑定内核 ${cid + 1}（$tunDev）"
                         syncStateFromController()
                     },
                     onRefreshAll = {
@@ -169,17 +189,23 @@ class MainActivity : ComponentActivity() {
                     onOpenRadioInfo = {
                         openSystemRadioInfo()
                     },
-                    onToggleClash = { on ->
-                        rt.setClashEnabled(on)
-                        clashFeedback = if (on) "已开启自动代理" else "已关闭自动代理"
+                    onToggleClash = { cid, on ->
+                        val tunDev = ClashConfig.tunDeviceForInstance(cid)
+                        rt.setClashEnabled(cid, on)
+                        clashFeedback = if (on) {
+                            if (rt.enabled()) "已开启内核 ${cid + 1}（$tunDev）"
+                            else "已记录开启内核 ${cid + 1}（$tunDev），打开总开关后启动"
+                        } else {
+                            "已关闭内核 ${cid + 1}（$tunDev）"
+                        }
                         syncStateFromController()
                     },
-                    onFetchSubscription = { url ->
+                    onFetchSubscription = { cid, url ->
                         if (url.isEmpty()) {
-                            clashFeedback = "请先输入订阅链接"
+                            clashFeedback = "请先输入内核 ${cid + 1} 订阅链接"
                         } else {
-                            clashFeedback = "正在更新订阅…"
-                            rt.clashFetchSubscription(url) { msg ->
+                            clashFeedback = "正在更新内核 ${cid + 1} 订阅…"
+                            rt.clashFetchSubscription(cid, url) { msg ->
                                 runOnUiThread {
                                     clashFeedback = msg
                                     syncStateFromController()
@@ -187,73 +213,83 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     },
-                    onImportYaml = {
+                    onImportYaml = { cid ->
+                        pendingImportClashId = cid
                         importYamlLauncher.launch(arrayOf("*/*"))
                     },
-                    onReloadLocal = {
-                        clashFeedback = "正在加载本地配置…"
-                        rt.clashReloadLocal { msg ->
+                    onReloadLocal = { cid ->
+                        clashFeedback = "正在重载内核 ${cid + 1} 本地配置…"
+                        rt.clashReloadLocal(cid) { msg ->
                             runOnUiThread {
                                 clashFeedback = msg
                                 syncStateFromController()
                             }
                         }
                     },
-                    onSelectNode = { node ->
-                        clashFeedback = "正在切换节点：$node…"
-                        rt.clashSelectNode(node) { msg ->
+                    onCopyClashFrom = { dstId, srcId ->
+                        clashFeedback = "正在从内核 ${srcId + 1} 复制配置到内核 ${dstId + 1}…"
+                        rt.clashCopyFrom(dstId, srcId) { msg ->
                             runOnUiThread {
                                 clashFeedback = msg
                                 syncStateFromController()
                             }
                         }
                     },
-                    onTestDelay = {
-                        clashFeedback = "正在测速全部节点…"
-                        rt.clashTestDelay { msg ->
+                    onSelectNode = { cid, node ->
+                        clashFeedback = "内核 ${cid + 1} 正在切换节点：$node…"
+                        rt.clashSelectNode(cid, node) { msg ->
                             runOnUiThread {
                                 clashFeedback = msg
                                 syncStateFromController()
                             }
                         }
                     },
-                    onRestartCore = {
-                        clashFeedback = "正在重启代理…"
-                        rt.clashRestartCore { msg ->
+                    onTestDelay = { cid ->
+                        clashFeedback = "正在测速内核 ${cid + 1} 全部节点…"
+                        rt.clashTestDelay(cid) { msg ->
                             runOnUiThread {
                                 clashFeedback = msg
                                 syncStateFromController()
                             }
                         }
                     },
-                    onCloseConnection = { id ->
-                        rt.clashCloseConnection(id) { msg ->
+                    onRestartCore = { cid ->
+                        clashFeedback = "正在重启内核 ${cid + 1}…"
+                        rt.clashRestartCore(cid) { msg ->
+                            runOnUiThread {
+                                clashFeedback = msg
+                                syncStateFromController()
+                            }
+                        }
+                    },
+                    onCloseConnection = { cid, connId ->
+                        rt.clashCloseConnection(cid, connId) { msg ->
                             runOnUiThread {
                                 connectionsFeedback = msg
                                 refreshConnections()
                             }
                         }
                     },
-                    onCloseAllConnections = {
-                        rt.clashCloseAllConnections { msg ->
+                    onCloseAllConnections = { cid ->
+                        rt.clashCloseAllConnections(cid) { msg ->
                             runOnUiThread {
                                 connectionsFeedback = msg
                                 refreshConnections()
                             }
                         }
                     },
-                    onUpdateController = { lan, port ->
-                        connectionsFeedback = "正在保存控制设置…"
-                        rt.clashSetController(lan, port) { msg ->
+                    onUpdateController = { cid, lan, port ->
+                        connectionsFeedback = "正在保存内核 ${cid + 1} 外部控制设置…"
+                        rt.clashSetController(cid, lan, port) { msg ->
                             runOnUiThread {
                                 connectionsFeedback = msg
                                 syncStateFromController()
                             }
                         }
                     },
-                    onRotateSecret = {
-                        connectionsFeedback = "正在重置访问密钥…"
-                        rt.clashRotateSecret { msg ->
+                    onRotateSecret = { cid ->
+                        connectionsFeedback = "正在重置内核 ${cid + 1} 访问密钥…"
+                        rt.clashRotateSecret(cid) { msg ->
                             runOnUiThread {
                                 connectionsFeedback = msg
                                 syncStateFromController()
@@ -316,22 +352,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun handleBillableToggle(on: Boolean) {
+    private fun handleSlotBillableToggle(slot: Int, on: Boolean) {
         if (!on) {
-            rt.setBillable(false)
-            overviewFeedback = "已关闭通话与短信发送，仅检查连接"
+            rt.setSlotBillable(slot, false)
+            overviewFeedback = "已关闭卡槽 ${slot + 1} 通话与短信发送，仅保持连接"
             syncStateFromController()
             return
         }
         AlertDialog.Builder(this)
-            .setTitle("启用通话与短信")
-            .setMessage("启用后可使用系统电话和短信，费用按运营商套餐收取。仅测试连接时请保持关闭。")
+            .setTitle("启用卡槽 ${slot + 1} 通话与短信")
+            .setMessage("启用后卡槽 ${slot + 1} 可使用系统电话和短信，费用按运营商套餐收取。仅测试连接时请保持关闭。")
             .setPositiveButton("启用") { _, _ ->
                 if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                    pendingBillableSlot = slot
                     audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 } else {
-                    rt.setBillable(true)
-                    overviewFeedback = "已启用通话与短信"
+                    rt.setSlotBillable(slot, true)
+                    overviewFeedback = "已启用卡槽 ${slot + 1} 通话与短信"
                     syncStateFromController()
                 }
             }
@@ -436,8 +473,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun importYamlFromUri(uri: Uri) {
-        clashFeedback = "正在读取配置文件…"
+    private fun importYamlFromUri(clashId: Int, uri: Uri) {
+        clashFeedback = "正在读取内核 ${clashId + 1} 配置文件…"
         rt.io.execute {
             try {
                 contentResolver.openInputStream(uri).use { input ->
@@ -451,7 +488,7 @@ class MainActivity : ComponentActivity() {
                         buf.write(chunk, 0, n)
                     }
                     val yaml = String(buf.toByteArray(), StandardCharsets.UTF_8)
-                    rt.clashSaveProfile(yaml) { msg ->
+                    rt.clashSaveProfile(clashId, yaml) { msg ->
                         runOnUiThread {
                             clashFeedback = msg
                             syncStateFromController()
@@ -466,17 +503,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun pollConnections(isPageActive: () -> Boolean) {
+    private fun pollConnections(clashId: Int, isPageActive: () -> Boolean) {
         val canRefresh = {
             lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
-                isPageActive() && rt.clash.running
+                isPageActive() && rt.clashState(clashId).running
         }
         if (!canRefresh() || !connectionRequestInFlight.compareAndSet(false, true)) return
         try {
-            rt.clashFetchConnections { snap ->
+            rt.clashFetchConnections(clashId) { snap ->
                 runOnUiThread {
                     try {
                         if (canRefresh()) {
+                            connectionsCoreId = clashId
                             connectionsSnapshot = snap
                             syncStateFromController()
                         }
@@ -494,26 +532,66 @@ class MainActivity : ComponentActivity() {
     private fun syncStateFromController() {
         val snap = rt.snapshot
         val inv = rt.interfaces
-        val cs = rt.clash
         val conns = connectionsSnapshot
+
+        val coreUiList = (0 until ClashConfig.INSTANCE_COUNT).map { id ->
+            val cs = rt.clashState(id)
+            ClashCoreUi(
+                id = id,
+                tunDevice = ClashConfig.tunDeviceForInstance(id),
+                enabled = rt.clashEnabled(id),
+                hasProfile = cs.hasProfile,
+                running = cs.running,
+                tunUp = cs.tunUp,
+                currentNode = cs.currentNode,
+                savedNode = cs.savedNode,
+                netnsId = cs.netnsId,
+                subscriptionUrl = cs.subscriptionUrl,
+                externalLan = cs.externalLan,
+                controllerPort = cs.controllerPort,
+                controllerSecret = cs.controllerSecret,
+                lanIpv4 = cs.lanIpv4,
+                lastError = cs.lastError,
+                nodes = cs.nodes.map { n ->
+                    NodeRowUi(
+                        name = n.name,
+                        type = n.type,
+                        delay = n.delay,
+                        selected = n.name == cs.currentNode
+                    )
+                }
+            )
+        }
 
         val simList = mutableListOf<SimCardUi>()
         if (snap != null) {
             for (s in snap.sims) {
                 val elig = PolicyEngine.eligibility(s.policy) == PolicyEngine.Reason.ELIGIBLE
-                val mainland = s.policy.homePlmn.startsWith("460") || s.policy.homePlmn.startsWith("461")
+                val mainland = PolicyEngine.isMainlandPlmn(s.policy.homePlmn)
                 val rawBinding = rt.bindings[s.policy.slotId]
                 val b = if (rt.bindingMatches(rawBinding, s)) rawBinding else null
+                val selIface = rt.selection(s.policy.simKey)
+                val selCid = ClashConfig.instanceForTun(selIface)
+                val activeNode = if (selCid >= 0) {
+                    val cs = rt.clashState(selCid)
+                    if (cs.running && cs.tunUp) cs.currentNode.ifEmpty { cs.savedNode } else ""
+                } else ""
+                val fbCode = rt.fallbackReasons[s.policy.slotId] ?: ""
+                val carrierLabel = s.carrierName.ifEmpty { s.simOperatorName }
                 simList.add(
                     SimCardUi(
                         slotId = s.policy.slotId,
                         subId = s.policy.subId,
                         simKey = s.policy.simKey,
                         homePlmn = s.policy.homePlmn,
+                        carrierName = carrierLabel,
                         ready = s.policy.ready,
-                        foreignEligible = elig,
+                        eligible = elig,
                         mainland = mainland,
-                        selectedInterface = rt.selection(s.policy.simKey),
+                        slotEnabled = rt.slotEnabled(s.policy.slotId),
+                        slotBillable = rt.billable(s.policy.slotId),
+                        selectedInterface = selIface,
+                        activeProxyNode = activeNode,
                         radioOff = java.lang.Boolean.TRUE == rt.radioOff[s.policy.slotId],
                         featureAttached = rt.featureMatches(s),
                         providerBound = b?.providerBound == true,
@@ -521,6 +599,7 @@ class MainActivity : ComponentActivity() {
                         registered = b?.registered == true,
                         tunnelState = b?.tunnel ?: "IDLE",
                         voiceServiceOverride = b?.voiceServiceOverride?.lastApplied() == true,
+                        fallbackReason = if (fbCode.isEmpty()) "" else FallbackPolicy.describe(fbCode),
                         carrierProfileHint = if (elig) rt.carrierHintForPlmn(s.policy.homePlmn) else ""
                     )
                 )
@@ -542,15 +621,6 @@ class MainActivity : ComponentActivity() {
                     )
                 )
             }
-        }
-
-        val nodeList = cs.nodes.map { n ->
-            NodeRowUi(
-                name = n.name,
-                type = n.type,
-                delay = n.delay,
-                selected = n.name == cs.currentNode
-            )
         }
 
         val connList = conns.connections.map { c ->
@@ -604,29 +674,16 @@ class MainActivity : ComponentActivity() {
         uiState = AppUiState(
             appVersion = installedVersionName,
             enabled = rt.enabled(),
-            billable = rt.billable(),
             statusText = rt.status,
             readOnlyNoRoot = noRootDetected,
             compatMode = compat?.mode ?: "",
             compatSummary = compat?.summary ?: "",
             compatItems = compatItems,
-            clashEnabled = rt.clashEnabled(),
-            clashHasProfile = cs.hasProfile,
-            clashRunning = cs.running,
-            clashTunUp = cs.tunUp,
-            clashCurrentNode = cs.currentNode,
-            clashSavedNode = cs.savedNode,
-            clashNetnsId = cs.netnsId,
-            clashSubscriptionUrl = cs.subscriptionUrl,
-            clashExternalLan = cs.externalLan,
-            clashControllerPort = cs.controllerPort,
-            clashControllerSecret = cs.controllerSecret,
-            clashLanIpv4 = cs.lanIpv4,
-            clashLastError = cs.lastError,
+            clashCores = coreUiList,
             preferredVpnInterface = inv?.preferredVpnInterface ?: "",
             sims = simList,
             interfaces = ifaceList,
-            nodes = nodeList,
+            connectionsCoreId = connectionsCoreId,
             connectionsRunning = conns.running,
             downloadTotal = conns.downloadTotal,
             uploadTotal = conns.uploadTotal,
@@ -683,8 +740,10 @@ private fun MainShell(
     state: AppUiState,
     lifecycle: Lifecycle,
     selectedTab: Int,
+    selectedClashId: Int,
     connectionsPaused: Boolean,
     onSelectTab: (Int) -> Unit,
+    onSelectClashId: (Int) -> Unit,
     onToggleConnectionsPause: () -> Unit,
     overviewFeedback: String,
     clashFeedback: String,
@@ -693,25 +752,27 @@ private fun MainShell(
     onPollController: () -> Unit,
     onPollConnections: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
-    onRequestBillableToggle: (Boolean) -> Unit,
+    onToggleSlotEnabled: (Int, Boolean) -> Unit,
+    onRequestSlotBillableToggle: (Int, Boolean) -> Unit,
     onSelectSimInterface: (String, String) -> Unit,
-    onUseBuiltinTun: () -> Unit,
+    onUseBuiltinTunForSlot: (Int, Int) -> Unit,
     onRefreshAll: () -> Unit,
     onRunCompatCheck: () -> Unit,
     onFastReconnect: () -> Unit,
     onEmergencyRestore: () -> Unit,
     onOpenRadioInfo: () -> Unit,
-    onToggleClash: (Boolean) -> Unit,
-    onFetchSubscription: (String) -> Unit,
-    onImportYaml: () -> Unit,
-    onReloadLocal: () -> Unit,
-    onSelectNode: (String) -> Unit,
-    onTestDelay: () -> Unit,
-    onRestartCore: () -> Unit,
-    onCloseConnection: (String) -> Unit,
-    onCloseAllConnections: () -> Unit,
-    onUpdateController: (Boolean, Int) -> Unit,
-    onRotateSecret: () -> Unit,
+    onToggleClash: (Int, Boolean) -> Unit,
+    onFetchSubscription: (Int, String) -> Unit,
+    onImportYaml: (Int) -> Unit,
+    onReloadLocal: (Int) -> Unit,
+    onCopyClashFrom: (Int, Int) -> Unit,
+    onSelectNode: (Int, String) -> Unit,
+    onTestDelay: (Int) -> Unit,
+    onRestartCore: (Int) -> Unit,
+    onCloseConnection: (Int, String) -> Unit,
+    onCloseAllConnections: (Int) -> Unit,
+    onUpdateController: (Int, Boolean, Int) -> Unit,
+    onRotateSecret: (Int) -> Unit,
     onCopyText: (String, String) -> Unit,
     onToggleTelemetry: (Boolean) -> Unit,
     onSelectTelemetryRoute: (String) -> Unit,
@@ -723,6 +784,7 @@ private fun MainShell(
     onExportRawLogs: () -> Unit
 ) {
     val p = LocalApplePalette.current
+    val selectedCore = state.clashCore(selectedClashId)
 
     val tabs = remember {
         listOf(
@@ -741,7 +803,7 @@ private fun MainShell(
     VisiblePollingEffect(
         lifecycle = lifecycle,
         intervalMillis = 3000L,
-        enabled = selectedTab == 2 && !connectionsPaused && state.clashRunning,
+        enabled = selectedTab == 2 && !connectionsPaused && selectedCore.running,
         onPoll = onPollConnections
     )
 
@@ -770,25 +832,31 @@ private fun MainShell(
                         state = state,
                         actionFeedback = overviewFeedback,
                         onToggleEnabled = onToggleEnabled,
-                        onRequestBillableToggle = onRequestBillableToggle,
+                        onToggleSlotEnabled = onToggleSlotEnabled,
+                        onRequestSlotBillableToggle = onRequestSlotBillableToggle,
                         onSelectSimInterface = onSelectSimInterface,
-                        onUseBuiltinTunForForeign = onUseBuiltinTun,
+                        onUseBuiltinTunForSlot = onUseBuiltinTunForSlot,
                         onRefreshAll = onRefreshAll
                     )
                     1 -> ProxyPage(
                         state = state,
+                        selectedClashId = selectedClashId,
+                        onSelectClashId = onSelectClashId,
                         clashFeedback = clashFeedback,
                         onToggleClash = onToggleClash,
                         onFetchSubscription = onFetchSubscription,
                         onImportYaml = onImportYaml,
                         onReloadLocal = onReloadLocal,
+                        onCopyClashFrom = onCopyClashFrom,
                         onSelectNode = onSelectNode,
                         onTestDelay = onTestDelay,
                         onRestartCore = onRestartCore,
-                        onUseBuiltinTun = onUseBuiltinTun
+                        onAssignCoreToSlot = onUseBuiltinTunForSlot
                     )
                     2 -> ConnectionsPage(
                         state = state,
+                        selectedClashId = selectedClashId,
+                        onSelectClashId = onSelectClashId,
                         paused = connectionsPaused,
                         feedback = connectionsFeedback,
                         onTogglePause = onToggleConnectionsPause,

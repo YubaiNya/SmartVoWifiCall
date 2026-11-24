@@ -28,7 +28,7 @@ if [ -f "$BASE/run/root-daemon.pid" ]; then
  rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" /data/local/tmp/smartvowificall/root-daemon.sock /data/local/tmp/vowifi/root-daemon.sock
  rmdir /data/local/tmp/smartvowificall 2>/dev/null || :
 fi
-sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || exit 1
+sh "$MODDIR/clash-control.sh" stop all >/dev/null 2>&1 || exit 1
 i=0
 until CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1; do
  i=$((i+1));[ "$i" -lt 12 ] || exit 1

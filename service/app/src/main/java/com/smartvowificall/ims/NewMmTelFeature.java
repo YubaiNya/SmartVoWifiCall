@@ -77,7 +77,7 @@ final class NewMmTelFeature extends MmTelFeature {
   }
   synchronized void registrationChanged(boolean value) {
     registered = value;
-    int mask = value && rt.billable() ? enabledCaps : 0;
+    int mask = value && rt.billable(slot) ? enabledCaps : 0;
     if (ready && mask != publishedCaps) {
       MmTelCapabilities caps = new MmTelCapabilities();
       caps.addCapabilities(mask);
@@ -211,7 +211,7 @@ final class NewMmTelFeature extends MmTelFeature {
     b.callActive = !"IDLE".equals(stage) || pendingOutgoing != null;
   }
   void incoming(String id, String peer) {
-    if (!ready || !rt.billable() || calls.containsKey(id))
+    if (!ready || !rt.billable(slot) || calls.containsKey(id))
       return;
     ImsCallProfile p =
         new ImsCallProfile(ImsCallProfile.SERVICE_TYPE_NORMAL, ImsCallProfile.CALL_TYPE_VOICE);

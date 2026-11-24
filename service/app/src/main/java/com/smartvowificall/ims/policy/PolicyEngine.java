@@ -157,8 +157,14 @@ public final class PolicyEngine {
       return Reason.IDENTITY_UNAVAILABLE;
     if (!validHomePlmn(sim.homePlmn))
       return Reason.INVALID_HOME_PLMN;
-    String mcc = sim.homePlmn.substring(0, 3);
-    return mcc.equals("460") || mcc.equals("461") ? Reason.MAINLAND_HOME : Reason.ELIGIBLE;
+    // Domestic and overseas SIMs are both eligible; takeover is explicitly gated by per-slot switches.
+    return Reason.ELIGIBLE;
+  }
+
+  public static boolean isMainlandPlmn(String homePlmn) {
+    if (!validHomePlmn(homePlmn)) return false;
+    String mcc = homePlmn.substring(0, 3);
+    return mcc.equals("460") || mcc.equals("461");
   }
 
   public static boolean validHomePlmn(String value) {

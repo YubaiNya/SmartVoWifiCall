@@ -145,6 +145,20 @@ public final class ClashConfigTest {
       }
     }
 
+    // Second built-in Clash instance (wfctun1) uses isolated subnet, DNS port, and controller port
+    check(ClashConfig.instanceForTun("wfctun0") == 0, "wfctun0 maps to instance 0");
+    check(ClashConfig.instanceForTun("wfctun1") == 1, "wfctun1 maps to instance 1");
+    check(ClashConfig.instanceForTun("tun0") == -1, "tun0 is not built-in");
+    check(ClashConfig.isBuiltinTun("wfctun0") && ClashConfig.isBuiltinTun("wfctun1"), "both built-in TUNs recognized");
+    ClashConfig.Built inst1 = ClashConfig.buildRuntimeConfigForInstance(
+        1, sample, secret, false, ClashConfig.CONTROLLER_PORT_1, "wlan0");
+    check(inst1.yaml.contains("  device: wfctun1\n"), "instance 1 uses wfctun1");
+    check(inst1.yaml.contains("    - 198.19.1.1/30\n"), "instance 1 uses isolated 198.19.1.1/30 CIDR");
+    check(inst1.yaml.contains("  fake-ip-range: 198.19.1.1/16\n"), "instance 1 uses 198.19.1.1/16");
+    check(inst1.yaml.contains("  listen: 127.0.0.1:1054\n"), "instance 1 uses isolated DNS port 1054");
+    check(inst1.yaml.contains("external-controller: 127.0.0.1:19091\n"), "instance 1 uses controller port 19091");
+    check(inst1.yaml.contains("interface-name: \"wlan0\"\n"), "instance 1 binds physical uplink wlan0");
+
     System.out.println("PASS " + checks + " built-in Clash config sanitization assertions; no mihomo or network executed.");
   }
 }

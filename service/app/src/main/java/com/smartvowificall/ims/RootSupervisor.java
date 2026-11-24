@@ -168,10 +168,13 @@ final class RootSupervisor {
     return run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
         + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain " + args);
   }
-  JSONObject clash(String mode, String stdinText) throws Exception {
+  JSONObject clash(int instanceId, String stdinText, String... modeArgs) throws Exception {
     byte[] input = stdinText == null ? null : stdinText.getBytes(StandardCharsets.UTF_8);
+    List<String> fullArgs = new ArrayList<>();
+    fullArgs.add("--instance=" + instanceId);
+    for (String a : modeArgs) fullArgs.add(a);
     try {
-      JSONObject res = callDaemon("clash", Collections.singletonList(mode), input);
+      JSONObject res = callDaemon("clash", fullArgs, input);
       if (!res.optBoolean("ok", true)) {
         String code = res.optString("code", "CLASH_ERROR");
         if (code.matches("[A-Z0-9_]{3,80}")) throw new IOException(code);
@@ -187,27 +190,45 @@ final class RootSupervisor {
       }
       triggerDaemonBootstrapAsync();
     }
+    StringBuilder sb = new StringBuilder();
+    for (String a : fullArgs) sb.append(' ').append(quote(a));
     String result = run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
-        + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootClashMain " + mode, input);
+        + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootClashMain" + sb, input);
     return new JSONObject(result);
   }
-  JSONObject clashStatus() throws Exception { return clash("status", null); }
-  JSONObject clashStart() throws Exception { return clash("start", null); }
-  JSONObject clashRestart() throws Exception { return clash("restart", null); }
-  JSONObject clashStop() throws Exception { return clash("stop", null); }
-  JSONObject clashRebuild() throws Exception { return clash("rebuild", null); }
-  JSONObject clashFetchSubscription(String url) throws Exception { return clash("fetch-subscription", url); }
-  JSONObject clashSaveProfile(String yaml) throws Exception { return clash("save-profile", yaml); }
-  JSONObject clashSelectNode(String node) throws Exception { return clash("select-node", node); }
-  JSONObject clashTestDelay() throws Exception { return clash("test-delay", null); }
-  JSONObject clashSetController(boolean externalLan, int port) throws Exception {
-    return clash("set-controller",
-        new JSONObject().put("externalLan", externalLan).put("port", port).toString());
+  JSONObject clashStatus(int id) throws Exception { return clash(id, null, "status"); }
+  JSONObject clashStart(int id) throws Exception { return clash(id, null, "start"); }
+  JSONObject clashRestart(int id) throws Exception { return clash(id, null, "restart"); }
+  JSONObject clashStop(int id) throws Exception { return clash(id, null, "stop"); }
+  JSONObject clashStopAll() throws Exception { return clash(0, null, "stop-all"); }
+  JSONObject clashRebuild(int id) throws Exception { return clash(id, null, "rebuild"); }
+  JSONObject clashCopyFrom(int dstId, int srcId) throws Exception {
+    return clash(dstId, null, "copy-from", String.valueOf(srcId));
   }
-  JSONObject clashRotateSecret() throws Exception { return clash("rotate-secret", null); }
-  JSONObject clashConnections() throws Exception { return clash("connections", null); }
-  JSONObject clashCloseConnection(String id) throws Exception { return clash("close-connection", id); }
-  JSONObject clashCloseAllConnections() throws Exception { return clash("close-all-connections", null); }
+  JSONObject clashFetchSubscription(int id, String url) throws Exception {
+    return clash(id, url, "fetch-subscription");
+  }
+  JSONObject clashSaveProfile(int id, String yaml) throws Exception {
+    return clash(id, yaml, "save-profile");
+  }
+  JSONObject clashSelectNode(int id, String node) throws Exception {
+    return clash(id, node, "select-node");
+  }
+  JSONObject clashTestDelay(int id) throws Exception { return clash(id, null, "test-delay"); }
+  JSONObject clashSetController(int id, boolean externalLan, int port) throws Exception {
+    return clash(id, new JSONObject().put("externalLan", externalLan).put("port", port).toString(), "set-controller");
+  }
+  JSONObject clashRotateSecret(int id) throws Exception { return clash(id, null, "rotate-secret"); }
+  JSONObject clashConnections(int id) throws Exception { return clash(id, null, "connections"); }
+  JSONObject clashCloseConnection(int id, String connId) throws Exception {
+    return clash(id, connId, "close-connection");
+  }
+  JSONObject clashCloseAllConnections(int id) throws Exception {
+    return clash(id, null, "close-all-connections");
+  }
+  // Legacy instance-0 overloads
+  JSONObject clashStatus() throws Exception { return clashStatus(0); }
+  JSONObject clashStop() throws Exception { return clashStop(0); }
   static final class Sim {
     final PolicyEngine.Sim policy;
     final String iccid;
@@ -384,7 +405,7 @@ final class RootSupervisor {
         + "for f in /data/adb/smartvowificall_ims/radio/*.json /data/adb/smartvowificall_ims/ims/*.json; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; cat \"$f\"; echo; }; done;"
         + "echo '=== CLASH / MIHOMO LOGS (TAIL 32KB) ===';"
-        + "for f in /data/adb/smartvowificall_ims/clash/*.log; do "
+        + "for f in /data/adb/smartvowificall_ims/clash/*.log /data/adb/smartvowificall_ims/clash1/*.log; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 32768 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== LAUNCHER LOGS (TAIL 48KB) ===';"
         + "for f in /data/adb/smartvowificall_ims/run/*.launcher.log; do "
@@ -433,8 +454,10 @@ final class RootSupervisor {
   com.smartvowificall.ims.telemetry.TelemetryClient.UploadResult uploadTelemetryViaWifiCall(
       String endpoint, String logId, String payloadJson) throws Exception {
     String script =
-        "OWNER=/data/adb/smartvowificall_ims/clash/netns.owner; "
-        + "[ -f \"$OWNER\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        "OWNER=''; "
+        + "for cand in /data/adb/smartvowificall_ims/clash/netns.owner /data/adb/smartvowificall_ims/clash1/netns.owner; do "
+        + "[ -f \"$cand\" ] && { OWNER=\"$cand\"; break; }; done; "
+        + "[ -n \"$OWNER\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
         + "read -r nspid nsstart nsid < \"$OWNER\" || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
         + "[ -n \"$nspid\" ] && [ -e \"/proc/$nspid/ns/net\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
         + "live_ns=$(readlink \"/proc/$nspid/ns/net\" 2>/dev/null || :); "

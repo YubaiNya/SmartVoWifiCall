@@ -93,8 +93,6 @@ public final class CarrierProfiles {
         Map<String, Object> m = (Map<String, Object>) item;
         String plmn = str(m.get("plmn")).trim();
         if (!PolicyEngine.validHomePlmn(plmn)) continue;
-        // Never allow mainland China PLMN overrides into the overseas carrier database.
-        if (plmn.startsWith("460") || plmn.startsWith("461")) continue;
         carrierMap.put(plmn, new Carrier(
             plmn,
             str(m.get("name")),

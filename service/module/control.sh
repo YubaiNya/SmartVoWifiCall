@@ -18,7 +18,8 @@ ownerfile="$BASE/run/$iccid.owner"
 socketfile="$BASE/run/$iccid.sockets"
 uidfile="$BASE/run/$iccid.uid"
 lock="$BASE/run/$iccid.lock"
-CLASH_NETNS_OWNER="$BASE/clash/netns.owner"
+CLASH0_NETNS_OWNER="$BASE/clash/netns.owner"
+CLASH1_NETNS_OWNER="$BASE/clash1/netns.owner"
 launched=0
 proc_start() {
  [ -r "/proc/$1/stat" ] || return 1
@@ -62,13 +63,21 @@ owned_pid() {
  commandline=$(dd if="/proc/$pid/cmdline" bs=4096 count=1 2>/dev/null | tr '\000' ' ')
  case "$commandline" in *"$MODDIR/bin/vowifi-engine-arm64 --iccid=$iccid "*"--config=$BASE/config/$iccid.json "*) kill -0 "$pid" 2>/dev/null;; *) return 1;; esac
 }
-uses_builtin_clash() {
- [ -f "$BASE/config/$iccid.json" ] &&
- grep -Eq '"transport"[[:space:]]*:[[:space:]]*"iface:wfctun0"' "$BASE/config/$iccid.json"
+builtin_clash_tun() {
+ [ -f "$BASE/config/$iccid.json" ] || return 1
+ if grep -Eq '"transport"[[:space:]]*:[[:space:]]*"iface:wfctun0"' "$BASE/config/$iccid.json"; then
+  printf 'wfctun0\n'; return 0
+ fi
+ if grep -Eq '"transport"[[:space:]]*:[[:space:]]*"iface:wfctun1"' "$BASE/config/$iccid.json"; then
+  printf 'wfctun1\n'; return 0
+ fi
+ return 1
 }
-clash_netns_path() {
- [ -f "$CLASH_NETNS_OWNER" ] || return 1
- read -r nspid nsstart nsid < "$CLASH_NETNS_OWNER" || return 1
+clash_netns_path_for() {
+ owner_file="$CLASH0_NETNS_OWNER"
+ [ "${1:-wfctun0}" = "wfctun1" ] && owner_file="$CLASH1_NETNS_OWNER"
+ [ -f "$owner_file" ] || return 1
+ read -r nspid nsstart nsid < "$owner_file" || return 1
  case "${nspid:-}:${nsstart:-}" in *[!0-9:]*|:*) return 1;; esac
  [ -n "${nsid:-}" ] || return 1
  [ "$(proc_start "$nspid" 2>/dev/null || :)" = "$nsstart" ] || return 1
@@ -93,15 +102,17 @@ socket_kernel_inode() {
    if [ "${name:-}" = "$path" ]; then printf '%s\n' "$inode"; return 0; fi
   done < /proc/net/unix
  fi
- ns=$(clash_netns_path 2>/dev/null || :)
- if [ -n "$ns" ]; then
-  nsenter --net="$ns" -- sh -c '
-   while read -r number refs protocol flags type state inode name; do
-    if [ "${name:-}" = "$1" ]; then printf "%s\n" "$inode"; exit 0; fi
-   done < /proc/net/unix
-   exit 1
-  ' _ "$path" 2>/dev/null && return 0
- fi
+ for tdev in wfctun0 wfctun1; do
+  ns=$(clash_netns_path_for "$tdev" 2>/dev/null || :)
+  if [ -n "$ns" ]; then
+   nsenter --net="$ns" -- sh -c '
+    while read -r number refs protocol flags type state inode name; do
+     if [ "${name:-}" = "$1" ]; then printf "%s\n" "$inode"; exit 0; fi
+    done < /proc/net/unix
+    exit 1
+   ' _ "$path" 2>/dev/null && return 0
+  fi
+ done
  return 1
 }
 pid_owns_socket() {
@@ -224,8 +235,8 @@ case "$action" in
    chmod 0700 "$BASE/logs/$iccid"
    chmod o+x /data/local/tmp/vowifi
    ensure_sim_auth || :
-   if uses_builtin_clash; then
-    ns=$(clash_netns_path 2>/dev/null || :)
+   if btun=$(builtin_clash_tun 2>/dev/null); then
+    ns=$(clash_netns_path_for "$btun" 2>/dev/null || :)
     [ -n "$ns" ] || fail TUN_EGRESS_UNAVAILABLE
     setsid nsenter --net="$ns" -- unshare -m -- sh -c '
      mount -o private none / || exit 1

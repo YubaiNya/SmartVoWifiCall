@@ -134,7 +134,7 @@ restore_owned() {
  done
  stop_sim_auth
  stop_root_daemon
- sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || return 1
+ sh "$MODDIR/clash-control.sh" stop all >/dev/null 2>&1 || return 1
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
  rm -f "$BASE/rollback-pending"
 }
