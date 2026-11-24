@@ -249,10 +249,11 @@ export default {
 
     const branch = env.GITHUB_BRANCH || "main";
     const ghUrl = `https://api.github.com/repos/${env.GITHUB_REPO}/contents/${recordPath}`;
+    const ghToken = String(env.GITHUB_TOKEN || "").trim();
     const ghRes = await fetch(ghUrl, {
       method: "PUT",
       headers: {
-        Authorization: `Bearer ${env.GITHUB_TOKEN}`,
+        Authorization: `Bearer ${ghToken}`,
         Accept: "application/vnd.github+json",
         "User-Agent": "SmartVoWifiCall-Telemetry-Relay/2.0",
         "Content-Type": "application/json",
@@ -266,8 +267,13 @@ export default {
     });
 
     if (!ghRes.ok) {
+      let ghMsg = "";
+      try {
+        const errJson = await ghRes.json();
+        if (errJson && typeof errJson.message === "string") ghMsg = errJson.message.slice(0, 120);
+      } catch {}
       return jsonResponse(
-        { ok: false, code: `GITHUB_HTTP_${ghRes.status}`, logId },
+        { ok: false, code: `GITHUB_HTTP_${ghRes.status}`, logId, detail: ghMsg },
         ghRes.status === 429 ? 429 : 502
       );
     }
