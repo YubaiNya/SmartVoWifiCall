@@ -4,10 +4,13 @@ import android.Manifest
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -36,6 +39,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.smartvowificall.ims.clash.ClashConfig
 import com.smartvowificall.ims.policy.FallbackPolicy
 import com.smartvowificall.ims.policy.PolicyEngine
+import com.smartvowificall.ims.update.ReleaseUpdater
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -63,6 +67,11 @@ class MainActivity : ComponentActivity() {
     private var clashFeedback by mutableStateOf("")
     private var connectionsFeedback by mutableStateOf("")
     private var logFeedback by mutableStateOf("")
+    private var updateChecking by mutableStateOf(false)
+    private var updateFeedback by mutableStateOf("")
+    private var updateDialogState by mutableStateOf<UpdateDialogUiState?>(null)
+    @Volatile
+    private var activeDownloadCancel: AtomicBoolean? = null
     private var pendingExportSanitized: Boolean = true
     private var pendingBillableSlot: Int = 0
     private var pendingImportClashId: Int = 0
@@ -156,6 +165,9 @@ class MainActivity : ComponentActivity() {
                     clashFeedback = clashFeedback,
                     connectionsFeedback = connectionsFeedback,
                     logFeedback = logFeedback,
+                    updateChecking = updateChecking,
+                    updateFeedback = updateFeedback,
+                    updateDialogState = updateDialogState,
                     onPollController = {
                         if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                             syncStateFromController()
@@ -190,6 +202,25 @@ class MainActivity : ComponentActivity() {
                         rt.io.execute {
                             rt.refreshClashState()
                             runOnUiThread { syncStateFromController() }
+                        }
+                    },
+                    onCheckUpdates = {
+                        checkForUpdates()
+                    },
+                    onDownloadModule = {
+                        startModuleDownload()
+                    },
+                    onCancelModuleDownload = {
+                        cancelModuleDownload()
+                    },
+                    onOpenReleaseGitHub = {
+                        val url = updateDialogState?.htmlUrl?.ifEmpty { ReleaseUpdater.REPO_RELEASES_WEB }
+                            ?: ReleaseUpdater.REPO_RELEASES_WEB
+                        openReleaseOnGitHub(url)
+                    },
+                    onDismissUpdateDialog = {
+                        if (updateDialogState?.downloading != true) {
+                            updateDialogState = null
                         }
                     },
                     onRunCompatCheck = {
@@ -388,6 +419,163 @@ class MainActivity : ComponentActivity() {
             launchQrScanner(clashId)
         } else {
             cameraPermLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun checkForUpdates() {
+        if (updateChecking) return
+        updateChecking = true
+        updateFeedback = "正在检查 GitHub 最新 Release…"
+        Thread({
+            val res = ReleaseUpdater.fetchLatestRelease(
+                ReleaseUpdater.DEFAULT_RELEASES_API,
+                installedVersionName
+            )
+            runOnUiThread {
+                updateChecking = false
+                if (!res.ok) {
+                    updateFeedback = "检查更新失败：${res.error}"
+                    return@runOnUiThread
+                }
+                val latest = res.latest
+                if (res.hasUpdate && latest != null) {
+                    updateFeedback = "发现新版本：${latest.tagName}"
+                    updateDialogState = UpdateDialogUiState(
+                        currentVersion = installedVersionName,
+                        tagName = latest.tagName,
+                        title = latest.name,
+                        releaseNotes = latest.body,
+                        htmlUrl = latest.htmlUrl,
+                        publishedAt = latest.publishedAt,
+                        prerelease = latest.prerelease,
+                        moduleAssetName = latest.moduleAssetName,
+                        moduleDownloadUrl = latest.moduleDownloadUrl,
+                        moduleSizeBytes = latest.moduleSizeBytes,
+                        targetFileName = ReleaseUpdater.buildDownloadFileName(latest)
+                    )
+                } else {
+                    val verLabel = installedVersionName.ifEmpty { "0.6.1-dev" }
+                    val remoteNote = if (latest != null && latest.tagName.isNotEmpty()) {
+                        "（GitHub 最新：${latest.tagName}）"
+                    } else ""
+                    updateFeedback = "当前已是最新版本 v$verLabel$remoteNote"
+                }
+            }
+        }, "release-update-check").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun startModuleDownload() {
+        val current = updateDialogState ?: return
+        if (current.downloading || current.moduleDownloadUrl.isEmpty()) return
+        val cancelFlag = AtomicBoolean(false)
+        activeDownloadCancel = cancelFlag
+        updateDialogState = current.copy(
+            downloading = true,
+            downloadedBytes = 0L,
+            totalBytes = current.moduleSizeBytes,
+            completedFileName = "",
+            downloadError = ""
+        )
+        Thread({
+            var pendingUri: Uri? = null
+            try {
+                val values = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, current.targetFileName)
+                    put(MediaStore.Downloads.MIME_TYPE, "application/zip")
+                    put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                    ?: throw IOException("无法在系统下载文件夹创建文件")
+                pendingUri = uri
+                contentResolver.openOutputStream(uri, "w").use { out ->
+                    if (out == null) throw IOException("无法打开下载文件写入流")
+                    ReleaseUpdater.downloadModuleToStream(
+                        current.moduleDownloadUrl,
+                        installedVersionName,
+                        current.moduleSizeBytes,
+                        out,
+                        cancelFlag
+                    ) { downloaded, total ->
+                        runOnUiThread {
+                            updateDialogState = updateDialogState?.let { s ->
+                                if (!s.downloading) s else s.copy(
+                                    downloadedBytes = downloaded,
+                                    totalBytes = if (total > 0L) total else s.totalBytes
+                                )
+                            }
+                        }
+                    }
+                }
+                val finalizeValues = ContentValues().apply {
+                    put(MediaStore.Downloads.IS_PENDING, 0)
+                }
+                contentResolver.update(uri, finalizeValues, null, null)
+                pendingUri = null
+
+                val savedName = queryDisplayName(uri) ?: current.targetFileName
+                runOnUiThread {
+                    if (activeDownloadCancel === cancelFlag) activeDownloadCancel = null
+                    updateDialogState = updateDialogState?.copy(
+                        downloading = false,
+                        completedFileName = savedName,
+                        downloadError = ""
+                    )
+                    updateFeedback = "模块已下载到 Download/$savedName"
+                }
+            } catch (e: Exception) {
+                if (pendingUri != null) {
+                    try {
+                        contentResolver.delete(pendingUri, null, null)
+                    } catch (_: Exception) {
+                    }
+                }
+                val msg = if (cancelFlag.get()) {
+                    "已取消下载"
+                } else {
+                    e.message?.takeIf { it.isNotBlank() } ?: e.javaClass.simpleName
+                }
+                runOnUiThread {
+                    if (activeDownloadCancel === cancelFlag) activeDownloadCancel = null
+                    updateDialogState = updateDialogState?.copy(
+                        downloading = false,
+                        completedFileName = "",
+                        downloadError = msg
+                    )
+                    updateFeedback = "模块下载未完成：$msg"
+                }
+            }
+        }, "release-module-download").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun cancelModuleDownload() {
+        activeDownloadCancel?.set(true)
+    }
+
+    private fun queryDisplayName(uri: Uri): String? {
+        return try {
+            contentResolver.query(uri, arrayOf(MediaStore.Downloads.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0)?.takeIf { it.isNotBlank() } else null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun openReleaseOnGitHub(url: String) {
+        val target = if (ReleaseUpdater.isTrustedGitHubUrl(url)) url else ReleaseUpdater.REPO_RELEASES_WEB
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (_: Exception) {
+            updateFeedback = "未找到可用的浏览器打开 GitHub 页面"
         }
     }
 
@@ -795,6 +983,9 @@ private fun MainShell(
     clashFeedback: String,
     connectionsFeedback: String,
     logFeedback: String,
+    updateChecking: Boolean,
+    updateFeedback: String,
+    updateDialogState: UpdateDialogUiState?,
     onPollController: () -> Unit,
     onPollConnections: () -> Unit,
     onToggleEnabled: (Boolean) -> Unit,
@@ -803,6 +994,11 @@ private fun MainShell(
     onSelectSimInterface: (String, String) -> Unit,
     onUseBuiltinTunForSlot: (Int, Int) -> Unit,
     onRefreshAll: () -> Unit,
+    onCheckUpdates: () -> Unit,
+    onDownloadModule: () -> Unit,
+    onCancelModuleDownload: () -> Unit,
+    onOpenReleaseGitHub: () -> Unit,
+    onDismissUpdateDialog: () -> Unit,
     onRunCompatCheck: () -> Unit,
     onFastReconnect: () -> Unit,
     onEmergencyRestore: () -> Unit,
@@ -918,7 +1114,10 @@ private fun MainShell(
                     else -> NetworkPage(
                         state = state,
                         logFeedback = logFeedback,
+                        updateChecking = updateChecking,
+                        updateFeedback = updateFeedback,
                         onRefreshAll = onRefreshAll,
+                        onCheckUpdates = onCheckUpdates,
                         onRunCompatCheck = onRunCompatCheck,
                         onFastReconnect = onFastReconnect,
                         onEmergencyRestore = onEmergencyRestore,
@@ -943,5 +1142,15 @@ private fun MainShell(
             pageBackdrop = pageBackdrop,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        if (updateDialogState != null) {
+            ReleaseUpdateDialog(
+                state = updateDialogState,
+                onDownloadModule = onDownloadModule,
+                onCancelDownload = onCancelModuleDownload,
+                onOpenGitHub = onOpenReleaseGitHub,
+                onDismiss = onDismissUpdateDialog
+            )
+        }
     }
 }

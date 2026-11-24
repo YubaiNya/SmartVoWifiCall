@@ -43,14 +43,37 @@ func TestValidateStrictAndDerivations(t *testing.T) {
 		t.Fatalf("expected sensitive fields masked: %+v", sanitized)
 	}
 
-	// Reject mainland SIM in strict mode
+	// Mainland SIM (MCC 460/461) is unlocked and passes strict validation
 	mainland := validSample()
 	mainland.MCC = "460"
 	mainland.MNC = "00"
 	mainland.IMSRealm = DeriveIMSRealm("460", "00")
 	mainland.IMSI = "460000000000001"
-	if err := mainland.Validate(true); err == nil {
-		t.Fatal("expected mainland SIM rejected in strict mode")
+	if err := mainland.Validate(true); err != nil {
+		t.Fatalf("expected mainland SIM accepted in strict mode, got: %v", err)
+	}
+
+	// O2 UK / giffgaff (23410) prefers 3GPP TS 23.003 @nai.epc first with @wlan fallback
+	giff := validSample()
+	giff.MCC = "234"
+	giff.MNC = "10"
+	giff.IMSRealm = DeriveIMSRealm("234", "10")
+	giff.IMSI = "234100000000001"
+	if err := giff.Validate(true); err != nil {
+		t.Fatalf("expected giffgaff config valid, got: %v", err)
+	}
+	cands := giff.CandidateEAPIdentities()
+	if len(cands) < 3 {
+		t.Fatalf("expected >=3 NAI candidates, got %d", len(cands))
+	}
+	if cands[0].Identity != "0234100000000001@nai.epc.mnc010.mcc234.3gppnetwork.org" {
+		t.Fatalf("unexpected primary giffgaff NAI: %s", cands[0].Identity)
+	}
+	if cands[1].Identity != "6234100000000001@nai.epc.mnc010.mcc234.3gppnetwork.org" {
+		t.Fatalf("unexpected secondary giffgaff EAP-AKA' NAI: %s", cands[1].Identity)
+	}
+	if cands[2].Identity != "0234100000000001@wlan.mnc010.mcc234.3gppnetwork.org" {
+		t.Fatalf("unexpected fallback giffgaff wlan NAI: %s", cands[2].Identity)
 	}
 
 	// Reject mismatched IMSI prefix

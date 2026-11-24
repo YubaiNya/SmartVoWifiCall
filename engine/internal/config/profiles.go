@@ -2,15 +2,16 @@ package config
 
 // CarrierHint describes known overseas carrier VoWiFi defaults for auto-tuning.
 type CarrierHint struct {
-	PLMN         string
-	Name         string
-	Region       string
-	StrictHomeIP bool
-	EPDGFQDN     string
+	PLMN            string
+	Name            string
+	Region          string
+	StrictHomeIP    bool
+	EPDGFQDN        string
+	PreferWLANRealm bool
 }
 
 var builtInCarrierHints = map[string]CarrierHint{
-	"45403":  {PLMN: "45403", Name: "3HK", Region: "HK", StrictHomeIP: true, EPDGFQDN: "wlan.three.com.hk"},
+	"45403":  {PLMN: "45403", Name: "3HK", Region: "HK", StrictHomeIP: true, EPDGFQDN: "wlan.three.com.hk", PreferWLANRealm: true},
 	"45400":  {PLMN: "45400", Name: "CSL/ClubSIM", Region: "HK", StrictHomeIP: true, EPDGFQDN: "epdg.epc.mnc000.mcc454.pub.3gppnetwork.org"},
 	"45419":  {PLMN: "45419", Name: "CSL/ClubSIM", Region: "HK", StrictHomeIP: true, EPDGFQDN: "epdg.epc.mnc019.mcc454.pub.3gppnetwork.org"},
 	"45412":  {PLMN: "45412", Name: "CMHK", Region: "HK", StrictHomeIP: true, EPDGFQDN: "epdg.epc.mnc012.mcc454.pub.3gppnetwork.org"},

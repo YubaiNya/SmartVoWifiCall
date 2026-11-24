@@ -48,6 +48,24 @@ stop_root_daemon() {
  fi
  rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" "$DAEMON_SOCK"
 }
+find_live_root_daemon() {
+ for cmdf in /proc/[0-9]*/cmdline; do
+  [ -r "$cmdf" ] || continue
+  cmdline=$(tr '\000' ' ' < "$cmdf" 2>/dev/null || :)
+  case "$cmdline" in
+   *com.smartvowificall.ims.root.RootDaemonMain*)
+    cand=${cmdf#/proc/}
+    cand=${cand%/cmdline}
+    [ -n "$cand" ] && [ "$cand" != "$$" ] && kill -0 "$cand" 2>/dev/null || continue
+    printf '%s' "$cand"
+    return 0
+    ;;
+  esac
+ done
+ return 1
+}
+daemon_cooldown=0
+daemon_fail_streak=0
 start_root_daemon() {
  uid=$(app_uid)
  mkdir -p "$DAEMON_DIR" "$BASE/run"
@@ -60,14 +78,42 @@ start_root_daemon() {
     chown "0:$uid" "$DAEMON_SOCK" 2>/dev/null || :
     chmod 0660 "$DAEMON_SOCK" 2>/dev/null || :
    fi
+   daemon_cooldown=0
+   daemon_fail_streak=0
    return 0
   fi
+ fi
+ live_pid=$(find_live_root_daemon 2>/dev/null || :)
+ if [ -n "$live_pid" ]; then
+  if [ -S "$DAEMON_SOCK" ]; then
+   live_start=$(proc_start "$live_pid" 2>/dev/null || :)
+   if [ -n "$live_start" ]; then
+    (umask 077; printf '%s\n' "$live_pid" > "$BASE/run/root-daemon.pid"; printf '%s %s\n' "$live_pid" "$live_start" > "$BASE/run/root-daemon.owner")
+   fi
+   if [ -n "$uid" ] && [ "$(stat -c '%u:%g' "$DAEMON_SOCK" 2>/dev/null || :)" != "0:$uid" ]; then
+    chown "0:$uid" "$DAEMON_SOCK" 2>/dev/null || :
+    chmod 0660 "$DAEMON_SOCK" 2>/dev/null || :
+   fi
+   daemon_cooldown=0
+   daemon_fail_streak=0
+  fi
+  return 0
+ fi
+ if [ "$daemon_cooldown" -gt 0 ]; then
+  daemon_cooldown=$((daemon_cooldown - 1))
+  return 0
  fi
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "$DAEMON_SOCK" "${uid:-}" >>"$BASE/run/root-daemon.log" 2>&1 &
  dpid=$!
  dstart=$(proc_start "$dpid" 2>/dev/null || :)
  if [ -n "$dstart" ]; then
   (umask 077; printf '%s\n' "$dpid" > "$BASE/run/root-daemon.pid"; printf '%s %s\n' "$dpid" "$dstart" > "$BASE/run/root-daemon.owner")
+ fi
+ daemon_fail_streak=$((daemon_fail_streak + 1))
+ if [ "$daemon_fail_streak" -ge 3 ]; then
+  daemon_cooldown=6
+ elif [ "$daemon_fail_streak" -ge 2 ]; then
+  daemon_cooldown=2
  fi
 }
 publisher_running() {

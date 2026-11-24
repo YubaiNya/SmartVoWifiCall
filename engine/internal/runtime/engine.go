@@ -41,13 +41,14 @@ type Engine struct {
 	rpcSrv   *rpc.Server
 	audioSrv *rpc.AudioServer
 
-	mu         sync.Mutex
-	imsState   string
-	tunState   string
-	epdgIP     string
-	localIP    string
-	pcscfIP    string
-	ikeClient  *ikev2.Client
+	mu                   sync.Mutex
+	imsState             string
+	tunState             string
+	epdgIP               string
+	localIP              string
+	pcscfIP              string
+	preferredAuthProfile int
+	ikeClient            *ikev2.Client
 	sipClient  *sip.Client
 	mediaSess  *media.Session
 	mediaCall  string
@@ -184,7 +185,7 @@ func (e *Engine) supervisorLoop() {
 }
 
 func (e *Engine) connectOnce() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 	defer cancel()
 
 	e.setStates("CONNECTING", "CONNECTING")
@@ -204,18 +205,56 @@ func (e *Engine) connectOnce() error {
 		nattAddr = epdgAddr
 	}
 
-	ikeCli, err := ikev2.Connect(ctx, ikev2.SessionConfig{
-		EPDGAddr:    epdgAddr,
-		NATTAddr:    nattAddr,
-		EAPIdentity: e.opts.Config.EffectiveEAPIdentity(),
-		APN:         "ims",
-		Slot:        e.opts.Config.Slot,
-		ICCID:       e.opts.Config.ICCID,
-		SimAuth:     e.simAuth,
-		Logger:      e.logger,
-	})
-	if err != nil {
+	candidates := e.opts.Config.CandidateEAPIdentities()
+	e.mu.Lock()
+	prefIdx := e.preferredAuthProfile
+	e.mu.Unlock()
+	if prefIdx < 0 || prefIdx >= len(candidates) {
+		prefIdx = 0
+	}
+	order := make([]int, 0, len(candidates))
+	order = append(order, prefIdx)
+	for i := range candidates {
+		if i != prefIdx {
+			order = append(order, i)
+		}
+	}
+
+	var ikeCli *ikev2.Client
+	var lastErr error
+	for step, idx := range order {
+		cand := candidates[idx]
+		cli, err := ikev2.Connect(ctx, ikev2.SessionConfig{
+			EPDGAddr:    epdgAddr,
+			NATTAddr:    nattAddr,
+			EAPIdentity: cand.Identity,
+			APN:         cand.APN,
+			IMEI:        e.opts.Config.IMEI,
+			ProfileTag:  cand.Tag,
+			Slot:        e.opts.Config.Slot,
+			ICCID:       e.opts.Config.ICCID,
+			SimAuth:     e.simAuth,
+			Logger:      e.logger,
+		})
+		if err == nil {
+			ikeCli = cli
+			e.mu.Lock()
+			e.preferredAuthProfile = idx
+			e.mu.Unlock()
+			e.logger.Info("engine", "IKEv2 session established", map[string]any{
+				"profile": cand.Tag,
+			})
+			break
+		}
+		lastErr = err
+		if ikev2.IsAuthFailed(err) && step+1 < len(order) {
+			e.logger.Warn("engine", fmt.Sprintf("IKE_AUTH rejected on profile=%s (%v); trying next 3GPP NAI profile", cand.Tag, err), nil)
+			continue
+		}
 		return err
+	}
+	if ikeCli == nil {
+		return lastErr
 	}
 
 	cfgRes := ikeCli.Config()

@@ -38,8 +38,15 @@ const (
 	PayloadCP     byte = 47
 	PayloadEAP    byte = 48
 
+	NotifyAuthenticationFailed = 24
+	NotifyInitialContact       = 16384
 	NotifyNATDetectionSourceIP = 16388
 	NotifyNATDetectionDestIP   = 16389
+	NotifyMOBIKESupported      = 16396
+	NotifyDeviceIdentity       = 41101 // 3GPP TS 24.302 §8.2.9.2
+
+	DeviceIdentityTypeIMEI   byte = 1
+	DeviceIdentityTypeIMEISV byte = 2
 
 	CFGRequest byte = 1
 	CFGReply   byte = 2
@@ -583,4 +590,61 @@ func ParseCFGReply(body []byte) (*CFGResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// ParseDeviceIdentityRequest inspects a 3GPP TS 24.302 §8.2.9.2 DEVICE_IDENTITY (41101)
+// notify data payload sent by the ePDG and returns the requested identity type (IMEI=1 or IMEISV=2).
+func ParseDeviceIdentityRequest(data []byte) byte {
+	// Format: [lenHi, lenLo, identityType, ...]
+	if len(data) >= 3 && (data[2] == DeviceIdentityTypeIMEI || data[2] == DeviceIdentityTypeIMEISV) {
+		return data[2]
+	}
+	return DeviceIdentityTypeIMEI
+}
+
+// BuildDeviceIdentityNotify encodes an IMEI/IMEISV into a 3GPP TS 24.302 §8.2.9.2
+// DEVICE_IDENTITY (41101) IKEv2 Notify payload body (ProtocolID=0, SPISize=0, Type=41101).
+func BuildDeviceIdentityNotify(imei string, idType byte) ([]byte, bool) {
+	digits := make([]byte, 0, 16)
+	for i := 0; i < len(imei); i++ {
+		if imei[i] >= '0' && imei[i] <= '9' {
+			digits = append(digits, imei[i]-'0')
+		}
+	}
+	if len(digits) < 14 {
+		return nil, false
+	}
+	if idType != DeviceIdentityTypeIMEISV {
+		idType = DeviceIdentityTypeIMEI
+	}
+	var tbcd [8]byte
+	if idType == DeviceIdentityTypeIMEISV {
+		// 16 digits: TAC(8) + SNR(6) + SV(2). Default SV="01" if only 14-15 IMEI digits provided.
+		var d16 [16]byte
+		if len(digits) >= 16 {
+			copy(d16[:], digits[:16])
+		} else {
+			copy(d16[:14], digits[:14])
+			d16[14] = 0
+			d16[15] = 1
+		}
+		for i := 0; i < 8; i++ {
+			tbcd[i] = (d16[2*i+1] << 4) | (d16[2*i] & 0x0F)
+		}
+	} else {
+		// 15 digits IMEI: octet i packs (digit 2i+1 << 4) | digit 2i; final high nibble is 0xF filler.
+		if len(digits) < 15 {
+			return nil, false
+		}
+		for i := 0; i < 7; i++ {
+			tbcd[i] = (digits[2*i+1] << 4) | (digits[2*i] & 0x0F)
+		}
+		tbcd[7] = 0xF0 | (digits[14] & 0x0F)
+	}
+	// Notify data: Length(2 bytes big-endian = 1 + 8 = 9) + IdentityType(1) + TBCD(8)
+	data := make([]byte, 2+1+len(tbcd))
+	binary.BigEndian.PutUint16(data[0:2], uint16(1+len(tbcd)))
+	data[2] = idType
+	copy(data[3:], tbcd[:])
+	return buildNotify(NotifyDeviceIdentity, data), true
 }

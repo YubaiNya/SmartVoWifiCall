@@ -29,7 +29,10 @@ import org.json.JSONObject;
  */
 public final class RootDaemonMain {
   private static final String APP_PACKAGE = "com.smartvowificall.ims";
-  private static final String LOCK_PATH = "/data/adb/smartvowificall_ims/run/root-daemon.lock";
+  private static final String RUN_DIR = "/data/adb/smartvowificall_ims/run";
+  private static final String LOCK_PATH = RUN_DIR + "/root-daemon.lock";
+  private static final String PID_PATH = RUN_DIR + "/root-daemon.pid";
+  private static final String OWNER_PATH = RUN_DIR + "/root-daemon.owner";
   private static final AtomicLong REQUEST_COUNT = new AtomicLong();
   private static volatile long startedAtMs;
   private static volatile int cachedAppUid = -1;
@@ -46,6 +49,7 @@ public final class RootDaemonMain {
         // Another RootDaemonMain instance already holds the lock; exit cleanly.
         System.exit(0);
       }
+      writeOwnerFiles();
       if (Looper.myLooper() == null) Looper.prepareMainLooper();
       // Pre-initialize ActivityThread.systemMain() on the main Looper thread so worker threads
       // serving RootIdentityMain requests never fail with "Can't create handler inside thread...".
@@ -95,6 +99,52 @@ public final class RootDaemonMain {
     } catch (Throwable t) {
       System.err.println("RootDaemonMain lock error: " + t.getClass().getSimpleName());
       return false;
+    }
+  }
+
+  /**
+   * Publishes the authoritative PID + /proc/self/stat start-time token for the lock-holding
+   * daemon so service.sh and RootSupervisor always recognize this instance and never spawn
+   * redundant ART VMs every patrol tick.
+   */
+  private static void writeOwnerFiles() {
+    try {
+      int pid = Process.myPid();
+      String startTime = readSelfProcStartTime();
+      if (startTime == null || startTime.isEmpty()) return;
+      File dir = new File(RUN_DIR);
+      if (!dir.isDirectory()) {
+        dir.mkdirs();
+        Os.chmod(dir.getAbsolutePath(), 0700);
+      }
+      writeAtomic0600(new File(PID_PATH), pid + "\n");
+      writeAtomic0600(new File(OWNER_PATH), pid + " " + startTime + "\n");
+    } catch (Throwable ignored) {}
+  }
+
+  private static String readSelfProcStartTime() {
+    try (BufferedReader r = new BufferedReader(
+        new InputStreamReader(new java.io.FileInputStream("/proc/self/stat"), StandardCharsets.UTF_8))) {
+      String line = r.readLine();
+      if (line == null) return "";
+      int close = line.lastIndexOf(") ");
+      if (close < 0 || close + 2 >= line.length()) return "";
+      String[] fields = line.substring(close + 2).trim().split("\\s+");
+      return fields.length >= 20 ? fields[19] : "";
+    } catch (Throwable ignored) {
+      return "";
+    }
+  }
+
+  private static void writeAtomic0600(File target, String content) throws Exception {
+    File tmp = new File(target.getAbsolutePath() + ".tmp." + Process.myPid());
+    try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+      fos.write(content.getBytes(StandardCharsets.UTF_8));
+      fos.getFD().sync();
+    }
+    Os.chmod(tmp.getAbsolutePath(), 0600);
+    if (!tmp.renameTo(target)) {
+      tmp.delete();
     }
   }
 

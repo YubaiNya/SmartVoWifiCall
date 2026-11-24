@@ -135,9 +135,43 @@ func (c *Config) EffectiveIMPU() string {
 	return fmt.Sprintf("sip:%s@%s", c.IMSI, c.IMSRealm)
 }
 
-// EffectiveEAPIdentity returns the 3GPP NAI identity for EAP-AKA / EAP-AKA' (0<IMSI>@wlan...).
+// EAPIdentityCandidate describes one 3GPP TS 23.003 IKE_AUTH IDi/IDr combination.
+type EAPIdentityCandidate struct {
+	Identity string // 0<IMSI>@nai.epc... | 6<IMSI>@nai.epc... | 0<IMSI>@wlan...
+	APN      string // "ims" or carrier IMS realm FQDN fallback
+	Tag      string // non-PII diagnostic tag for logs
+}
+
+// CandidateEAPIdentities returns ordered 3GPP NAI/APN candidates for automatic ePDG negotiation.
+// Carriers known to prefer legacy Rel-6 @wlan (e.g. 3HK) try @wlan first; standard 3GPP Rel-8+
+// EPC carriers (e.g. O2 UK / giffgaff 23410) try @nai.epc first and fall back automatically.
+func (c *Config) CandidateEAPIdentities() []EAPIdentityCandidate {
+	mnc3 := PadMNC3(c.MNC)
+	naiEpc0 := fmt.Sprintf("0%s@nai.epc.mnc%s.mcc%s.3gppnetwork.org", c.IMSI, mnc3, c.MCC)
+	naiEpc6 := fmt.Sprintf("6%s@nai.epc.mnc%s.mcc%s.3gppnetwork.org", c.IMSI, mnc3, c.MCC)
+	wlan0 := fmt.Sprintf("0%s@wlan.mnc%s.mcc%s.3gppnetwork.org", c.IMSI, mnc3, c.MCC)
+	wlan6 := fmt.Sprintf("6%s@wlan.mnc%s.mcc%s.3gppnetwork.org", c.IMSI, mnc3, c.MCC)
+	imsFQDN := DeriveIMSRealm(c.MCC, c.MNC)
+
+	if hint, ok := LookupCarrierHint(c.MCC, c.MNC); ok && hint.PreferWLANRealm {
+		return []EAPIdentityCandidate{
+			{Identity: wlan0, APN: "ims", Tag: "0@wlan/ims"},
+			{Identity: naiEpc0, APN: "ims", Tag: "0@nai.epc/ims"},
+			{Identity: naiEpc6, APN: "ims", Tag: "6@nai.epc/ims"},
+			{Identity: wlan6, APN: "ims", Tag: "6@wlan/ims"},
+		}
+	}
+	return []EAPIdentityCandidate{
+		{Identity: naiEpc0, APN: "ims", Tag: "0@nai.epc/ims"},
+		{Identity: naiEpc6, APN: "ims", Tag: "6@nai.epc/ims"},
+		{Identity: wlan0, APN: "ims", Tag: "0@wlan/ims"},
+		{Identity: naiEpc0, APN: imsFQDN, Tag: "0@nai.epc/ims-fqdn"},
+	}
+}
+
+// EffectiveEAPIdentity returns the primary 3GPP NAI identity for EAP-AKA / EAP-AKA'.
 func (c *Config) EffectiveEAPIdentity() string {
-	return fmt.Sprintf("0%s@wlan.mnc%s.mcc%s.3gppnetwork.org", c.IMSI, PadMNC3(c.MNC), c.MCC)
+	return c.CandidateEAPIdentities()[0].Identity
 }
 
 // Validate checks all strict invariants required by RootIdentityMain config-verify --strict.
@@ -162,9 +196,6 @@ func (c *Config) Validate(strict bool) error {
 	}
 	if c.MNCLen != len(c.MNC) {
 		return &ValidationError{Code: "MNC_LENGTH_MISMATCH", Message: "mncLen does not match mnc"}
-	}
-	if strict && (c.MCC == "460" || c.MCC == "461") {
-		return &ValidationError{Code: "MAINLAND_SIM_FORBIDDEN", Message: "mainland SIM excluded"}
 	}
 	expectedRealm := DeriveIMSRealm(c.MCC, c.MNC)
 	if c.IMSRealm != expectedRealm {

@@ -21,15 +21,40 @@ import (
 
 // SessionConfig holds parameters for establishing an RFC 7296 + EAP-AKA ePDG tunnel.
 type SessionConfig struct {
-	EPDGAddr     string // host:port (default port 500 or 4500 for NAT-T)
-	NATTAddr     string // optional explicit NAT-T port (default same host port 4500)
-	EAPIdentity  string // 0<IMSI>@wlan.mnc<MNC3>.mcc<MCC>.3gppnetwork.org
-	APN          string // usually "ims"
-	Slot         int
-	ICCID        string
-	SimAuth      simauth.Provider
-	DPDInterval  time.Duration
-	Logger       *diag.Logger
+	EPDGAddr    string // host:port (default port 500 or 4500 for NAT-T)
+	NATTAddr    string // optional explicit NAT-T port (default same host port 4500)
+	EAPIdentity string // 0<IMSI>@nai.epc.mnc<MNC3>.mcc<MCC>.3gppnetwork.org or @wlan...
+	APN         string // usually "ims"
+	IMEI        string // 15-digit IMEI for 3GPP TS 24.302 DEVICE_IDENTITY (41101)
+	ProfileTag  string // non-PII diagnostic tag for NAI/APN profile logging
+	Slot        int
+	ICCID       string
+	SimAuth     simauth.Provider
+	DPDInterval time.Duration
+	Logger      *diag.Logger
+}
+
+// AuthRejectedError reports an ePDG IKE_AUTH rejection carrying RFC 7296 notify codes (e.g. 24).
+type AuthRejectedError struct {
+	Notifies []uint16
+}
+
+func (e *AuthRejectedError) Error() string {
+	return fmt.Sprintf("IKE_AUTH_MISSING_EAP_NOTIFIES_%v", e.Notifies)
+}
+
+// IsAuthFailed reports whether err is a pre-EAP IKE_AUTH rejection (Notify 24 AUTHENTICATION_FAILED).
+func IsAuthFailed(err error) bool {
+	var re *AuthRejectedError
+	if !errors.As(err, &re) {
+		return false
+	}
+	for _, n := range re.Notifies {
+		if n == NotifyAuthenticationFailed {
+			return true
+		}
+	}
+	return false
 }
 
 // Client manages an active IKEv2 SA + userspace IPsec ESP Tunnel over NAT-T UDP.
@@ -405,11 +430,13 @@ func (c *Client) handshake(ctx context.Context) error {
 
 	auth1Payloads := []Payload{
 		{Type: PayloadIDi, Body: idiBody},
+		{Type: PayloadNotify, Body: buildNotify(NotifyInitialContact, nil)},
 		{Type: PayloadIDr, Body: idrBody},
 		{Type: PayloadCP, Body: BuildCFGRequest()},
 		{Type: PayloadSA, Body: BuildMultiChildESPProposal(localChildSPI)},
 		{Type: PayloadTSi, Body: BuildTSAllIPv4()},
 		{Type: PayloadTSr, Body: BuildTSAllIPv4()},
+		{Type: PayloadNotify, Body: buildNotify(NotifyMOBIKESupported, nil)},
 	}
 	c.msgID = 1
 	auth1Req, err := EncodeEncryptedPacket(Header{
@@ -431,9 +458,18 @@ func (c *Client) handshake(ctx context.Context) error {
 		return fmt.Errorf("IKE_AUTH_1_DECRYPT: %w", err)
 	}
 
-	// 3. EAP-AKA / EAP-AKA' loop (supports AT_AUTS resync retries)
+	// 3. EAP-AKA / EAP-AKA' loop (supports AT_AUTS resync retries & 3GPP DEVICE_IDENTITY 41101)
 	var msk []byte
+	deviceIDSent := false
 	for round := 0; round < 6; round++ {
+		var deviceIDReqType byte
+		for _, p := range respInner {
+			if p.Type == PayloadNotify {
+				if nt, ndata, ok := ParseNotify(p.Body); ok && nt == NotifyDeviceIdentity {
+					deviceIDReqType = ParseDeviceIdentityRequest(ndata)
+				}
+			}
+		}
 		eapP := FindPayload(respInner, PayloadEAP)
 		if eapP == nil {
 			var notifies []uint16
@@ -444,7 +480,7 @@ func (c *Client) handshake(ctx context.Context) error {
 					}
 				}
 			}
-			return fmt.Errorf("IKE_AUTH_MISSING_EAP_NOTIFIES_%v", notifies)
+			return &AuthRejectedError{Notifies: notifies}
 		}
 		if len(eapP.Body) < 4 {
 			return errors.New("IKE_EAP_SHORT")
@@ -534,6 +570,17 @@ func (c *Client) handshake(ctx context.Context) error {
 			}
 		}
 
+		nextPayloads := []Payload{{Type: PayloadEAP, Body: eapReply}}
+		if deviceIDReqType != 0 && !deviceIDSent && c.cfg.IMEI != "" {
+			if devNotify, ok := BuildDeviceIdentityNotify(c.cfg.IMEI, deviceIDReqType); ok {
+				nextPayloads = append(nextPayloads, Payload{Type: PayloadNotify, Body: devNotify})
+				deviceIDSent = true
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("attached 3GPP DEVICE_IDENTITY notify (type=%d)", deviceIDReqType), nil)
+				}
+			}
+		}
+
 		c.msgID++
 		nextReq, err := EncodeEncryptedPacket(Header{
 			SPIi:      c.spii,
@@ -541,7 +588,7 @@ func (c *Client) handshake(ctx context.Context) error {
 			Exchange:  ExchangeIKEAuth,
 			Flags:     FlagInitiator,
 			MessageID: c.msgID,
-		}, []Payload{{Type: PayloadEAP, Body: eapReply}}, c.keys, true)
+		}, nextPayloads, c.keys, true)
 		if err != nil {
 			return err
 		}

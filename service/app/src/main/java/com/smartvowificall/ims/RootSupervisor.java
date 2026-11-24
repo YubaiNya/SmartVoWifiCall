@@ -14,10 +14,10 @@ import java.util.concurrent.atomic.AtomicLong;
 import org.json.*;
 final class RootSupervisor {
   static final String MODULE = "/data/adb/modules/smartvowificall";
+  private static final AtomicLong LAST_DAEMON_BOOTSTRAP_MS = new AtomicLong();
   final Context context;
   final AtomicLong commandCount = new AtomicLong();
   final AtomicLong daemonCallCount = new AtomicLong();
-  private final AtomicLong lastDaemonBootstrapMs = new AtomicLong();
   RootSupervisor(Context context) {
     this.context = context;
   }
@@ -147,18 +147,25 @@ final class RootSupervisor {
 
   private void triggerDaemonBootstrapAsync() {
     long now = System.currentTimeMillis();
-    long prev = lastDaemonBootstrapMs.get();
-    if (now - prev < 30_000L || !lastDaemonBootstrapMs.compareAndSet(prev, now)) return;
+    long prev = LAST_DAEMON_BOOTSTRAP_MS.get();
+    if (now - prev < 30_000L || !LAST_DAEMON_BOOTSTRAP_MS.compareAndSet(prev, now)) return;
     Thread t = new Thread(() -> {
       try {
         int myUid = android.os.Process.myUid();
         String apk = context.getApplicationInfo().sourceDir;
-        String cmd = "BASE=/data/adb/smartvowificall_ims; mkdir -p \"$BASE/run\" /data/local/tmp/smartvowificall; "
+        String sock = quote(RootDaemonProtocol.DEFAULT_SOCKET_PATH);
+        String cmd = "BASE=/data/adb/smartvowificall_ims; SOCK=" + sock + "; UID=" + myUid + "; "
+            + "mkdir -p \"$BASE/run\" /data/local/tmp/smartvowificall; "
             + "chmod 0711 /data/local/tmp/smartvowificall; "
+            + "alive=0; for c in /proc/[0-9]*/cmdline; do [ -r \"$c\" ] || continue; "
+            + "case \"$(tr '\\000' ' ' < \"$c\" 2>/dev/null)\" in "
+            + "*com.smartvowificall.ims.root.RootDaemonMain*) alive=1; break;; esac; done; "
+            + "if [ \"$alive\" = 1 ] && [ -S \"$SOCK\" ]; then "
+            + "chown \"0:$UID\" \"$SOCK\" 2>/dev/null || :; chmod 0660 \"$SOCK\" 2>/dev/null || :; "
+            + "elif [ \"$alive\" = 0 ]; then "
             + "setsid env CLASSPATH=" + quote(apk)
             + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "
-            + quote(RootDaemonProtocol.DEFAULT_SOCKET_PATH) + " " + myUid
-            + " >>\"$BASE/run/root-daemon.log\" 2>&1 </dev/null &";
+            + "$SOCK $UID >>\"$BASE/run/root-daemon.log\" 2>&1 </dev/null & fi";
         run(cmd);
       } catch (Throwable ignored) {}
     }, "root-daemon-bootstrap");
@@ -418,13 +425,16 @@ final class RootSupervisor {
   }
   String collectRootLogs() throws Exception {
     String script = "echo '=== PROCESSES ===';"
-        + "ps -A 2>/dev/null | grep -iE 'smartvowifi|vowifi-engine|mihomo' || true;"
+        + "ps -Af 2>/dev/null | grep -iE 'smartvowifi|vowifi-engine|mihomo|RootDaemon|RootSimAuth|RootNetwork|service\\.sh' | grep -v grep || true;"
         + "echo '=== IMS OVERRIDES ===';"
         + "echo \"slot0=$(cmd phone ims get-ims-service -s 0 -c -f 1 2>/dev/null || true)\";"
         + "echo \"slot1=$(cmd phone ims get-ims-service -s 1 -c -f 1 2>/dev/null || true)\";"
         + "echo '=== RADIO & IMS JOURNALS ===';"
         + "for f in /data/adb/smartvowificall_ims/radio/*.json /data/adb/smartvowificall_ims/ims/*.json; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; cat \"$f\"; echo; }; done;"
+        + "echo '=== DAEMON & SIM-AUTH LOGS (TAIL 16KB) ===';"
+        + "for f in /data/adb/smartvowificall_ims/run/root-daemon.log /data/adb/smartvowificall_ims/run/sim-auth.log; do "
+        + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 16384 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== CLASH / MIHOMO LOGS (TAIL 32KB) ===';"
         + "for f in /data/adb/smartvowificall_ims/clash/*.log /data/adb/smartvowificall_ims/clash1/*.log; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 32768 \"$f\" 2>/dev/null || true; echo; }; done;"
@@ -435,7 +445,7 @@ final class RootSupervisor {
         + "for f in /data/adb/smartvowificall_ims/logs/*/*.log /data/adb/smartvowificall_ims/logs/*/diagnostic.jsonl; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== LOGCAT (FILTERED TAIL 400) ===';"
-        + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|ImsResolver|ImsServiceController' | tail -n 400 || true";
+        + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|RootDaemon|RootSimAuth|ImsResolver|ImsServiceController' | tail -n 400 || true";
     return run(script);
   }
   String collectClashHttpTrace() throws Exception {

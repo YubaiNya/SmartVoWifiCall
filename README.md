@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.0--dev-0071E3?style=flat" alt="Release v0.6.0-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.1--dev-0071E3?style=flat" alt="Release v0.6.1-dev"></a>
   <img src="https://img.shields.io/badge/Android-14%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 14-17 Root">
   <img src="https://img.shields.io/badge/Engine-Pure%20Go%20Self--Owned-00ADD8?style=flat&logo=go&logoColor=white" alt="Pure Go Self-Owned Engine">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
@@ -130,17 +130,19 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 
 > 完整更新记录同步维护于 [UpLog.md](./UpLog.md)（详细技术验证见 [VERSION_HISTORY.md](./VERSION_HISTORY.md)）。
 
-### `v0.6.0-dev`（2026-11-25）— 双卡并发、双内置 Clash 内核与全平台兼容修复
+### `v0.6.1-dev`（2026-11-25）— 应用内更新直链下载、扫码订阅与欧美 ePDG 兼容升级
 
-- **解除国内外卡限制 & 双卡同时 VoWiFi**：不限大陆卡与海外卡，卡槽 1 / 卡槽 2 各自拥有独立 VoWiFi 开关、独立通话/短信开关、实时状态与节点展示，支持双卡并发注册 VoWiFi。
-- **总开关省电停机与状态恢复**：关闭总开关立即停掉全部后端引擎、恢复原厂蜂窝/IMS 并记住停止前两个 Clash 内核状态后全部停机省电；重新打开总开关自动恢复停止前的内核开关与节点。
-- **双内置 Clash 独立内核（`wfctun0` / `wfctun1`）**：双独立 Linux 网络命名空间与独立端口（`19090` / `19091`），均由手动开关独立启停、自动绕开系统 `tun0` VPN，内核 2 支持一键复制内核 1 配置。
-- **老基带/单卡兼容、SELinux 与遥测上传全面修复**：修复单卡/SM8250 等设备 `RADIO_COMMAND_REJECTED` 关蜂窝回退；补全 Android 17 / `untrusted_app` 的 `sepolicy.rule` 与 `priv-app` 自检；修复遥测上传 `EPIPE (IOException)`、超 512 KB 裁剪、DNS 重试与 `/proxies` 节点名脱敏。
+- **应用内检查更新 & 模块直链下载**：「网络」页新增「检查更新」，发现新 Release 自动弹窗展示版本号与更新说明，支持直接下载模块 ZIP 到系统 `Download/` 文件夹（不经浏览器，带实时进度、ZIP 校验与取消）或一键前往 GitHub。
+- **内置 Clash 摄像头 / 相册扫码订阅**：内核 1 / 内核 2 均支持 CameraX + 离线 ZXing 扫码与相册选图导入订阅（支持 `http(s)://`、`clash://`、`mihomo://`、`flclash://`、`sub://`）。
+- **Go 引擎 3GPP IKEv2 兼容升级 & 全卡校验对齐**：支持 `@nai.epc...` / EAP-AKA' / `@wlan...` 自动协商与缓存（3HK 1.72 秒冷启无回归，适配 O2 UK / giffgaff 等欧美 ePDG），补齐 `INITIAL_CONTACT` / `MOBIKE_SUPPORTED` / 3GPP `DEVICE_IDENTITY (41101)`，并移除 Go 引擎残留的大陆卡 `MAINLAND_SIM_FORBIDDEN` 限制。
+- **修复 `RootDaemonMain` 每 5 秒重复拉起**：守护进程抢锁后原子发布权威 PID/Owner，根治 `service.sh` 巡检误判反复启动 ART VM 的问题，并将守护进程日志纳入遥测。
 
 <details>
-<summary><strong>查看历史版本更新（v0.5.0-dev → v0.1.0-dev，同步自 UpLog.md）</strong></summary>
+<summary><strong>查看历史版本更新（v0.6.0-dev → v0.1.0-dev，同步自 UpLog.md）</strong></summary>
 
 <br>
+
+- **`v0.6.0-dev`（2026-11-25）**：解除国内外卡限制并支持双卡并发 VoWiFi；总开关省电停机与停止前 Clash 状态自动恢复；新增双内置 Clash 独立内核（`wfctun0` / `wfctun1`）；修复单卡/SM8250 `RADIO_COMMAND_REJECTED`、Android 17 `sepolicy.rule` 与遥测上传 `EPIPE`/大包裁剪/节点名脱敏。
 
 - **`v0.5.0-dev`（2026-11-24）**：底层协议栈 100% 纯 Go 自研（零 SoftVoWiFi 依赖，待机 ~1.2 MB RSS）；内置 `mihomo` 通过 `fwmark 0x20000` 自动绕开系统 `tun0`（3HK 冷启动注册 1.78 秒）；新增常驻 `RootDaemonMain`、跨基带 SIM AKA（高通 QRTR + 天玑/Tensor/Exynos Binder/APDU）、Android 14–17 适配与自检、RFC 7296 DPD / 断链秒下图标 / RTP 重同步 / 连续拨号修复、硬件 AEC/NS/AGC、快捷磁贴与 25 家运营商适配库。
 

@@ -1,5 +1,7 @@
 package com.smartvowificall.ims
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -9,9 +11,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -40,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.smartvowificall.ims.clash.ClashConfig
 import com.smartvowificall.ims.network.InterfaceSnapshot
 import top.yukonga.miuix.kmp.basic.HorizontalDivider
@@ -149,6 +154,26 @@ data class CompatItemUi(
     val label: String,
     val status: String,
     val detail: String
+)
+
+@Immutable
+data class UpdateDialogUiState(
+    val currentVersion: String,
+    val tagName: String,
+    val title: String,
+    val releaseNotes: String,
+    val htmlUrl: String,
+    val publishedAt: String,
+    val prerelease: Boolean,
+    val moduleAssetName: String,
+    val moduleDownloadUrl: String,
+    val moduleSizeBytes: Long,
+    val targetFileName: String,
+    val downloading: Boolean = false,
+    val downloadedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val completedFileName: String = "",
+    val downloadError: String = ""
 )
 
 @Immutable
@@ -1690,7 +1715,10 @@ private fun ConnectionItemCard(
 fun NetworkPage(
     state: AppUiState,
     logFeedback: String,
+    updateChecking: Boolean,
+    updateFeedback: String,
     onRefreshAll: () -> Unit,
+    onCheckUpdates: () -> Unit,
     onRunCompatCheck: () -> Unit,
     onFastReconnect: () -> Unit,
     onEmergencyRestore: () -> Unit,
@@ -1732,7 +1760,7 @@ fun NetworkPage(
             ) {
                 StatusPill(label = "网络信息", color = p.accentGreen)
                 StatusPill(
-                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.6.0-dev",
+                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.6.1-dev",
                     color = p.accentBlue,
                     showDot = false
                 )
@@ -1761,12 +1789,29 @@ fun NetworkPage(
                 )
             }
             Spacer(Modifier.height(12.dp))
-            ApplePillButton(
-                text = "刷新网络信息",
-                onClick = onRefreshAll,
-                primary = false,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ApplePillButton(
+                    text = "刷新网络信息",
+                    onClick = onRefreshAll,
+                    primary = false,
+                    modifier = Modifier.weight(1f)
+                )
+                ApplePillButton(
+                    text = if (updateChecking) "检查更新中…" else "检查更新",
+                    onClick = onCheckUpdates,
+                    primary = true,
+                    enabled = !updateChecking,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        if (updateFeedback.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            FeedbackBanner(text = updateFeedback)
         }
 
         Spacer(Modifier.height(16.dp))
@@ -2180,6 +2225,306 @@ private fun connectionStateLabel(state: String): String = when (state) {
     "BACKOFF" -> "重试中"
     "UNKNOWN" -> "未知"
     else -> state
+}
+
+@Composable
+fun ReleaseUpdateDialog(
+    state: UpdateDialogUiState,
+    onDownloadModule: () -> Unit,
+    onCancelDownload: () -> Unit,
+    onOpenGitHub: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val p = LocalApplePalette.current
+    val curLabel = state.currentVersion.trim().let {
+        if (it.isEmpty()) "" else if (it.startsWith("v", ignoreCase = true)) it else "v$it"
+    }
+    val dateLabel = remember(state.publishedAt) {
+        if (state.publishedAt.length >= 10) state.publishedAt.substring(0, 10) else state.publishedAt
+    }
+    val rawProgress = if (state.totalBytes > 0L) {
+        (state.downloadedBytes.toFloat() / state.totalBytes.toFloat()).coerceIn(0f, 1f)
+    } else 0f
+    val animProgress by animateFloatAsState(
+        targetValue = rawProgress,
+        animationSpec = tween(durationMillis = 120),
+        label = "module-dl-progress"
+    )
+
+    Dialog(
+        onDismissRequest = {
+            if (!state.downloading) onDismiss()
+        },
+        properties = DialogProperties(
+            dismissOnBackPress = !state.downloading,
+            dismissOnClickOutside = !state.downloading
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(24.dp))
+                .background(p.card)
+                .border(0.75.dp, p.cardBorder, RoundedCornerShape(24.dp))
+                .padding(20.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "发现新版本",
+                        color = p.textPrimary,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatusPill(
+                            label = if (curLabel.isNotEmpty()) "$curLabel → ${state.tagName}" else state.tagName,
+                            color = p.accentBlue,
+                            showDot = false
+                        )
+                        if (state.prerelease) {
+                            StatusPill(
+                                label = "预发布",
+                                color = p.accentOrange,
+                                showDot = false
+                            )
+                        }
+                    }
+                }
+                if (!state.downloading) {
+                    Box(
+                        modifier = Modifier
+                            .size(30.dp)
+                            .clip(CircleShape)
+                            .background(p.cardSubtle)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = MiuixIcons.Close,
+                            contentDescription = "关闭",
+                            tint = p.textSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+
+            if (state.title.isNotEmpty() || dateLabel.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = buildString {
+                        if (state.title.isNotEmpty()) append(state.title)
+                        if (dateLabel.isNotEmpty()) {
+                            if (isNotEmpty()) append(" · ")
+                            append(dateLabel)
+                        }
+                    },
+                    color = p.textSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "更新内容",
+                color = p.textPrimary,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(Modifier.height(6.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 84.dp, max = 240.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(p.cardSubtle)
+                    .padding(12.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                Text(
+                    text = state.releaseNotes.ifEmpty { "此版本未附带更新说明，可前往 GitHub 查看完整变更。" },
+                    color = p.textPrimary,
+                    fontSize = 12.5.sp,
+                    lineHeight = 19.sp
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        when {
+                            state.completedFileName.isNotEmpty() -> p.accentGreen.copy(alpha = if (p.dark) 0.18f else 0.10f)
+                            state.downloadError.isNotEmpty() -> p.accentRed.copy(alpha = if (p.dark) 0.18f else 0.10f)
+                            else -> p.cardSubtle
+                        }
+                    )
+                    .padding(horizontal = 12.dp, vertical = 10.dp)
+            ) {
+                when {
+                    state.downloading -> {
+                        val pct = if (state.totalBytes > 0L) {
+                            ((state.downloadedBytes * 100L) / state.totalBytes).coerceIn(0L, 100L)
+                        } else -1L
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "正在直接下载模块…",
+                                color = p.accentBlue,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = if (pct >= 0L) "$pct%" else formatBytes(state.downloadedBytes),
+                                color = p.accentBlue,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(p.cardBorder)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .fillMaxWidth(if (state.totalBytes > 0L) animProgress else 0.35f)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(p.accentBlue)
+                            )
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = if (state.totalBytes > 0L) {
+                                "${formatBytes(state.downloadedBytes)} / ${formatBytes(state.totalBytes)} · Download/${state.targetFileName}"
+                            } else {
+                                "已下载 ${formatBytes(state.downloadedBytes)} · Download/${state.targetFileName}"
+                            },
+                            color = p.textSecondary,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                    state.completedFileName.isNotEmpty() -> {
+                        Text(
+                            text = "模块已直接保存到下载文件夹",
+                            color = p.accentGreen,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = "保存路径：Download/${state.completedFileName}\n可直接打开 KernelSU / Magisk 从下载文件夹选择刷入并重启。",
+                            color = p.textPrimary,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    state.downloadError.isNotEmpty() -> {
+                        Text(
+                            text = "下载失败",
+                            color = p.accentRed,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = state.downloadError,
+                            color = p.textPrimary,
+                            fontSize = 11.5.sp,
+                            lineHeight = 17.sp
+                        )
+                    }
+                    state.moduleDownloadUrl.isNotEmpty() -> {
+                        Text(
+                            text = "模块包：${state.targetFileName}" +
+                                if (state.moduleSizeBytes > 0L) "（${formatBytes(state.moduleSizeBytes)}）" else "",
+                            color = p.textPrimary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = "点击「下载模块」将直接在应用内下载并保存到系统 Download 文件夹，无需浏览器。",
+                            color = p.textSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    else -> {
+                        Text(
+                            text = "该 Release 未附带模块 ZIP 资产，请前往 GitHub 查看。",
+                            color = p.accentOrange,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ApplePillButton(
+                    text = "前往 GitHub",
+                    onClick = onOpenGitHub,
+                    primary = false,
+                    modifier = Modifier.weight(1f)
+                )
+                when {
+                    state.downloading -> {
+                        ApplePillButton(
+                            text = "取消下载",
+                            onClick = onCancelDownload,
+                            primary = false,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    state.completedFileName.isNotEmpty() -> {
+                        ApplePillButton(
+                            text = "完成",
+                            onClick = onDismiss,
+                            primary = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    else -> {
+                        ApplePillButton(
+                            text = if (state.downloadError.isNotEmpty()) "重试下载" else "下载模块",
+                            onClick = onDownloadModule,
+                            primary = true,
+                            enabled = state.moduleDownloadUrl.isNotEmpty(),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

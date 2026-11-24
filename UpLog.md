@@ -4,6 +4,27 @@
 
 ---
 
+## v0.6.1-dev — 2026-11-25
+
+> **实用体验增强与欧美 ePDG 兼容版本：新增内置 Clash 摄像头/相册扫码添加订阅、应用内一键检查 GitHub Release 更新与模块直链下载（免浏览器直存 `Download/`）、升级自研 Go 引擎 3GPP IKEv2 兼容与自动 NAI 协商，并根治 `RootDaemonMain` 每 5 秒重复拉起问题。**
+
+### 核心新特性
+- **应用内检查更新 & 模块直链下载（免浏览器）**
+  - 「网络」页新增 **「检查更新」** 按钮：查询 GitHub Releases（兼容正式版与 `-dev` 预发布版，过滤草稿），发现新版本时弹出详情对话框展示版本号对比、发布日期与完整更新内容。
+  - 支持 **「下载模块」**（在应用内经 HTTPS 直连下载，严格校验 GitHub 可信域名与 ZIP 文件头，实时进度条与可取消，通过 `MediaStore.Downloads` 原子写入系统 `Download/` 文件夹，无需跳转浏览器）或 **「前往 GitHub」**。
+- **内置 Clash 摄像头 / 相册扫码订阅**
+  - 代理页（内核 1 / 内核 2 均支持）新增 **「扫码订阅」**，基于 CameraX + 纯 Java ZXing 离线识别二维码（支持手电筒与相册选图），兼容 `http(s)://`、`clash://install-config?url=...`、`clashmeta://`、`mihomo://`、`flclash://`、`sub://`（Base64）等订阅协议。
+
+### 真机兼容与稳定性修复
+- **Go 引擎 IKEv2 3GPP 兼容性增强（针对 O2 UK / giffgaff `23410` 等欧美 ePDG `Notify 24`）**
+  - 3HK（`45403`）保持优先使用 `@wlan...`（实机冷启动 1.72 秒完成 `IMS REGISTER 200 OK`）；O2 UK / giffgaff 等现代 3GPP EPC 运营商优先按 3GPP TS 23.003 §19.3.2 使用 `0<IMSI>@nai.epc...`，遇 `Notify 24 (AUTHENTICATION_FAILED)` 自动回退轮换 `6<IMSI>@nai.epc...`（EAP-AKA'）→ `0<IMSI>@wlan...` → `IDr=ims.mnc...` 并缓存成功配置。
+  - `IKE_AUTH #1` 补齐 `INITIAL_CONTACT (16384)` 与 `MOBIKE_SUPPORTED (16396)`；新增 **3GPP TS 24.302 §8.2.9.2 `DEVICE_IDENTITY (41101)`**（IMEI / IMEISV TBCD 编码）自动应答。
+  - 移除 Go 引擎 `config-verify --strict` 中残留的 `MAINLAND_SIM_FORBIDDEN`（MCC `460`/`461`）拦截，与 Java 层全卡解锁保持一致。
+- **彻底修复 `RootDaemonMain` 每 5 秒重复拉起与耗电问题**
+  - `RootDaemonMain` 获取独占文件锁后原子写入权威 `root-daemon.pid` / `root-daemon.owner`；`service.sh` 增补 `/proc/*/cmdline` 存活检测与异常启动退避；`RootSupervisor` 改为全局冷却并在守护进程已存活时仅修复 socket 属主，同时将 `root-daemon.log`、`sim-auth.log` 与完整进程快照纳入遥测诊断。
+
+---
+
 ## v0.6.0-dev — 2026-11-25
 
 > **双卡并发与双内置代理版本：解除国内外 SIM 卡限制、重构总开关省电停机与卡槽 1/2 独立控制、新增双内置 Clash 内核（`wfctun0` / `wfctun1`），并基于真机遥测修复单卡/老基带关蜂窝失败、SELinux 拦截与遥测上传稳定性。**
