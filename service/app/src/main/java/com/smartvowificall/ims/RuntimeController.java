@@ -1199,17 +1199,39 @@ final class RuntimeController {
                          : "已关闭";
     } catch (Exception e) {
       radioOff = Collections.emptyMap();
-      for (Binding b : bindings.values()) {
-        b.registered = false;
-        b.reported = false;
-        syncVoiceServiceOverride(b, false);
-        b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_SERVICE_UNAVAILABLE));
-        NewMmTelFeature feature = features.get(b.slot());
-        if (feature != null) feature.registrationChanged(false);
-      }
+      dropAllVoWifiIcons(ImsReasonInfo.CODE_LOCAL_SERVICE_UNAVAILABLE);
       status = "待处理：" + safeCode(e);
       events.record("W", "policy", "tick failed: " + safeCode(e));
     }
+  }
+  private void dropAllVoWifiIcons(int reasonCode) {
+    Set<Integer> seenSlots = new HashSet<>();
+    for (Binding b : bindings.values()) {
+      seenSlots.add(b.slot());
+      b.registered = false;
+      b.reported = false;
+      NewMmTelFeature feature = features.get(b.slot());
+      if (feature != null) feature.registrationChanged(false);
+      b.registration.onDeregistered(reason(reasonCode));
+      syncVoiceServiceOverride(b, false);
+    }
+    for (Map.Entry<Integer, NewMmTelFeature> entry : features.entrySet()) {
+      int slot = entry.getKey();
+      if (seenSlots.add(slot)) {
+        entry.getValue().registrationChanged(false);
+        ImsRegistrationImplBase reg = registrations.get(slot);
+        if (reg != null) reg.onDeregistered(reason(reasonCode));
+      }
+    }
+    for (Map.Entry<Integer, ImsRegistrationImplBase> entry : registrations.entrySet()) {
+      if (seenSlots.add(entry.getKey())) {
+        entry.getValue().onDeregistered(reason(reasonCode));
+      }
+    }
+  }
+  static boolean isTunnelHealthy(String tunnel) {
+    if (tunnel == null || tunnel.isEmpty() || "UNKNOWN".equals(tunnel)) return true;
+    return "CONNECTED".equals(tunnel) || "UP".equals(tunnel) || "ESTABLISHED".equals(tunnel);
   }
   boolean featureMatches(RootSupervisor.Sim sim) {
     if (sim == null) return false;
@@ -1388,17 +1410,28 @@ final class RuntimeController {
           b.engine.connect();
         Map<String, Object> state = b.engine.getStatus();
         b.ims = String.valueOf(state.get("ims"));
-        boolean registered = "REGISTERED".equals(b.ims) && radioReady(b);
+        b.tunnel = EngineState.text(state, "tunnel");
+        boolean registered = "REGISTERED".equals(b.ims) && isTunnelHealthy(b.tunnel) && radioReady(b);
+        NewMmTelFeature f = features.get(b.slot());
         if (registered != b.registered) kick();
         if (registered != b.registered || !b.reported) {
           b.registered = registered;
           b.reported = true;
           events.record("I", "ims", "slot " + b.slot() + " plmn=" + b.sim.policy.homePlmn
-              + " registered=" + registered);
-          if (registered)
+              + " registered=" + registered + " tunnel=" + b.tunnel);
+          if (registered) {
             b.registration.onRegistered(ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN);
-          else
+            if (f != null && f.subId == b.sim.policy.subId && f.simKey.equals(b.sim.policy.simKey))
+              f.registrationChanged(true);
+          } else {
+            // Clear MMTEL capabilities BEFORE onDeregistered so Android/HyperOS drops the
+            // status-bar VoWiFi icon immediately when the tunnel or IMS registration drops.
+            if (f != null && f.subId == b.sim.policy.subId && f.simKey.equals(b.sim.policy.simKey))
+              f.registrationChanged(false);
             b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED));
+          }
+        } else if (f != null && f.subId == b.sim.policy.subId && f.simKey.equals(b.sim.policy.simKey)) {
+          f.registrationChanged(registered);
         }
         if (registered && ClashConfig.TUN_DEVICE.equals(b.iface)
             && preferredClashNode(b.sim.policy.simKey).isEmpty()
@@ -1406,11 +1439,7 @@ final class RuntimeController {
           savePreferredClashNode(b.sim.policy.simKey, clash.currentNode);
           lastAutoClashSimKey = b.sim.policy.simKey;
         }
-        NewMmTelFeature f = features.get(b.slot());
-        if (f != null && f.subId == b.sim.policy.subId && f.simKey.equals(b.sim.policy.simKey))
-          f.registrationChanged(registered);
         syncVoiceServiceOverride(b, registered && billable());
-        b.tunnel = EngineState.text(state, "tunnel");
         try {
           b.engine.getCallSnapshot();
           b.callSnapshotError = 0;
@@ -1431,11 +1460,12 @@ final class RuntimeController {
         b.registered = false;
         b.reported = false;
         b.ims = "DISCONNECTED";
-        syncVoiceServiceOverride(b, false);
-        b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
+        b.tunnel = "DISCONNECTED";
         NewMmTelFeature f = features.get(b.slot());
         if (f != null)
           f.registrationChanged(false);
+        b.registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
+        syncVoiceServiceOverride(b, false);
         try {
           if (!root.engineRunning(b.sim.iccid)) {
             b.callActive = false;
@@ -1573,6 +1603,29 @@ final class RuntimeController {
       worker.execute(() -> {
         if (bindings.get(slot()) != this)
           return;
+        if ("imsState".equals(event.name) || "statusChanged".equals(event.name)) {
+          String nextIms = EngineState.text(event.data, "ims");
+          String nextTun = EngineState.text(event.data, "tunnel");
+          if (nextIms != null && !nextIms.isEmpty()) ims = nextIms;
+          if (nextTun != null && !nextTun.isEmpty()) tunnel = nextTun;
+          boolean healthy = "REGISTERED".equals(ims) && isTunnelHealthy(tunnel) && radioReady(this);
+          if (!healthy) {
+            boolean wasRegistered = registered;
+            registered = false;
+            reported = true;
+            NewMmTelFeature f = features.get(slot());
+            if (f != null) f.registrationChanged(false);
+            registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_NOT_REGISTERED));
+            io.execute(() -> syncVoiceServiceOverride(this, false));
+            if (wasRegistered) {
+              events.record("W", "ims", "slot " + slot() + " channel dropped ims=" + ims + " tunnel=" + tunnel);
+              kick();
+            }
+          } else if (!registered) {
+            kick();
+          }
+          return;
+        }
         NewMmTelFeature f = features.get(slot());
         if (f != null)
           f.event(event);
@@ -1583,12 +1636,14 @@ final class RuntimeController {
         if (bindings.get(slot()) == this) {
           registered = false;
           reported = false;
-          kick();
-          io.execute(() -> syncVoiceServiceOverride(this, false));
-          registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
+          ims = "DISCONNECTED";
+          tunnel = "DISCONNECTED";
           NewMmTelFeature f = features.get(slot());
           if (f != null)
             f.registrationChanged(false);
+          registration.onDeregistered(reason(ImsReasonInfo.CODE_LOCAL_IMS_SERVICE_DOWN));
+          io.execute(() -> syncVoiceServiceOverride(this, false));
+          kick();
         }
       });
     }

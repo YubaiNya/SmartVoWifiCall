@@ -47,6 +47,8 @@ type Client struct {
 	pending   map[uint32]chan []byte
 	closed    bool
 	stopCh    chan struct{}
+	deadCh    chan struct{}
+	deadOnce  sync.Once
 	wg        sync.WaitGroup
 }
 
@@ -58,7 +60,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 		cfg.APN = "ims"
 	}
 	if cfg.DPDInterval <= 0 {
-		cfg.DPDInterval = 30 * time.Second
+		cfg.DPDInterval = 20 * time.Second
 	}
 	raddr, err := net.ResolveUDPAddr("udp4", cfg.EPDGAddr)
 	if err != nil {
@@ -78,6 +80,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 		spii:     binary.BigEndian.Uint64(spib[:]),
 		pending:  make(map[uint32]chan []byte),
 		stopCh:   make(chan struct{}),
+		deadCh:   make(chan struct{}),
 	}
 
 	c.wg.Add(1)
@@ -95,6 +98,16 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 
 func (c *Client) Tunnel() *ipsec.Tunnel { return c.tunnel }
 func (c *Client) Config() *CFGResult    { return c.cfgResult }
+func (c *Client) Dead() <-chan struct{} { return c.deadCh }
+
+func (c *Client) markDead(reason string) {
+	c.deadOnce.Do(func() {
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Warn("ikev2", "IKEv2 session dead: "+reason, nil)
+		}
+		close(c.deadCh)
+	})
+}
 
 func (c *Client) SendESP(esp []byte) error {
 	c.mu.Lock()
@@ -161,6 +174,12 @@ func (c *Client) readLoop(conn *net.UDPConn) {
 	for {
 		n, err := conn.Read(buf)
 		if err != nil {
+			c.mu.Lock()
+			isCurrent := c.conn == conn && !c.closed
+			c.mu.Unlock()
+			if isCurrent {
+				c.markDead("UDP_READ_ERROR")
+			}
 			return
 		}
 		if n < 4 {
@@ -214,7 +233,7 @@ func (c *Client) replyInformational(req []byte) {
 	if keys == nil {
 		return
 	}
-	h, _, err := DecodeEncryptedPacket(req, keys, false)
+	h, inner, err := DecodeEncryptedPacket(req, keys, false)
 	if err != nil {
 		return
 	}
@@ -227,6 +246,9 @@ func (c *Client) replyInformational(req []byte) {
 	}, nil, keys, true)
 	if err == nil {
 		_ = c.sendIKE(resp)
+	}
+	if FindPayload(inner, PayloadDelete) != nil {
+		c.markDead("PEER_DELETE")
 	}
 }
 
@@ -707,13 +729,16 @@ func (c *Client) handleEAPAKAChallenge(ctx context.Context, eapID, eapType byte,
 
 func (c *Client) dpdLoop() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(c.cfg.DPDInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(c.cfg.DPDInterval)
+	defer timer.Stop()
+	consecutiveMisses := 0
 	for {
 		select {
 		case <-c.stopCh:
 			return
-		case <-ticker.C:
+		case <-c.deadCh:
+			return
+		case <-timer.C:
 			c.mu.Lock()
 			c.msgID++
 			id := c.msgID
@@ -721,6 +746,7 @@ func (c *Client) dpdLoop() {
 			spii, spir := c.spii, c.spir
 			c.mu.Unlock()
 			if keys == nil {
+				timer.Reset(c.cfg.DPDInterval)
 				continue
 			}
 			dpd, err := EncodeEncryptedPacket(Header{
@@ -731,11 +757,30 @@ func (c *Client) dpdLoop() {
 				MessageID: id,
 			}, nil, keys, true)
 			if err != nil {
+				timer.Reset(c.cfg.DPDInterval)
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			_, _ = c.exchange(ctx, id, dpd)
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+			_, err = c.exchange(ctx, id, dpd)
 			cancel()
+			if err != nil {
+				select {
+				case <-c.stopCh:
+					return
+				default:
+				}
+				consecutiveMisses++
+				if consecutiveMisses >= 2 {
+					c.markDead("DPD_TIMEOUT")
+					return
+				}
+				// Fast retry once after 2s so dead tunnel drops VoWiFi within ~10s,
+				// while tolerating a single transient UDP packet loss.
+				timer.Reset(2 * time.Second)
+				continue
+			}
+			consecutiveMisses = 0
+			timer.Reset(c.cfg.DPDInterval)
 		}
 	}
 }

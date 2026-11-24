@@ -145,6 +145,9 @@ public final class RootIdentityMain {
         throw new Failure("INVALID_ARGUMENT");
     } catch (Throwable error) {
       String code = error instanceof Failure ? ((Failure) error).code : "IDENTITY_UNAVAILABLE";
+      if (!(error instanceof Failure)) {
+        System.err.println("RootIdentityMain error: " + error.getClass().getSimpleName());
+      }
       output = new JSONObject();
       try {
         output.put("ok", false).put("code", code).put("callActive", true);
@@ -154,10 +157,24 @@ public final class RootIdentityMain {
     return output;
   }
 
+  /**
+   * Must be called on the main Looper thread when running inside a multi-threaded resident daemon
+   * (RootDaemonMain), because ActivityThread.systemMain() constructs a Handler on the calling thread.
+   */
+  static void warmupRootContext() {
+    try {
+      rootContext();
+    } catch (Throwable t) {
+      System.err.println("RootIdentityMain warmup failed: " + t.getClass().getSimpleName());
+    }
+  }
+
   private static synchronized Context rootContext() throws Exception {
     if (cachedRootContext != null) return cachedRootContext;
-    if (Looper.myLooper() == null && Looper.getMainLooper() == null)
-      Looper.prepareMainLooper();
+    if (Looper.myLooper() == null) {
+      if (Looper.getMainLooper() == null) Looper.prepareMainLooper();
+      else Looper.prepare();
+    }
     Class<?> activityThread = Class.forName("android.app.ActivityThread");
     Object thread = activityThread.getMethod("currentActivityThread").invoke(null);
     if (thread == null) thread = activityThread.getMethod("systemMain").invoke(null);

@@ -262,16 +262,29 @@ func (e *Engine) connectOnce() error {
 	e.mu.Lock()
 	e.sipClient = sipCli
 	e.imsState = "REGISTERED"
+	tunNow := e.tunState
 	e.mu.Unlock()
+	e.broadcastState("REGISTERED", tunNow)
 	return nil
 }
 
 func (e *Engine) maintainRegistration() {
 	ticker := time.NewTicker(25 * time.Minute)
 	defer ticker.Stop()
+	e.mu.Lock()
+	ic := e.ikeClient
+	e.mu.Unlock()
+	var deadCh <-chan struct{}
+	if ic != nil {
+		deadCh = ic.Dead()
+	}
 	for {
 		select {
 		case <-e.stopCh:
+			e.teardownSession()
+			return
+		case <-deadCh:
+			e.logger.Warn("engine", "IKEv2 tunnel lost; tearing down IMS session", nil)
 			e.teardownSession()
 			return
 		case <-e.reconnectCh:
@@ -305,9 +318,13 @@ func (e *Engine) teardownSession() {
 	e.sipClient = nil
 	ic := e.ikeClient
 	e.ikeClient = nil
+	changed := e.imsState != "DISCONNECTED" || e.tunState != "DISCONNECTED"
 	e.imsState = "DISCONNECTED"
 	e.tunState = "DISCONNECTED"
 	e.mu.Unlock()
+	if changed {
+		e.broadcastState("DISCONNECTED", "DISCONNECTED")
+	}
 	if ms != nil {
 		_ = ms.Close()
 	}
@@ -321,9 +338,22 @@ func (e *Engine) teardownSession() {
 
 func (e *Engine) setStates(ims, tun string) {
 	e.mu.Lock()
+	changed := e.imsState != ims || e.tunState != tun
 	e.imsState = ims
 	e.tunState = tun
 	e.mu.Unlock()
+	if changed {
+		e.broadcastState(ims, tun)
+	}
+}
+
+func (e *Engine) broadcastState(ims, tun string) {
+	if e.rpcSrv != nil {
+		e.rpcSrv.BroadcastEvent("imsState", map[string]any{
+			"ims":    ims,
+			"tunnel": tun,
+		})
+	}
 }
 
 func (e *Engine) onSIPEvent(name string, data map[string]any) {

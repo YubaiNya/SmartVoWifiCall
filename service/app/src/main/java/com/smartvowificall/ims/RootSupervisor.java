@@ -147,7 +147,12 @@ final class RootSupervisor {
 
   private JSONObject identityCall(String... args) throws Exception {
     try {
-      return callDaemon("identity", Arrays.asList(args), null);
+      JSONObject res = callDaemon("identity", Arrays.asList(args), null);
+      if (res.optBoolean("ok", false)
+          || (!"IDENTITY_UNAVAILABLE".equals(res.optString("code"))
+              && !"SERVICE_UNAVAILABLE".equals(res.optString("code")))) {
+        return res;
+      }
     } catch (IOException ignored) {
       triggerDaemonBootstrapAsync();
     }

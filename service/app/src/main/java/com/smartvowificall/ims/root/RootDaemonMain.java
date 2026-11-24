@@ -47,6 +47,9 @@ public final class RootDaemonMain {
         System.exit(0);
       }
       if (Looper.myLooper() == null) Looper.prepareMainLooper();
+      // Pre-initialize ActivityThread.systemMain() on the main Looper thread so worker threads
+      // serving RootIdentityMain requests never fail with "Can't create handler inside thread...".
+      RootIdentityMain.warmupRootContext();
       startedAtMs = SystemClock.elapsedRealtime();
 
       String socketPath = args.length > 0 && !args[0].isEmpty()
