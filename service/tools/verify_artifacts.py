@@ -26,6 +26,7 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall.apk') as z:
  assert b'Lcom/smartvowificall/ims/clash/ClashConfig;' in dex
  assert b'Lcom/smartvowificall/ims/root/RootClashMain;' in dex
  assert b'Lcom/smartvowificall/ims/root/RootSimAuthMain;' in dex
+ assert b'Lcom/smartvowificall/ims/root/RootDaemonMain;' in dex
  assert b'com.legacy.ims' not in dex
  assert b'Lcom/legacy/ims/' not in dex
 with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
@@ -43,6 +44,7 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
  assert b'install -r --user 0 -S "$nv_size" < "$nv_apk"' in z.read('app-install.sh')
  assert b'RootNetworkMain watch' in z.read('service.sh')
  assert b'RootSimAuthMain' in z.read('service.sh')
+ assert b'RootDaemonMain' in z.read('service.sh')
  assert b'RootSimAuthMain' in z.read('control.sh')
  assert b'--sim-mode=auto' in z.read('control.sh')
  assert b'radio-release-all' in z.read('service.sh')

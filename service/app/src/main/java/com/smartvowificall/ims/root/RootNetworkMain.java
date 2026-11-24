@@ -45,20 +45,34 @@ public final class RootNetworkMain {
   private RootNetworkMain() {}
 
   public static void main(String[] args) {
-    JSONObject result;
-    int exitCode = 0;
-    try {
-      if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
-      String mode = args.length == 0 ? "snapshot" : args[0];
-      if (args.length > 1) throw new Failure("INVALID_ARGUMENT");
-      if (mode.equals("watch")) {
+    if (args != null && args.length == 1 && "watch".equals(args[0])) {
+      try {
+        if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
         // A separate root process keeps observations fresh while policy operations
         // wait for SIM authentication, engine startup, or per-card lifecycle locks.
         for (;;) {
           try { snapshot(true); } catch (Exception ignored) { }
           Thread.sleep(5000);
         }
+      } catch (Throwable error) {
+        System.out.println("{\"ok\":false,\"code\":\"" + safeCode(error) + "\",\"networks\":[]}");
+        System.out.flush();
+        System.exit(1);
       }
+    }
+    JSONObject result = execute(args);
+    int exitCode = result.optBoolean("ok", false) ? 0 : 1;
+    System.out.println(result.toString());
+    System.out.flush();
+    System.exit(exitCode);
+  }
+
+  public static JSONObject execute(String[] args) {
+    JSONObject result;
+    try {
+      if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
+      String mode = args == null || args.length == 0 ? "snapshot" : args[0];
+      if (args != null && args.length > 1) throw new Failure("INVALID_ARGUMENT");
       if (mode.equals("diagnostics")) {
         result = new JSONObject().put("ok", true).put("code", "NETWORK_API_DIAGNOSTICS")
                      .put("methods", apiDiagnostics());
@@ -66,7 +80,6 @@ public final class RootNetworkMain {
         result = snapshot(mode.equals("publish"));
       } else throw new Failure("INVALID_ARGUMENT");
     } catch (Throwable error) {
-      exitCode = 1;
       result = new JSONObject();
       try {
         result.put("ok", false).put("code", safeCode(error)).put("networks", new JSONArray());
@@ -75,9 +88,7 @@ public final class RootNetworkMain {
           result.put("methods", apiDiagnostics());
       } catch (Exception ignored) {}
     }
-    System.out.println(result.toString());
-    System.out.flush();
-    System.exit(exitCode);
+    return result;
   }
 
   private static JSONObject snapshot(boolean publish) throws Exception {

@@ -14,13 +14,18 @@ done
 for p in "$BASE/run/"*.pid; do
  [ -f "$p" ] || continue
  id=${p##*/};id=${id%.pid}
- [ "$id" != "sim-auth" ] || continue
+ [ "$id" != "sim-auth" ] && [ "$id" != "root-daemon" ] || continue
  sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || exit 1
 done
 if [ -f "$BASE/run/sim-auth.pid" ]; then
  read -r spid < "$BASE/run/sim-auth.pid" 2>/dev/null || spid=
  [ -n "$spid" ] && kill -TERM "$spid" 2>/dev/null || :
  rm -f "$BASE/run/sim-auth.pid" "$BASE/run/sim-auth.owner" "$BASE/run/sim-aka.sock"
+fi
+if [ -f "$BASE/run/root-daemon.pid" ]; then
+ read -r dpid < "$BASE/run/root-daemon.pid" 2>/dev/null || dpid=
+ [ -n "$dpid" ] && kill -TERM "$dpid" 2>/dev/null || :
+ rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" /data/local/tmp/vowifi/root-daemon.sock
 fi
 sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || exit 1
 i=0

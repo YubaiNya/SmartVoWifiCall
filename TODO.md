@@ -27,14 +27,12 @@
 
 ---
 
-## P1：常驻 Root Daemon 替代频繁 `su -c app_process`（降功耗 + 提速）
+## P1：常驻 Root Daemon 替代频繁 `su -c app_process`（降功耗 + 提速） ✅
 
-当前每次 `snapshot()`、`clashStatus()`、`vpnOwners()` 都会重新 `fork` 一次 `su` 和 ART 虚拟机，存在几百毫秒延迟与额外唤醒。
-
-- [ ] 设计并实现单实例常驻 Root Daemon（合并 `RootIdentityMain`、`RootClashMain`、`RootNetworkMain`、`RootTelemetryMain`）
-- [ ] 通过 `0600` 权限 + `SO_PEERCRED` 严格校验调用方 UID 的 Unix Domain Socket 提供本地 RPC
-- [ ] 保留 `ImsLock` 事务安全与断线自动拉起机制，把单次状态查询延迟压到 `< 5 ms`
-- [ ] 优化 `service/module/service.sh`：加入顶层 `flock` 单实例锁，无活跃引擎时拉长待机休眠间隔以降低唤醒功耗
+- [x] 设计并实现单实例常驻 Root Daemon（`RootDaemonMain` + `RootDaemonProtocol`，合并 `RootIdentityMain`、`RootClashMain`、`RootNetworkMain` 的进程内 `execute()` 调用）
+- [x] 通过 `0660` 权限 + `SO_PEERCRED` 严格校验调用方 UID（仅允许 `uid == 0` 或已验证的 `com.smartvowificall.ims` UID）的 Unix Domain Socket 提供本地并发 RPC，并在 `RootSupervisor` 中优先走常驻通道、异常自动回退与拉起
+- [x] 保留 `ImsLock` 事务安全与缓存 `ActivityThread.systemMain()` 上下文，消除频繁 `fork su` / ART 启动开销
+- [x] 优化 `service/module/service.sh`：加入顶层单实例互斥锁（`$BASE/run/service.lock`），托管 `RootDaemonMain`，无活跃引擎时将巡检休眠拉长至 `25s` 以显著降低待机唤醒功耗
 
 ---
 

@@ -46,13 +46,23 @@ public final class RootIdentityMain {
   private static final int OUTPUT_LIMIT = 262144;
   private RootIdentityMain() {}
 
+  private static volatile Context cachedRootContext;
+
   public static void main(String[] args) {
-    int exitCode = 0;
+    JSONObject output = execute(args);
+    int exitCode = output.optBoolean("ok", false) ? 0 : 1;
+    System.out.println(output.toString());
+    System.out.flush();
+    // ActivityThread may create binder or service threads; this is a one-shot helper.
+    System.exit(exitCode);
+  }
+
+  public static JSONObject execute(String[] args) {
     JSONObject output;
     try {
       if (Process.myUid() != 0)
         throw new Failure("ROOT_REQUIRED");
-      String mode = args.length == 0 ? "snapshot" : args[0];
+      String mode = args == null || args.length == 0 ? "snapshot" : args[0];
       if (mode.equals("snapshot") && args.length <= 1)
         output = snapshot(rootContext());
       else if (mode.equals("install-check") && args.length == 1) {
@@ -80,7 +90,6 @@ public final class RootIdentityMain {
           for (int slot = 0; slot < 8; slot++) released &= releaseRadio(context, slot);
           output = new JSONObject().put("ok", released).put("released", released)
               .put("code", released ? "RADIO_RELEASED" : "RADIO_RESTORE_PENDING");
-          if (!released) exitCode = 1;
         }
       } else if (mode.equals("radio-release") && args.length == 2) {
         try (ImsLock lock = new ImsLock()) {
@@ -89,7 +98,6 @@ public final class RootIdentityMain {
           boolean released = releaseRadio(context, nonNegativeInt(args[1]));
           output = new JSONObject().put("ok", released).put("released", released)
               .put("code", released ? "RADIO_RELEASED" : "RADIO_RESTORE_PENDING");
-          if (!released) exitCode = 1;
         }
       } else if (mode.equals("check-egress") && args.length == 2) {
         if (!validOutputPath(args[1])) throw new Failure("INVALID_OUTPUT_PATH");
@@ -134,7 +142,6 @@ public final class RootIdentityMain {
       } else
         throw new Failure("INVALID_ARGUMENT");
     } catch (Throwable error) {
-      exitCode = 1;
       String code = error instanceof Failure ? ((Failure) error).code : "IDENTITY_UNAVAILABLE";
       output = new JSONObject();
       try {
@@ -142,21 +149,20 @@ public final class RootIdentityMain {
       } catch (Exception ignored) {
       }
     }
-    System.out.println(output.toString());
-    System.out.flush();
-    // ActivityThread may create binder or service threads; this is a one-shot helper.
-    System.exit(exitCode);
+    return output;
   }
 
-  private static Context rootContext() throws Exception {
-    if (Looper.myLooper() == null)
+  private static synchronized Context rootContext() throws Exception {
+    if (cachedRootContext != null) return cachedRootContext;
+    if (Looper.myLooper() == null && Looper.getMainLooper() == null)
       Looper.prepareMainLooper();
     Class<?> activityThread = Class.forName("android.app.ActivityThread");
-    Object thread = activityThread.getMethod("systemMain").invoke(null);
+    Object thread = activityThread.getMethod("currentActivityThread").invoke(null);
+    if (thread == null) thread = activityThread.getMethod("systemMain").invoke(null);
     Context system = (Context) activityThread.getMethod("getSystemContext").invoke(thread);
     // This process really runs as uid 0. Keep its attribution consistent with that identity.
     // The root identity helper likewise uses the actual root caller package.
-    return new ContextWrapper(system) {
+    cachedRootContext = new ContextWrapper(system) {
       private final AttributionSource attribution = new AttributionSource.Builder(Process.myUid())
                                                         .setPackageName("root")
                                                         .setPid(Process.myPid())
@@ -182,6 +188,7 @@ public final class RootIdentityMain {
         return attribution;
       }
     };
+    return cachedRootContext;
   }
 
   private static TelephonyManager telephony(Context context) throws Exception {

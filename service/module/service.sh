@@ -4,10 +4,8 @@ BASE=/data/adb/smartvowificall_ims
 APK="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk"
 . "$MODDIR/app-install.sh"
 while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2;done
-APP_SYNCED=0
-# No RECORD_AUDIO grant and no audio connections in the registration-only workflow.
-network_pid=
-network_start=
+mkdir -p "$BASE/run"; chmod 0700 "$BASE" "$BASE/run"
+SERVICE_LOCK="$BASE/run/service.lock"
 proc_start() {
  [ -r "/proc/$1/stat" ] || return 1
  IFS= read -r record < "/proc/$1/stat" || return 1
@@ -16,6 +14,61 @@ proc_start() {
  [ "$#" -ge 20 ] || return 1
  shift 19
  printf '%s' "$1"
+}
+# Single-instance guard prevents duplicate watchdogs on module reload/restart.
+if ! mkdir "$SERVICE_LOCK" 2>/dev/null; then
+ if [ -f "$SERVICE_LOCK/owner" ]; then
+  read -r lpid lstart < "$SERVICE_LOCK/owner" 2>/dev/null || { lpid=; lstart=; }
+  if [ -n "$lpid" ] && [ "$(proc_start "$lpid" 2>/dev/null || :)" = "$lstart" ]; then
+   exit 0
+  fi
+  rm -rf "$SERVICE_LOCK"
+  mkdir "$SERVICE_LOCK" 2>/dev/null || exit 0
+ else
+  exit 0
+ fi
+fi
+(umask 077; printf '%s %s\n' "$$" "$(proc_start "$$" 2>/dev/null || echo 0)" > "$SERVICE_LOCK/owner")
+APP_SYNCED=0
+# No RECORD_AUDIO grant and no audio connections in the registration-only workflow.
+network_pid=
+network_start=
+DAEMON_SOCK=/data/local/tmp/vowifi/root-daemon.sock
+app_uid() {
+ stat -c '%u' /data/data/com.smartvowificall.ims 2>/dev/null || echo ""
+}
+stop_root_daemon() {
+ if [ -f "$BASE/run/root-daemon.pid" ] && [ -f "$BASE/run/root-daemon.owner" ]; then
+  read -r dpid < "$BASE/run/root-daemon.pid" 2>/dev/null || dpid=
+  read -r dopid dostart < "$BASE/run/root-daemon.owner" 2>/dev/null || { dopid=; dostart=; }
+  if [ -n "$dpid" ] && [ "$dpid" = "$dopid" ] && [ "$(proc_start "$dpid" 2>/dev/null || :)" = "$dostart" ]; then
+   kill -TERM "$dpid" 2>/dev/null || :
+  fi
+ fi
+ rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" "$DAEMON_SOCK"
+}
+start_root_daemon() {
+ uid=$(app_uid)
+ if [ -f "$BASE/run/root-daemon.pid" ] && [ -f "$BASE/run/root-daemon.owner" ]; then
+  read -r dpid < "$BASE/run/root-daemon.pid" 2>/dev/null || dpid=
+  read -r dopid dostart < "$BASE/run/root-daemon.owner" 2>/dev/null || { dopid=; dostart=; }
+  if [ -n "$dpid" ] && [ "$dpid" = "$dopid" ] && [ "$(proc_start "$dpid" 2>/dev/null || :)" = "$dostart" ] && [ -S "$DAEMON_SOCK" ]; then
+   if [ -n "$uid" ] && [ "$(stat -c '%u:%g' "$DAEMON_SOCK" 2>/dev/null || :)" != "0:$uid" ]; then
+    chown "0:$uid" "$DAEMON_SOCK" 2>/dev/null || :
+    chmod 0660 "$DAEMON_SOCK" 2>/dev/null || :
+   fi
+   return 0
+  fi
+ fi
+ mkdir -p /data/local/tmp/vowifi "$BASE/run"
+ chmod 0711 /data/local/tmp/vowifi
+ rm -f "$DAEMON_SOCK"
+ CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "$DAEMON_SOCK" "${uid:-}" >>"$BASE/run/root-daemon.log" 2>&1 &
+ dpid=$!
+ dstart=$(proc_start "$dpid" 2>/dev/null || :)
+ if [ -n "$dstart" ]; then
+  (umask 077; printf '%s\n' "$dpid" > "$BASE/run/root-daemon.pid"; printf '%s %s\n' "$dpid" "$dstart" > "$BASE/run/root-daemon.owner")
+ fi
 }
 publisher_running() {
  [ -n "$network_pid" ] && [ -n "$network_start" ] || return 1
@@ -56,6 +109,9 @@ start_sim_auth() {
 stop_helpers() {
  stop_publisher
  stop_sim_auth
+ stop_root_daemon
+ rm -f "$SERVICE_LOCK/owner"
+ rmdir "$SERVICE_LOCK" 2>/dev/null || :
 }
 trap stop_helpers EXIT
 trap 'exit 143' TERM
@@ -73,10 +129,11 @@ restore_owned() {
  for p in "$BASE/run/"*.pid; do
   [ -f "$p" ] || continue
   id=${p##*/};id=${id%.pid}
-  [ "$id" != "sim-auth" ] || continue
+  [ "$id" != "sim-auth" ] && [ "$id" != "root-daemon" ] || continue
   sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || return 1
  done
  stop_sim_auth
+ stop_root_daemon
  sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || return 1
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
  rm -f "$BASE/rollback-pending"
@@ -118,11 +175,12 @@ while :; do
    watchdog_ticks=6
   fi
   watchdog_ticks=$((watchdog_ticks-1))
+  start_root_daemon
   has_engine=0
   for p in "$BASE/run/"*.pid; do
    [ -f "$p" ] || continue
    id=${p##*/};id=${id%.pid}
-   [ "$id" != "sim-auth" ] || continue
+   [ "$id" != "sim-auth" ] && [ "$id" != "root-daemon" ] || continue
    has_engine=1
    if [ "$repair_ticks" -le 0 ]; then
     sh "$MODDIR/control.sh" repair "$id" >/dev/null 2>&1 || :
@@ -132,12 +190,14 @@ while :; do
    # Keep the engine's <=15s freshness contract and cross-baseband SIM AKA daemon alive while in use.
    start_publisher
    start_sim_auth
+   sleep_sec=5
   else
    stop_publisher
    stop_sim_auth
+   sleep_sec=25
   fi
   if [ "$repair_ticks" -le 0 ]; then repair_ticks=6;fi
   repair_ticks=$((repair_ticks-1))
  fi
- sleep 5
+ sleep "${sleep_sec:-5}"
 done

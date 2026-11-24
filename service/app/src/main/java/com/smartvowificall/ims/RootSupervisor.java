@@ -1,17 +1,23 @@
 package com.smartvowificall.ims;
 import android.content.Context;
 import android.media.AudioManager;
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
 import com.smartvowificall.ims.engine.EngineSession;
 import com.smartvowificall.ims.policy.PolicyEngine;
+import com.smartvowificall.ims.root.RootDaemonProtocol;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 import org.json.*;
 final class RootSupervisor {
   static final String MODULE = "/data/adb/modules/smartvowificall";
   final Context context;
-  final java.util.concurrent.atomic.AtomicLong commandCount = new java.util.concurrent.atomic.AtomicLong();
+  final AtomicLong commandCount = new AtomicLong();
+  final AtomicLong daemonCallCount = new AtomicLong();
+  private final AtomicLong lastDaemonBootstrapMs = new AtomicLong();
   RootSupervisor(Context context) {
     this.context = context;
   }
@@ -89,12 +95,93 @@ final class RootSupervisor {
       }
     }
   }
+  private JSONObject callDaemon(String target, List<String> args, byte[] stdinBytes) throws IOException {
+    LocalSocket socket = new LocalSocket();
+    try {
+      socket.connect(new LocalSocketAddress(
+          RootDaemonProtocol.DEFAULT_SOCKET_PATH, LocalSocketAddress.Namespace.FILESYSTEM));
+      socket.setSoTimeout(30_000);
+      String req = RootDaemonProtocol.encodeRequest(target, args, stdinBytes);
+      OutputStream out = socket.getOutputStream();
+      out.write((req + "\n").getBytes(StandardCharsets.UTF_8));
+      out.flush();
+      BufferedReader reader = new BufferedReader(
+          new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+      String line = reader.readLine();
+      if (line == null || line.trim().isEmpty()) throw new IOException("DAEMON_EOF");
+      JSONObject envelope = new JSONObject(line);
+      if (!envelope.optBoolean("ok", false)) {
+        throw new IOException(envelope.optString("code", "DAEMON_ERROR"));
+      }
+      JSONObject result = envelope.optJSONObject("result");
+      if (result == null) throw new IOException("DAEMON_EMPTY_RESULT");
+      daemonCallCount.incrementAndGet();
+      return result;
+    } catch (JSONException e) {
+      throw new IOException("DAEMON_JSON_INVALID", e);
+    } finally {
+      try { socket.close(); } catch (IOException ignored) {}
+    }
+  }
+
+  private void triggerDaemonBootstrapAsync() {
+    long now = System.currentTimeMillis();
+    long prev = lastDaemonBootstrapMs.get();
+    if (now - prev < 30_000L || !lastDaemonBootstrapMs.compareAndSet(prev, now)) return;
+    Thread t = new Thread(() -> {
+      try {
+        int myUid = android.os.Process.myUid();
+        String apk = context.getApplicationInfo().sourceDir;
+        String cmd = "BASE=/data/adb/smartvowificall_ims; mkdir -p \"$BASE/run\" /data/local/tmp/vowifi; "
+            + "chmod 0711 /data/local/tmp/vowifi; "
+            + "setsid env CLASSPATH=" + quote(apk)
+            + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "
+            + quote(RootDaemonProtocol.DEFAULT_SOCKET_PATH) + " " + myUid
+            + " >>\"$BASE/run/root-daemon.log\" 2>&1 </dev/null &";
+        run(cmd);
+      } catch (Throwable ignored) {}
+    }, "root-daemon-bootstrap");
+    t.setDaemon(true);
+    t.start();
+  }
+
+  private JSONObject identityCall(String... args) throws Exception {
+    try {
+      return callDaemon("identity", Arrays.asList(args), null);
+    } catch (IOException ignored) {
+      triggerDaemonBootstrapAsync();
+    }
+    StringBuilder sb = new StringBuilder();
+    for (int i = 0; i < args.length; i++) {
+      if (i > 0) sb.append(' ');
+      sb.append(quote(args[i]));
+    }
+    return new JSONObject(helper(sb.toString()));
+  }
+
   String helper(String args) throws Exception {
     return run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
         + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain " + args);
   }
   JSONObject clash(String mode, String stdinText) throws Exception {
     byte[] input = stdinText == null ? null : stdinText.getBytes(StandardCharsets.UTF_8);
+    try {
+      JSONObject res = callDaemon("clash", Collections.singletonList(mode), input);
+      if (!res.optBoolean("ok", true)) {
+        String code = res.optString("code", "CLASH_ERROR");
+        if (code.matches("[A-Z0-9_]{3,80}")) throw new IOException(code);
+      }
+      return res;
+    } catch (IOException e) {
+      if (e.getMessage() != null && !e.getMessage().startsWith("DAEMON_")
+          && !e.getMessage().contains("No such file")
+          && !e.getMessage().contains("Connection refused")
+          && !e.getMessage().contains("Permission denied")
+          && e.getMessage().matches("[A-Z0-9_]{3,80}")) {
+        throw e;
+      }
+      triggerDaemonBootstrapAsync();
+    }
     String result = run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
         + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootClashMain " + mode, input);
     return new JSONObject(result);
@@ -161,7 +248,7 @@ final class RootSupervisor {
     boolean callsActive = true;
   }
   Snapshot snapshot() throws Exception {
-    JSONObject j = new JSONObject(helper("snapshot"));
+    JSONObject j = identityCall("snapshot");
     if (!j.optBoolean("ok"))
       throw new IOException(j.optString("code", "IDENTITY_UNAVAILABLE"));
     Snapshot result = new Snapshot();
@@ -180,8 +267,14 @@ final class RootSupervisor {
     return result;
   }
   Map<String, Set<String>> vpnOwners() throws Exception {
-    JSONObject result = new JSONObject(run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
-        + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootNetworkMain publish"));
+    JSONObject result;
+    try {
+      result = callDaemon("network", Collections.singletonList("publish"), null);
+    } catch (IOException ignored) {
+      triggerDaemonBootstrapAsync();
+      result = new JSONObject(run("CLASSPATH=" + quote(context.getApplicationInfo().sourceDir)
+          + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootNetworkMain publish"));
+    }
     if (!result.optBoolean("ok") || !result.optBoolean("registryPublished"))
       throw new IOException(result.optString("code", "NETWORK_REGISTRY_UNAVAILABLE"));
     Map<String, Set<String>> owners = new LinkedHashMap<>();
@@ -208,40 +301,46 @@ final class RootSupervisor {
     return value;
   }
   void bind(Sim sim) throws Exception {
-    JSONObject response = new JSONObject(helper("ims-bind " + sim.policy.subId + " "
-        + sim.policy.slotId + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));
+    JSONObject response = identityCall("ims-bind", String.valueOf(sim.policy.subId),
+        String.valueOf(sim.policy.slotId), sim.policy.simKey, sim.policy.homePlmn);
     if (!response.optBoolean("ok"))
       throw new IOException("IMS_BIND_FAILED");
   }
   void setVoiceServiceOverride(Sim sim, boolean hasService) throws Exception {
-    JSONObject response = new JSONObject(helper("voice-service-override " + sim.policy.subId + " "
-        + sim.policy.slotId + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)
-        + " " + (hasService ? "true" : "false")));
+    JSONObject response = identityCall("voice-service-override", String.valueOf(sim.policy.subId),
+        String.valueOf(sim.policy.slotId), sim.policy.simKey, sim.policy.homePlmn,
+        hasService ? "true" : "false");
     if (!response.optBoolean("ok"))
       throw new IOException(response.optString("code", "VOICE_OVERRIDE_FAILED"));
   }
   boolean holdRadio(Sim sim) throws Exception {
-    JSONObject result = new JSONObject(helper("radio-hold " + sim.policy.subId + " " + sim.policy.slotId
-        + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));
+    JSONObject result = identityCall("radio-hold", String.valueOf(sim.policy.subId),
+        String.valueOf(sim.policy.slotId), sim.policy.simKey, sim.policy.homePlmn);
     return result.optBoolean("ok") && result.optBoolean("radioOff");
   }
   void verifyRadioOff(Sim sim) throws Exception {
-    JSONObject result = new JSONObject(helper("radio-check " + sim.policy.subId + " " + sim.policy.slotId
-        + " " + quote(sim.policy.simKey) + " " + quote(sim.policy.homePlmn)));
+    JSONObject result = identityCall("radio-check", String.valueOf(sim.policy.subId),
+        String.valueOf(sim.policy.slotId), sim.policy.simKey, sim.policy.homePlmn);
     if (!result.optBoolean("ok") || !result.optBoolean("radioOff"))
       throw new IOException("CELLULAR_RADIO_NOT_OFF");
   }
-  void releaseRadios() throws Exception { helper("radio-release-all"); }
+  void releaseRadios() throws Exception {
+    JSONObject response = identityCall("radio-release-all");
+    if (!response.optBoolean("ok")) throw new IOException(response.optString("code", "RADIO_RELEASE_FAILED"));
+  }
   void releaseRadio(int slot) throws Exception {
     if (slot < 0 || slot > 7) throw new IOException("INVALID_SLOT");
-    JSONObject response = new JSONObject(helper("radio-release " + slot));
+    JSONObject response = identityCall("radio-release", String.valueOf(slot));
     if (!response.optBoolean("ok")) throw new IOException("RADIO_RELEASE_FAILED");
   }
-  void restoreAll() throws Exception { helper("ims-restore-all"); }
+  void restoreAll() throws Exception {
+    JSONObject response = identityCall("ims-restore-all");
+    if (!response.optBoolean("ok")) throw new IOException(response.optString("code", "IMS_RESTORE_FAILED"));
+  }
   void restore(int slot, String previous) throws Exception {
     if (previous != null && !previous.isEmpty())
       throw new IOException("IMS_ORIGIN_AMBIGUOUS");
-    JSONObject response = new JSONObject(helper("ims-restore " + slot));
+    JSONObject response = identityCall("ims-restore", String.valueOf(slot));
     if (!response.optBoolean("ok"))
       throw new IOException("IMS_RESTORE_FAILED");
   }
@@ -251,8 +350,8 @@ final class RootSupervisor {
     run("[ ! -e " + MODULE + "/disable ] && [ ! -e " + MODULE
         + "/remove ] && [ ! -e /data/adb/smartvowificall_ims/rollback-pending ]");
     String config = "/data/adb/smartvowificall_ims/config/" + sim.iccid + ".json";
-    JSONObject response = new JSONObject(helper("prepare " + sim.policy.subId + " "
-        + sim.policy.slotId + " " + quote(iface) + " " + quote(config)));
+    JSONObject response = identityCall("prepare", String.valueOf(sim.policy.subId),
+        String.valueOf(sim.policy.slotId), iface, config);
     if (!response.optBoolean("ok"))
       throw new IOException(response.optString("code", "CONFIG_FAILED"));
     run("sh " + MODULE + "/control.sh start " + quote(sim.iccid) + " "

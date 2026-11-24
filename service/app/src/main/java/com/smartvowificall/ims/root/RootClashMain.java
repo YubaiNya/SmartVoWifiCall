@@ -51,18 +51,32 @@ public final class RootClashMain {
   private RootClashMain() {}
 
   public static void main(String[] args) {
-    int exitCode = 0;
+    JSONObject output = execute(args, System.in);
+    int exitCode = output.optBoolean("ok", false) ? 0 : 1;
+    System.out.println(output.toString());
+    System.out.flush();
+    System.exit(exitCode);
+  }
+
+  public static JSONObject execute(String[] args, byte[] stdinBytes) {
+    InputStream in = stdinBytes == null
+        ? new java.io.ByteArrayInputStream(new byte[0])
+        : new java.io.ByteArrayInputStream(stdinBytes);
+    return execute(args, in);
+  }
+
+  private static JSONObject execute(String[] args, InputStream in) {
     JSONObject output;
     try {
       if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
-      String mode = args.length == 0 ? "status" : args[0];
-      if (mode.equals("status") && args.length <= 1) {
+      String mode = args == null || args.length == 0 ? "status" : args[0];
+      if (mode.equals("status") && (args == null || args.length <= 1)) {
         output = status();
       } else if (mode.equals("save-profile") && args.length == 1) {
-        byte[] raw = readAllLimited(System.in, MAX_PROFILE_BYTES);
+        byte[] raw = readAllLimited(in, MAX_PROFILE_BYTES);
         output = saveProfile(new String(raw, StandardCharsets.UTF_8), null);
       } else if (mode.equals("fetch-subscription") && args.length == 1) {
-        String url = new String(readAllLimited(System.in, 4096), StandardCharsets.UTF_8).trim();
+        String url = new String(readAllLimited(in, 4096), StandardCharsets.UTF_8).trim();
         output = fetchSubscription(url);
       } else if (mode.equals("rebuild") && args.length == 1) {
         output = rebuild();
@@ -73,19 +87,19 @@ public final class RootClashMain {
       } else if (mode.equals("stop") && args.length == 1) {
         output = runControl("stop");
       } else if (mode.equals("select-node") && args.length == 1) {
-        String node = new String(readAllLimited(System.in, 1024), StandardCharsets.UTF_8).trim();
+        String node = new String(readAllLimited(in, 1024), StandardCharsets.UTF_8).trim();
         output = selectNode(node);
       } else if (mode.equals("test-delay") && args.length == 1) {
         output = testDelay();
       } else if (mode.equals("set-controller") && args.length == 1) {
-        String body = new String(readAllLimited(System.in, 1024), StandardCharsets.UTF_8).trim();
+        String body = new String(readAllLimited(in, 1024), StandardCharsets.UTF_8).trim();
         output = setController(new JSONObject(body));
       } else if (mode.equals("rotate-secret") && args.length == 1) {
         output = rotateSecret();
       } else if (mode.equals("connections") && args.length == 1) {
         output = connections();
       } else if (mode.equals("close-connection") && args.length == 1) {
-        String id = new String(readAllLimited(System.in, 256), StandardCharsets.UTF_8).trim();
+        String id = new String(readAllLimited(in, 256), StandardCharsets.UTF_8).trim();
         output = closeConnection(id);
       } else if (mode.equals("close-all-connections") && args.length == 1) {
         output = closeAllConnections();
@@ -93,7 +107,6 @@ public final class RootClashMain {
         throw new Failure("INVALID_ARGUMENT");
       }
     } catch (Throwable error) {
-      exitCode = 1;
       String code = error instanceof Failure ? ((Failure) error).code
           : (error instanceof IllegalArgumentException && error.getMessage() != null
               && error.getMessage().matches("[A-Z0-9_]{3,80}"))
@@ -104,9 +117,7 @@ public final class RootClashMain {
         output.put("ok", false).put("code", code);
       } catch (Exception ignored) {}
     }
-    System.out.println(output.toString());
-    System.out.flush();
-    System.exit(exitCode);
+    return output;
   }
 
   private static void ensureDirs() throws Exception {
