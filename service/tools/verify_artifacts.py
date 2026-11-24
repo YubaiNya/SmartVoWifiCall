@@ -1,11 +1,10 @@
-"""Read-only validation of the APK/module pair and pinned engine dependency."""
-import hashlib,json,pathlib,subprocess,zipfile
+"""Read-only validation of the APK/module pair, self-owned Go engine, and pinned mihomo binary."""
+import hashlib,json,pathlib,struct,subprocess,zipfile
 root=pathlib.Path(__file__).resolve().parents[1]
 dist=root/'dist'
 hashes=json.loads((dist/'SHA256.json').read_text())
 for name,expected in hashes.items():
  assert hashlib.sha256((dist/name).read_bytes()).hexdigest()==expected,name
-engine=json.loads((root/'deps/engine.source.json').read_text())
 mihomo=json.loads((root/'deps/mihomo.source.json').read_text())
 apk=(dist/'SmartVoWifiCall.apk').read_bytes()
 with zipfile.ZipFile(dist/'SmartVoWifiCall.apk') as z:
@@ -26,12 +25,16 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall.apk') as z:
  assert b'Lcom/smartvowificall/ims/policy/ServiceLifecycle;' in dex
  assert b'Lcom/smartvowificall/ims/clash/ClashConfig;' in dex
  assert b'Lcom/smartvowificall/ims/root/RootClashMain;' in dex
+ assert b'Lcom/smartvowificall/ims/root/RootSimAuthMain;' in dex
  assert b'com.legacy.ims' not in dex
  assert b'Lcom/legacy/ims/' not in dex
 with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
  assert z.testzip() is None
  assert z.read('system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk')==apk
- assert hashlib.sha256(z.read('bin/vowifi-engine-arm64')).hexdigest()==engine['sha256']
+ engine_bin=z.read('bin/vowifi-engine-arm64')
+ assert engine_bin[:6]==b'\x7fELF\x02\x01','engine must be 64-bit little-endian ELF'
+ assert struct.unpack_from('<H',engine_bin,18)[0]==183,'engine must target EM_AARCH64'
+ assert b'smartvowificall-engine' in engine_bin,'engine must be self-owned SmartVoWifiCall Go build'
  assert hashlib.sha256(z.read('bin/mihomo-arm64')).hexdigest()==mihomo['sha256']
  assert b'id=smartvowificall\n' in z.read('module.prop')
  assert b'com.legacy.ims' not in z.read('customize.sh')
@@ -39,13 +42,16 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
  assert b'nv_install_app "$MODDIR"' in z.read('service.sh')
  assert b'install -r --user 0 -S "$nv_size" < "$nv_apk"' in z.read('app-install.sh')
  assert b'RootNetworkMain watch' in z.read('service.sh')
+ assert b'RootSimAuthMain' in z.read('service.sh')
+ assert b'RootSimAuthMain' in z.read('control.sh')
+ assert b'--sim-mode=auto' in z.read('control.sh')
  assert b'radio-release-all' in z.read('service.sh')
  assert b'radio-release-all' in z.read('uninstall.sh')
  assert b'clash-control.sh" stop' in z.read('service.sh')
  assert b'clash-control.sh" stop' in z.read('uninstall.sh')
  assert b'check_tun_egress || fail TUN_EGRESS_UNAVAILABLE' in z.read('control.sh')
- assert b'/data/adb/vowifi/run/networks.json' not in z.read('bin/vowifi-engine-arm64')
- assert b'/data/adb/vowifi/run/call.lock' not in z.read('bin/vowifi-engine-arm64')
+ assert b'/data/adb/vowifi/' not in engine_bin
+ assert b'/data/adb/nvwims/' not in engine_bin
  for name in ['control.sh','clash-control.sh','customize.sh','service.sh','uninstall.sh','app-install.sh']:
   assert b'\r' not in z.read(name),name+' must use LF line endings'
  for name in z.namelist():
@@ -53,4 +59,4 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
   assert not name.endswith(('.p12','.key'))
 java=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot/bin/java.exe')
 subprocess.run([str(java),'-jar','D:/Android/Sdk/build-tools/37.0.0/lib/apksigner.jar','verify',str(dist/'SmartVoWifiCall.apk')],check=True)
-print('PASS APK signature, standalone DEX, ZIP integrity, matching embedded APK, isolated engine paths/hash, scripts and package paths.')
+print('PASS APK signature, standalone DEX, ZIP integrity, matching embedded APK, self-owned arm64 Go engine, mihomo hash, scripts and package paths.')

@@ -1,7 +1,10 @@
-"""Build SmartVoWifiCall release APK (Gradle + Kotlin/Compose/Miuix/Backdrop) and standalone KernelSU/Magisk module."""
+"""Build SmartVoWifiCall release APK (Gradle + Kotlin/Compose/Miuix/Backdrop), self-owned Go VoWiFi engine, and standalone KernelSU/Magisk module."""
 import hashlib,json,os,pathlib,shutil,subprocess,zipfile
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
+REPO=ROOT.parent
+ENGINE_DIR=REPO/'engine'
+ENGINE_OUT=ENGINE_DIR/'build/vowifi-engine-arm64'
 SDK=pathlib.Path(os.environ.get('ANDROID_HOME','D:/Android/Sdk'))
 BT=SDK/'build-tools/37.0.0'
 JAVA_HOME=pathlib.Path('C:/Program Files/Eclipse Adoptium/jdk-21.0.10.7-hotspot')
@@ -10,8 +13,15 @@ GRADLE=pathlib.Path('C:/Users/yubai/.gradle/wrapper/dists/gradle-9.4.1-bin/arn2x
 OUT=ROOT/'dist'
 OUT.mkdir(parents=True,exist_ok=True)
 
-def run(args,env=None):
- subprocess.run([str(x) for x in args],check=True,cwd=ROOT,env=env)
+def find_go():
+ found=shutil.which('go')
+ if found:return found
+ fallback=pathlib.Path('C:/Program Files/Go/bin/go.exe')
+ if fallback.exists():return str(fallback)
+ raise RuntimeError('Go toolchain not found in PATH or C:/Program Files/Go/bin/go.exe')
+
+def run(args,env=None,cwd=ROOT):
+ subprocess.run([str(x) for x in args],check=True,cwd=cwd,env=env)
 
 key=ROOT/'local-signing.p12'
 if not key.exists():
@@ -30,10 +40,14 @@ run([JAVA/'java.exe','-jar',BT/'lib/apksigner.jar','verify',OUT/'SmartVoWifiCall
 
 module=ROOT/'module'
 if module.exists():
- engine_meta=json.loads((ROOT/'deps/engine.source.json').read_text())
- engine_path=ROOT/'deps'/engine_meta['artifact']
- if hashlib.sha256(engine_path.read_bytes()).hexdigest()!=engine_meta['sha256']:
-  raise RuntimeError('Bundled engine does not match pinned isolated artifact')
+ ENGINE_OUT.parent.mkdir(parents=True,exist_ok=True)
+ go_env=os.environ.copy()
+ go_env['CGO_ENABLED']='0'
+ go_env['GOOS']='linux'
+ go_env['GOARCH']='arm64'
+ run([find_go(),'build','-trimpath','-ldflags=-s -w','-o',ENGINE_OUT,'./cmd/vowifi-engine'],env=go_env,cwd=ENGINE_DIR)
+ if not ENGINE_OUT.exists():
+  raise RuntimeError(f'Expected native Go engine binary at {ENGINE_OUT}')
  mihomo_meta=json.loads((ROOT/'deps/mihomo.source.json').read_text())
  mihomo_path=ROOT/'deps'/mihomo_meta['artifact']
  if hashlib.sha256(mihomo_path.read_bytes()).hexdigest()!=mihomo_meta['sha256']:
@@ -42,7 +56,7 @@ if module.exists():
   for p in sorted(module.rglob('*')):
    if p.is_file():z.write(p,p.relative_to(module).as_posix())
   z.write(OUT/'SmartVoWifiCall.apk','system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk')
-  z.write(engine_path,'bin/vowifi-engine-arm64')
+  z.write(ENGINE_OUT,'bin/vowifi-engine-arm64')
   z.write(mihomo_path,'bin/mihomo-arm64')
 
 hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.suffix in ['.apk','.zip']}

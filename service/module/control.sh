@@ -165,6 +165,34 @@ check_tun_egress() {
  egress=$(CLASSPATH="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" "$APP_PROCESS" /system/bin com.smartvowificall.ims.root.RootIdentityMain check-egress "$BASE/config/$iccid.json" 2>/dev/null) || return 1
  case "$egress" in *'"ok":true'*) return 0;; *) return 1;; esac
 }
+SIM_AUTH_SOCK="$BASE/run/sim-aka.sock"
+SIM_AUTH_PIDFILE="$BASE/run/sim-auth.pid"
+SIM_AUTH_OWNERFILE="$BASE/run/sim-auth.owner"
+sim_auth_running() {
+ [ -f "$SIM_AUTH_PIDFILE" ] && [ -f "$SIM_AUTH_OWNERFILE" ] || return 1
+ read -r spid < "$SIM_AUTH_PIDFILE" || return 1
+ read -r sopid sostart < "$SIM_AUTH_OWNERFILE" || return 1
+ case "$spid:$sopid:$sostart" in *[!0-9:]*|:*) return 1;; esac
+ [ "$spid" = "$sopid" ] || return 1
+ [ "$(proc_start "$spid" 2>/dev/null || :)" = "$sostart" ] && kill -0 "$spid" 2>/dev/null
+}
+ensure_sim_auth() {
+ if sim_auth_running && [ -S "$SIM_AUTH_SOCK" ]; then return 0; fi
+ rm -f "$SIM_AUTH_SOCK"
+ setsid env CLASSPATH="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" "$APP_PROCESS" /system/bin com.smartvowificall.ims.root.RootSimAuthMain "$SIM_AUTH_SOCK" >>"$BASE/run/sim-auth.log" 2>&1 </dev/null &
+ spid=$!
+ sstart=$(proc_start "$spid" 2>/dev/null || :)
+ if [ -n "$sstart" ]; then
+  printf '%s\n' "$spid" > "$SIM_AUTH_PIDFILE"
+  printf '%s %s\n' "$spid" "$sstart" > "$SIM_AUTH_OWNERFILE"
+ fi
+ k=0
+ while [ "$k" -lt 10 ]; do
+  [ -S "$SIM_AUTH_SOCK" ] && return 0
+  k=$((k+1)); sleep 0.2 2>/dev/null || sleep 1
+ done
+ return 0
+}
 case "$action" in
  status)
   if owned_pid; then printf '{"ok":true,"code":"ENGINE_RUNNING","running":true}\n';exit 0;fi
@@ -192,9 +220,10 @@ case "$action" in
    # Do not adopt a live or unrecorded socket belonging to the original application.
    [ ! -S "/data/local/tmp/vowifi/$iccid.sock" ] && [ ! -S "/data/local/tmp/vowifi/$iccid.audio.sock" ] || fail SOCKET_OWNERSHIP_UNKNOWN
    [ -s "$BASE/config/$iccid.json" ] || fail CONFIG_MISSING
-   mkdir -p "$BASE/logs/$iccid" /data/local/tmp/vowifi /data/adb/nvwims/run
-   chmod 0700 /data/adb/nvwims /data/adb/nvwims/run "$BASE/logs/$iccid"
+   mkdir -p "$BASE/logs/$iccid" /data/local/tmp/vowifi
+   chmod 0700 "$BASE/logs/$iccid"
    chmod o+x /data/local/tmp/vowifi
+   ensure_sim_auth || :
    if uses_builtin_clash; then
     ns=$(clash_netns_path 2>/dev/null || :)
     [ -n "$ns" ] || fail TUN_EGRESS_UNAVAILABLE
@@ -203,9 +232,9 @@ case "$action" in
      mount -o private none /sys || exit 1
      mount -t sysfs sysfs /sys || exit 1
      exec "$@"
-    ' _ "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
+    ' _ "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=auto --sim-socket="$SIM_AUTH_SOCK" --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
    else
-    setsid "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=qrtr --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
+    setsid "$MODDIR/bin/vowifi-engine-arm64" --iccid="$iccid" --config="$BASE/config/$iccid.json" --pid-file="$pidfile" --sim-mode=auto --sim-socket="$SIM_AUTH_SOCK" --log-dir="$BASE/logs/$iccid" >>"$BASE/run/$iccid.launcher.log" 2>&1 </dev/null &
    fi
    pid=$!
    printf '%s\n' "$pid" > "$pidfile"

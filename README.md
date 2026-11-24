@@ -68,8 +68,8 @@
 
 ```mermaid
 flowchart LR
-    SIM["海外卡 / eSIM<br/>关闭单卡蜂窝 · 保留硬件鉴权"] --> IMS["SmartVoWifiCall<br/>独立 ImsService"]
-    IMS --> ENG["VoWiFi 引擎<br/>IKEv2 · IPsec · SIP"]
+    SIM["海外卡 / eSIM<br/>关闭单卡蜂窝 · 跨基带 SIM AKA"] --> IMS["SmartVoWifiCall<br/>独立 ImsService"]
+    IMS --> ENG["自研 Go VoWiFi 引擎<br/>IKEv2 · IPsec · SIP · RTP"]
     ENG --> NS["独立网络命名空间<br/>wfctun0 (198.19.0.1/30)"]
     NS --> CLASH["内置 mihomo<br/>仅代理 VoWiFi · 零系统 VPN"]
     CLASH --> EPDG["运营商 ePDG / IMS"]
@@ -127,14 +127,15 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 
 ## 开发与文档
 
-仓库仅保存源码、测试、模块脚本、文档与交付物校验哈希，不包含签名私钥、个人订阅配置及第三方预编译二进制（来源与 SHA-256 见 `service/deps/`）。
+仓库包含完整的 Android 上层应用、**纯自研零外部依赖 Go VoWiFi 协议栈引擎（`engine/`）**、测试、模块脚本、文档与交付物校验哈希；已彻底移除外部预编译 SoftVoWiFi 二进制依赖，不包含签名私钥或个人订阅配置（内置 `mihomo` 来源与 SHA-256 见 `service/deps/`）。
 
 | 目录 | 用途 |
 | --- | --- |
-| `service/app/` | 独立 `ImsService`、策略与回退引擎、Root 辅助与 Compose 界面 |
+| `engine/` | 纯自研 Go VoWiFi 协议栈（`CGO_ENABLED=0` 静态编译 `arm64`：IKEv2/EAP-AKA/AKA'、用户态 IPsec ESP、IMS SIP/SMS、RTP/DTMF、通用 Binder + 高通 QRTR 跨基带 SIM AKA） |
+| `service/app/` | 独立 `ImsService`、策略与回退引擎、跨基带 `RootSimAuthMain`、Root 辅助与 Compose 界面 |
 | `service/module/` | 模块安装脚本、引擎控制与 Clash 命名空间隔离脚本 |
 | `service/tests/` | 策略、单卡互斥、Clash 净化、通话/音频与生命周期回归测试 |
-| `service/tools/` | 一键构建、源码打包与交付物完整性校验脚本 |
+| `service/tools/` | 一键构建（含自动交叉编译 Go 引擎）、源码打包与交付物完整性校验脚本 |
 | `telemetry-worker/` | 可选 Cloudflare Worker 脱敏遥测中转服务（写入私有 GitHub 仓库） |
 | `VERSION_HISTORY.md` | 完整版本迭代与真机实测记录 |
 | `service/dist/SHA256.json` | 交付物哈希校验清单 |
@@ -145,6 +146,9 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 <br>
 
 ```bash
+# 自研 Go VoWiFi 协议栈离线单元测试与端到端回环验证
+cd engine && go test -count=1 ./...
+
 # 策略、回退、单卡互斥与 Clash 配置净化测试
 python service/tests/policy/run_tests.py
 
@@ -153,7 +157,7 @@ python service/tests/engine/run_tests.py
 python service/tests/engine/run_call_tests.py
 python service/tests/engine/run_feature_tests.py
 
-# 构建 Release APK / 模块 ZIP 并校验签名与哈希
+# 一键编译 Release APK + 静态 arm64 Go 引擎 + 模块 ZIP 并校验签名与完整性
 python service/tools/build.py
 python service/tools/verify_artifacts.py
 ```

@@ -14,8 +14,14 @@ done
 for p in "$BASE/run/"*.pid; do
  [ -f "$p" ] || continue
  id=${p##*/};id=${id%.pid}
+ [ "$id" != "sim-auth" ] || continue
  sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || exit 1
 done
+if [ -f "$BASE/run/sim-auth.pid" ]; then
+ read -r spid < "$BASE/run/sim-auth.pid" 2>/dev/null || spid=
+ [ -n "$spid" ] && kill -TERM "$spid" 2>/dev/null || :
+ rm -f "$BASE/run/sim-auth.pid" "$BASE/run/sim-auth.owner" "$BASE/run/sim-aka.sock"
+fi
 sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || exit 1
 i=0
 until CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1; do

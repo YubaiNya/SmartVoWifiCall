@@ -26,7 +26,38 @@ stop_publisher() {
  network_pid=
  network_start=
 }
-trap stop_publisher EXIT
+stop_sim_auth() {
+ if [ -f "$BASE/run/sim-auth.pid" ] && [ -f "$BASE/run/sim-auth.owner" ]; then
+  read -r spid < "$BASE/run/sim-auth.pid" 2>/dev/null || spid=
+  read -r sopid sostart < "$BASE/run/sim-auth.owner" 2>/dev/null || { sopid=; sostart=; }
+  if [ -n "$spid" ] && [ "$spid" = "$sopid" ] && [ "$(proc_start "$spid" 2>/dev/null || :)" = "$sostart" ]; then
+   kill -TERM "$spid" 2>/dev/null || :
+  fi
+ fi
+ rm -f "$BASE/run/sim-auth.pid" "$BASE/run/sim-auth.owner" "$BASE/run/sim-aka.sock"
+}
+start_sim_auth() {
+ if [ -f "$BASE/run/sim-auth.pid" ] && [ -f "$BASE/run/sim-auth.owner" ]; then
+  read -r spid < "$BASE/run/sim-auth.pid" 2>/dev/null || spid=
+  read -r sopid sostart < "$BASE/run/sim-auth.owner" 2>/dev/null || { sopid=; sostart=; }
+  if [ -n "$spid" ] && [ "$spid" = "$sopid" ] && [ "$(proc_start "$spid" 2>/dev/null || :)" = "$sostart" ] && [ -S "$BASE/run/sim-aka.sock" ]; then
+   return 0
+  fi
+ fi
+ mkdir -p "$BASE/run"; chmod 0700 "$BASE/run"
+ rm -f "$BASE/run/sim-aka.sock"
+ CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootSimAuthMain "$BASE/run/sim-aka.sock" >>"$BASE/run/sim-auth.log" 2>&1 &
+ spid=$!
+ sstart=$(proc_start "$spid" 2>/dev/null || :)
+ if [ -n "$sstart" ]; then
+  (umask 077; printf '%s\n' "$spid" > "$BASE/run/sim-auth.pid"; printf '%s %s\n' "$spid" "$sstart" > "$BASE/run/sim-auth.owner")
+ fi
+}
+stop_helpers() {
+ stop_publisher
+ stop_sim_auth
+}
+trap stop_helpers EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 start_publisher() {
@@ -42,8 +73,10 @@ restore_owned() {
  for p in "$BASE/run/"*.pid; do
   [ -f "$p" ] || continue
   id=${p##*/};id=${id%.pid}
+  [ "$id" != "sim-auth" ] || continue
   sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || return 1
  done
+ stop_sim_auth
  sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || return 1
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootIdentityMain radio-release-all >/dev/null 2>&1 || return 1
  rm -f "$BASE/rollback-pending"
@@ -88,17 +121,20 @@ while :; do
   has_engine=0
   for p in "$BASE/run/"*.pid; do
    [ -f "$p" ] || continue
+   id=${p##*/};id=${id%.pid}
+   [ "$id" != "sim-auth" ] || continue
    has_engine=1
    if [ "$repair_ticks" -le 0 ]; then
-    id=${p##*/};id=${id%.pid}
     sh "$MODDIR/control.sh" repair "$id" >/dev/null 2>&1 || :
    fi
   done
   if [ "$has_engine" = 1 ]; then
-   # Keep the engine's <=15s freshness contract while it is actually in use.
+   # Keep the engine's <=15s freshness contract and cross-baseband SIM AKA daemon alive while in use.
    start_publisher
+   start_sim_auth
   else
    stop_publisher
+   stop_sim_auth
   fi
   if [ "$repair_ticks" -le 0 ]; then repair_ticks=6;fi
   repair_ticks=$((repair_ticks-1))
