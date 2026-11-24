@@ -74,6 +74,11 @@ public final class ClashConfigTest {
     check(!y.contains("auto-route: true") && y.contains("  auto-route: false\n"), "auto-route forced false");
     check(!y.contains("auto-redirect: true") && y.contains("  auto-redirect: false\n"), "auto-redirect forced false");
     check(!y.contains("auto-detect-interface: true") && y.contains("  auto-detect-interface: false\n"), "auto-detect-interface forced false");
+    check(y.contains("routing-mark: 131072\n"), "Android FWMARK_PROTECTED_FROM_VPN (0x20000) bypasses system tun0 VPN");
+    ClashConfig.Built bound = ClashConfig.buildRuntimeConfig(sample, secret, false, ClashConfig.CONTROLLER_PORT, "wlan0");
+    check(bound.yaml.contains("interface-name: \"wlan0\"\n"), "safe physical uplink binds mihomo out of system tun0");
+    ClashConfig.Built tunBlocked = ClashConfig.buildRuntimeConfig(sample, secret, false, ClashConfig.CONTROLLER_PORT, "tun0");
+    check(!tunBlocked.yaml.contains("interface-name:"), "tun0 is never accepted as physical uplink");
     check(!y.contains("enhanced-mode: fake-ip") && y.contains("  enhanced-mode: redir-host\n"), "redir-host enforced");
     check(y.contains("  fake-ip-range: 198.19.0.1/16\n"), "wfctun0 subnet anchored to 198.19.0.1");
     check(!y.contains("GEOIP,CN,DIRECT"), "user rules stripped");

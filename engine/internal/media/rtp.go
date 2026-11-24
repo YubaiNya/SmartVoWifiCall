@@ -78,12 +78,17 @@ func DecodeRTP(raw []byte) (RTPPacket, error) {
 }
 
 // JitterBuffer reorders incoming RTP frames by sequence number and smooths 20ms playout.
+// Automatically resyncs on SSRC changes (e.g. ringback->callee switch), RTP Marker, or large gaps
+// so carrier media handoffs / DTX pauses never stall audio playout.
 type JitterBuffer struct {
 	mu          sync.Mutex
 	frames      map[uint16][]byte
 	initialized bool
+	hasSSRC     bool
+	ssrc        uint32
 	nextSeq     uint16
 	targetDepth int
+	missStreak  int
 }
 
 func NewJitterBuffer(targetDepth int) *JitterBuffer {
@@ -97,20 +102,47 @@ func NewJitterBuffer(targetDepth int) *JitterBuffer {
 }
 
 func (jb *JitterBuffer) Push(seq uint16, payload []byte) {
+	jb.PushPacket(0, false, seq, payload, false)
+}
+
+func (jb *JitterBuffer) PushPacket(ssrc uint32, hasSSRC bool, seq uint16, payload []byte, marker bool) {
 	jb.mu.Lock()
 	defer jb.mu.Unlock()
+	// Resync immediately if carrier switched RTP media source (SSRC changed, e.g. early media -> callee).
+	if hasSSRC && jb.hasSSRC && ssrc != jb.ssrc {
+		jb.frames = make(map[uint16][]byte)
+		jb.initialized = false
+		jb.missStreak = 0
+	}
+	if hasSSRC {
+		jb.ssrc = ssrc
+		jb.hasSSRC = true
+	}
 	if !jb.initialized {
 		jb.initialized = true
 		jb.nextSeq = seq
-	}
-	// Drop stale packets older than nextSeq (using 16-bit wrap-safe signed diff)
-	if int16(seq-jb.nextSeq) < 0 {
+		jb.frames[seq] = append([]byte(nil), payload...)
 		return
 	}
-	if len(jb.frames) > 32 {
-		// Prevent unbounded lag: snap forward
+	diff := int16(seq - jb.nextSeq)
+	// Large jump backward or forward (e.g. carrier sequence reset, hold/resume, or talkspurt marker after DTX):
+	// resync immediately instead of dropping all future audio.
+	if diff < -40 || diff > 40 || (marker && len(jb.frames) == 0 && diff != 0) {
 		jb.frames = make(map[uint16][]byte)
 		jb.nextSeq = seq
+		jb.missStreak = 0
+		jb.frames[seq] = append([]byte(nil), payload...)
+		return
+	}
+	// Drop mildly late duplicate/stale packets already played out.
+	if diff < 0 {
+		return
+	}
+	if len(jb.frames) > 20 {
+		// Prevent unbounded latency buildup: snap to newest frames.
+		jb.frames = make(map[uint16][]byte)
+		jb.nextSeq = seq
+		jb.missStreak = 0
 	}
 	jb.frames[seq] = append([]byte(nil), payload...)
 }
@@ -124,12 +156,33 @@ func (jb *JitterBuffer) Pop() ([]byte, bool) {
 	if p, ok := jb.frames[jb.nextSeq]; ok {
 		delete(jb.frames, jb.nextSeq)
 		jb.nextSeq++
+		jb.missStreak = 0
 		return p, true
 	}
-	// Packet loss: if newer packets have accumulated past targetDepth, advance over gap (PLC silence).
-	if len(jb.frames) >= jb.targetDepth {
+	jb.missStreak++
+	// Packet loss or DTX gap: once buffered depth is met or 2 ticks elapsed, jump directly
+	// to the earliest available buffered packet instead of creeping 1 seq/tick through silence.
+	if len(jb.frames) >= jb.targetDepth || jb.missStreak >= 2 {
+		bestSeq := uint16(0)
+		bestDiff := int16(32767)
+		found := false
+		for s := range jb.frames {
+			d := int16(s - jb.nextSeq)
+			if d >= 0 && (!found || d < bestDiff) {
+				bestDiff = d
+				bestSeq = s
+				found = true
+			}
+		}
+		if found {
+			p := jb.frames[bestSeq]
+			delete(jb.frames, bestSeq)
+			jb.nextSeq = bestSeq + 1
+			jb.missStreak = 0
+			return p, true
+		}
 		jb.nextSeq++
-		return nil, false
+		jb.missStreak = 0
 	}
 	return nil, false
 }
@@ -275,10 +328,14 @@ func (s *Session) rxLoop() {
 		if err != nil {
 			continue
 		}
-		if rtp.PayloadType == s.dtmfPT {
+		if rtp.PayloadType == s.dtmfPT || rtp.PayloadType == 13 || (rtp.PayloadType >= 64 && rtp.PayloadType <= 95) {
+			// Skip RFC 4733 DTMF, RFC 3389 Comfort Noise (PT=13), and muxed RTCP (PT 64-95).
 			continue
 		}
-		s.jitter.Push(rtp.Seq, rtp.Payload)
+		if len(rtp.Payload) == 0 {
+			continue
+		}
+		s.jitter.PushPacket(rtp.SSRC, true, rtp.Seq, rtp.Payload, rtp.Marker)
 	}
 }
 

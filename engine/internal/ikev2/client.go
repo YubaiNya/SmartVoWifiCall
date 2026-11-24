@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/diag"
@@ -49,6 +50,8 @@ type Client struct {
 	stopCh    chan struct{}
 	deadCh    chan struct{}
 	deadOnce  sync.Once
+	lastRecv  atomic.Int64
+	lastSend  atomic.Int64
 	wg        sync.WaitGroup
 }
 
@@ -60,7 +63,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 		cfg.APN = "ims"
 	}
 	if cfg.DPDInterval <= 0 {
-		cfg.DPDInterval = 20 * time.Second
+		cfg.DPDInterval = 35 * time.Second
 	}
 	raddr, err := net.ResolveUDPAddr("udp4", cfg.EPDGAddr)
 	if err != nil {
@@ -73,6 +76,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 
 	var spib [8]byte
 	_, _ = rand.Read(spib[:])
+	now := time.Now().UnixNano()
 	c := &Client{
 		cfg:      cfg,
 		conn:     conn,
@@ -82,6 +86,8 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 		stopCh:   make(chan struct{}),
 		deadCh:   make(chan struct{}),
 	}
+	c.lastRecv.Store(now)
+	c.lastSend.Store(now)
 
 	c.wg.Add(1)
 	go c.readLoop(conn)
@@ -118,7 +124,25 @@ func (c *Client) SendESP(esp []byte) error {
 		return net.ErrClosed
 	}
 	_, err := conn.Write(esp)
+	if err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
 	return err
+}
+
+func (c *Client) sendNATKeepalive() {
+	c.mu.Lock()
+	closed := c.closed
+	natt := c.nattMode
+	conn := c.conn
+	c.mu.Unlock()
+	if closed || !natt || conn == nil {
+		return
+	}
+	// RFC 3948 §4: single 0xFF byte keeps NAT/proxy UDP mapping alive without touching IKE msgID.
+	if _, err := conn.Write([]byte{0xFF}); err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
 }
 
 func (c *Client) sendIKE(pkt []byte) error {
@@ -126,13 +150,17 @@ func (c *Client) sendIKE(pkt []byte) error {
 	natt := c.nattMode
 	conn := c.conn
 	c.mu.Unlock()
+	var err error
 	if natt {
 		framed := make([]byte, 4+len(pkt))
 		copy(framed[4:], pkt)
-		_, err := conn.Write(framed)
-		return err
+		_, err = conn.Write(framed)
+	} else {
+		_, err = conn.Write(pkt)
 	}
-	_, err := conn.Write(pkt)
+	if err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
 	return err
 }
 
@@ -185,6 +213,7 @@ func (c *Client) readLoop(conn *net.UDPConn) {
 		if n < 4 {
 			continue
 		}
+		c.lastRecv.Store(time.Now().UnixNano())
 		data := make([]byte, n)
 		copy(data, buf[:n])
 
@@ -729,16 +758,31 @@ func (c *Client) handleEAPAKAChallenge(ctx context.Context, eapID, eapType byte,
 
 func (c *Client) dpdLoop() {
 	defer c.wg.Done()
-	timer := time.NewTimer(c.cfg.DPDInterval)
-	defer timer.Stop()
-	consecutiveMisses := 0
+	// Lightweight 15s tick handles RFC 3948 NAT-T keepalives and RFC 7296 §2.4 idle-only DPD.
+	tickInterval := 15 * time.Second
+	if c.cfg.DPDInterval < tickInterval {
+		tickInterval = c.cfg.DPDInterval
+	}
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.stopCh:
 			return
 		case <-c.deadCh:
 			return
-		case <-timer.C:
+		case <-ticker.C:
+			now := time.Now()
+			// Keep NAT/proxy UDP binding warm without consuming an IKE MessageID.
+			if now.Sub(time.Unix(0, c.lastSend.Load())) >= 12*time.Second {
+				c.sendNATKeepalive()
+			}
+			// RFC 7296 §2.4: If any ESP or IKE packet arrived recently (e.g. active voice RTP),
+			// the tunnel is proven alive — never fire DPD or disrupt an active call.
+			if now.Sub(time.Unix(0, c.lastRecv.Load())) < c.cfg.DPDInterval {
+				continue
+			}
+
 			c.mu.Lock()
 			c.msgID++
 			id := c.msgID
@@ -746,7 +790,6 @@ func (c *Client) dpdLoop() {
 			spii, spir := c.spii, c.spir
 			c.mu.Unlock()
 			if keys == nil {
-				timer.Reset(c.cfg.DPDInterval)
 				continue
 			}
 			dpd, err := EncodeEncryptedPacket(Header{
@@ -757,32 +800,61 @@ func (c *Client) dpdLoop() {
 				MessageID: id,
 			}, nil, keys, true)
 			if err != nil {
-				timer.Reset(c.cfg.DPDInterval)
 				continue
 			}
-			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
-			_, err = c.exchange(ctx, id, dpd)
-			cancel()
-			if err != nil {
+
+			// RFC 7296 §2.3 (window size = 1): retransmit the EXACT SAME msgID packet
+			// with exponential backoff; NEVER increment msgID on retry.
+			if !c.runDPDExchange(id, dpd) {
 				select {
 				case <-c.stopCh:
 					return
 				default:
 				}
-				consecutiveMisses++
-				if consecutiveMisses >= 2 {
-					c.markDead("DPD_TIMEOUT")
-					return
-				}
-				// Fast retry once after 2s so dead tunnel drops VoWiFi within ~10s,
-				// while tolerating a single transient UDP packet loss.
-				timer.Reset(2 * time.Second)
-				continue
+				c.markDead("DPD_TIMEOUT")
+				return
 			}
-			consecutiveMisses = 0
-			timer.Reset(c.cfg.DPDInterval)
 		}
 	}
+}
+
+func (c *Client) runDPDExchange(msgID uint32, pkt []byte) bool {
+	ch := make(chan []byte, 1)
+	c.mu.Lock()
+	c.pending[msgID] = ch
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, msgID)
+		c.mu.Unlock()
+	}()
+
+	startRecv := c.lastRecv.Load()
+	waits := []time.Duration{2 * time.Second, 3 * time.Second, 4 * time.Second, 6 * time.Second}
+	for _, w := range waits {
+		if err := c.sendIKE(pkt); err != nil {
+			return false
+		}
+		timer := time.NewTimer(w)
+		select {
+		case <-ch:
+			timer.Stop()
+			return true
+		case <-c.stopCh:
+			timer.Stop()
+			return true
+		case <-c.deadCh:
+			timer.Stop()
+			return false
+		case <-timer.C:
+			// If ESP/IKE traffic resumed while probing, peer is alive; keep waiting cleanly on next tick
+			// ONLY if the DPD response also arrives, otherwise keep retransmitting same msgID to keep window synced.
+			if c.lastRecv.Load() > startRecv {
+				// Peer is still sending ESP; try one more retransmit of same msgID or continue loop.
+			}
+		}
+	}
+	return c.lastRecv.Load() > startRecv
 }
 
 func (c *Client) Close() error {

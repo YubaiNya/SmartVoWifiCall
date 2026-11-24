@@ -354,6 +354,7 @@ final class NewCallSession extends ImsCallSessionImplBase {
       feature.calls.remove(id, this);
     if (feature.pendingOutgoing == this)
       feature.pendingOutgoing = null;
+    feature.rt.onCallEndedRefreshOverride(owner);
     // A local failure is not proof that the remote dialog ended. The feature clears
     // callActive from a versioned engine snapshot/terminal event, not this local close.
     // Pipe close / AudioRecord.stop can wait for an I/O thread. Never hold the

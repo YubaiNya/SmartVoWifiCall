@@ -1490,6 +1490,29 @@ final class RuntimeController {
       // Retried automatically on the next policy tick.
     }
   }
+  /**
+   * Android Telecom can clear setVoiceServiceStateOverride(true) right after a call disconnects,
+   * causing an immediate second dial to fail with "Mobile network not available". Re-sync right
+   * away and again after 400ms once Telecom finishes call teardown.
+   */
+  void onCallEndedRefreshOverride(Binding b) {
+    if (b == null) return;
+    io.execute(() -> {
+      if (bindings.get(b.slot()) == b && b.registered && billable()) {
+        syncVoiceServiceOverride(b, true);
+      }
+      try {
+        Thread.sleep(400L);
+      } catch (InterruptedException ignored) {
+        Thread.currentThread().interrupt();
+        return;
+      }
+      if (bindings.get(b.slot()) == b && b.registered && billable()) {
+        syncVoiceServiceOverride(b, true);
+      }
+    });
+    kick();
+  }
   private boolean frameworkVoiceInService(Binding b) {
     try {
       android.telephony.ServiceState state = context

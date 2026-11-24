@@ -103,6 +103,8 @@ public final class RootClashMain {
         output = closeConnection(id);
       } else if (mode.equals("close-all-connections") && args.length == 1) {
         output = closeAllConnections();
+      } else if (mode.equals("sync-uplink") && args.length == 1) {
+        output = syncUplink();
       } else {
         throw new Failure("INVALID_ARGUMENT");
       }
@@ -215,10 +217,86 @@ public final class RootClashMain {
     return "";
   }
 
+  /**
+   * Detects the active physical IPv4 uplink interface (e.g. wlan0, rmnet_data3) while strictly
+   * bypassing any active system VPN (tun0) using Android AOSP FWMARK_PROTECTED_FROM_VPN (0x20000).
+   */
+  private static String detectPhysicalUplink() {
+    try {
+      java.lang.Process p = new ProcessBuilder("/system/bin/ip", "-4", "route", "get", "1.1.1.1", "mark", "0x20000")
+          .redirectErrorStream(true).start();
+      try (InputStream is = p.getInputStream()) {
+        byte[] raw = readAllLimited(is, 4096);
+        if (p.waitFor(2, TimeUnit.SECONDS)) {
+          String[] tokens = new String(raw, StandardCharsets.UTF_8).trim().split("\\s+");
+          for (int i = 0; i + 1 < tokens.length; i++) {
+            if ("dev".equals(tokens[i]) && ClashConfig.isSafePhysicalUplink(tokens[i + 1])) {
+              return tokens[i + 1];
+            }
+          }
+        }
+      } finally {
+        p.destroy();
+      }
+    } catch (Exception ignored) {}
+    // Fallback: inspect live IPv4 interfaces, preferring wlan*/eth* over cellular, never tun*.
+    String fallback = "";
+    try {
+      Enumeration<NetworkInterface> ifaces = NetworkInterface.getNetworkInterfaces();
+      while (ifaces != null && ifaces.hasMoreElements()) {
+        NetworkInterface nif = ifaces.nextElement();
+        String name = nif.getName();
+        if (!nif.isUp() || nif.isLoopback() || !ClashConfig.isSafePhysicalUplink(name)) continue;
+        boolean hasV4 = false;
+        Enumeration<InetAddress> addrs = nif.getInetAddresses();
+        while (addrs.hasMoreElements()) {
+          InetAddress a = addrs.nextElement();
+          if (a instanceof Inet4Address && !a.isLoopbackAddress()) { hasV4 = true; break; }
+        }
+        if (!hasV4) continue;
+        if (name.startsWith("wlan") || name.startsWith("eth")) return name;
+        if (fallback.isEmpty()) fallback = name;
+      }
+    } catch (Exception ignored) {}
+    return fallback;
+  }
+
+  private static JSONObject syncUplink() throws Exception {
+    JSONObject ctl = runControl("status");
+    if (!ctl.optBoolean("running", false)) {
+      return new JSONObject().put("ok", true).put("code", "CLASH_NOT_RUNNING").put("changed", false);
+    }
+    String uplink = detectPhysicalUplink();
+    boolean changed = syncUplinkIfNeeded(uplink);
+    return new JSONObject()
+        .put("ok", true)
+        .put("code", changed ? "CLASH_UPLINK_UPDATED" : "CLASH_UPLINK_UNCHANGED")
+        .put("uplink", uplink)
+        .put("changed", changed);
+  }
+
+  private static boolean syncUplinkIfNeeded(String uplink) {
+    if (!ClashConfig.isSafePhysicalUplink(uplink)) return false;
+    try {
+      JSONObject cfg = controllerGet("/configs");
+      String current = cfg.optString("interface-name", "");
+      if (uplink.equals(current)) return false;
+      controllerPatch("/configs", new JSONObject().put("interface-name", uplink).toString());
+      try {
+        controllerDelete("/connections");
+      } catch (Exception ignored) {}
+      return true;
+    } catch (Exception ignored) {
+      return false;
+    }
+  }
+
   private static JSONObject saveProfile(String rawYaml, String subscriptionUrl) throws Exception {
     String secret = ensureSecret();
     ControllerSettings cs = readControllerSettings();
-    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(rawYaml, secret, cs.externalLan, cs.port);
+    String uplink = detectPhysicalUplink();
+    ClashConfig.Built built = ClashConfig.buildRuntimeConfig(
+        rawYaml, secret, cs.externalLan, cs.port, uplink);
     writeAtomic("profile.yaml", rawYaml.getBytes(StandardCharsets.UTF_8));
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     if (subscriptionUrl != null) {
@@ -227,6 +305,7 @@ public final class RootClashMain {
     return new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_PROFILE_SAVED")
+        .put("uplink", uplink)
         .put("proxyCount", built.proxyNames.size())
         .put("providerCount", built.providerNames.size());
   }
@@ -239,12 +318,14 @@ public final class RootClashMain {
     if (bytes.length > MAX_PROFILE_BYTES) throw new Failure("CLASH_PROFILE_TOO_LARGE");
     String secret = ensureSecret();
     ControllerSettings cs = readControllerSettings();
+    String uplink = detectPhysicalUplink();
     ClashConfig.Built built = ClashConfig.buildRuntimeConfig(
-        new String(bytes, StandardCharsets.UTF_8), secret, cs.externalLan, cs.port);
+        new String(bytes, StandardCharsets.UTF_8), secret, cs.externalLan, cs.port, uplink);
     writeAtomic("runtime.yaml", built.yaml.getBytes(StandardCharsets.UTF_8));
     return new JSONObject()
         .put("ok", true)
         .put("code", "CLASH_RUNTIME_BUILT")
+        .put("uplink", uplink)
         .put("proxyCount", built.proxyNames.size())
         .put("providerCount", built.providerNames.size());
   }
@@ -493,6 +574,7 @@ public final class RootClashMain {
         .put("currentNode", "")
         .put("nodes", new JSONArray());
     if (running) {
+      syncUplinkIfNeeded(detectPhysicalUplink());
       try {
         JSONObject allProxies = controllerGet("/proxies").optJSONObject("proxies");
         JSONObject group = allProxies == null ? null : allProxies.optJSONObject(ClashConfig.PROXY_GROUP);
@@ -591,6 +673,32 @@ public final class RootClashMain {
           respHeaders, "", null);
     } finally {
       conn.disconnect();
+    }
+  }
+
+  private static void controllerPatch(String path, String jsonBody) throws Exception {
+    String secret = readTextIfPresent("controller.secret");
+    ControllerSettings cs = readControllerSettings();
+    byte[] payload = jsonBody.getBytes(StandardCharsets.UTF_8);
+    StringBuilder req = new StringBuilder();
+    req.append("PATCH ").append(path).append(" HTTP/1.1\r\n");
+    req.append("Host: ").append(ClashConfig.CONTROLLER_HOST).append(':').append(cs.port).append("\r\n");
+    req.append("Content-Type: application/json\r\n");
+    if (!secret.isEmpty()) req.append("Authorization: Bearer ").append(secret).append("\r\n");
+    req.append("Content-Length: ").append(payload.length).append("\r\n");
+    req.append("Connection: close\r\n\r\n");
+    try (java.net.Socket sock = new java.net.Socket()) {
+      sock.connect(new java.net.InetSocketAddress(ClashConfig.CONTROLLER_HOST, cs.port), 2000);
+      sock.setSoTimeout(3000);
+      OutputStream out = sock.getOutputStream();
+      out.write(req.toString().getBytes(StandardCharsets.UTF_8));
+      out.write(payload);
+      out.flush();
+      byte[] resp = readAllLimited(sock.getInputStream(), 2048);
+      String statusLine = new String(resp, StandardCharsets.UTF_8);
+      if (!statusLine.startsWith("HTTP/1.1 2") && !statusLine.startsWith("HTTP/1.0 2")) {
+        throw new Failure("CLASH_API_PATCH_FAILED");
+      }
     }
   }
 

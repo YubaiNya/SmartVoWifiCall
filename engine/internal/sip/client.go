@@ -47,8 +47,11 @@ type callDialog struct {
 	localTag     string
 	remoteTag    string
 	remoteURI    string
+	remoteTarget string   // remote Contact URI for in-dialog requests (ACK/PRACK/BYE)
+	routeSet     []string // reversed Record-Route set for in-dialog requests
 	localRTPPort uint16
 	remoteMedia  *MediaAnswer
+	earlyStarted bool
 	inviteReq    *Message // for incoming INVITE 200/486 reply or outgoing CANCEL
 	inviteBranch string
 	inviteCSeq   int
@@ -362,10 +365,7 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 		SessionID:  uint64(time.Now().Unix()),
 		IncludeAMR: c.cfg.IncludeAMR,
 	})
-	fromURI := c.cfg.IMPU
-	if c.associatedURI != "" {
-		fromURI = c.associatedURI
-	}
+	fromURI := c.effectiveFromURI()
 	inv := &Message{Method: "INVITE", RequestURI: reqURI, Body: sdp}
 	inv.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
 	inv.AddHeader("Max-Forwards", "70")
@@ -374,7 +374,10 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 	inv.AddHeader("Call-ID", sipCID)
 	inv.AddHeader("CSeq", fmt.Sprintf("%d INVITE", cseq))
 	inv.AddHeader("Contact", c.contactURI())
-	inv.AddHeader("P-Access-Network-Info", "IEEE-802.11;i-wlan-node-id=000000000000")
+	if sr := c.effectiveServiceRoute(); sr != "" {
+		inv.AddHeader("Route", sr)
+	}
+	inv.AddHeader("Supported", "100rel")
 	inv.AddHeader("Content-Type", "application/sdp")
 	inv.AddHeader("Allow", "INVITE, ACK, CANCEL, BYE, PRACK, UPDATE, MESSAGE")
 
@@ -385,19 +388,53 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 		return nil, err
 	}
 
+	// RFC 3261 Timer A: retransmit INVITE (500ms, 1s, 2s, 4s) until any provisional/final reply arrives.
+	retransDelay := 500 * time.Millisecond
+	retransTimer := time.NewTimer(retransDelay)
+	defer retransTimer.Stop()
+	gotResponse := false
+
 	for {
+		var retransC <-chan time.Time
+		if !gotResponse {
+			retransC = retransTimer.C
+		}
 		select {
+		case <-retransC:
+			if err := c.sendSIP(inv); err != nil {
+				c.endDialog(dlg, "SEND_FAILED")
+				return nil, err
+			}
+			if retransDelay < 4*time.Second {
+				retransDelay *= 2
+			}
+			retransTimer.Reset(retransDelay)
 		case resp := <-txCh:
+			gotResponse = true
 			if resp.StatusCode >= 100 && resp.StatusCode < 200 {
 				if resp.StatusCode == 180 || resp.StatusCode == 183 {
+					var earlyAns *MediaAnswer
+					var startEarly bool
 					c.mu.Lock()
 					if toTag := extractTag(resp.GetHeader("To")); toTag != "" {
 						dlg.remoteTag = toTag
+					}
+					c.captureDialogRouting(dlg, resp)
+					if len(resp.Body) > 0 {
+						if ans, err := ParseSDP(resp.Body); err == nil {
+							dlg.remoteMedia = ans
+							earlyAns = ans
+							startEarly = true
+							dlg.earlyStarted = true
+						}
 					}
 					dlg.stage = "CONNECTING"
 					c.revision++
 					rev = c.revision
 					c.mu.Unlock()
+					if startEarly && earlyAns != nil && c.cfg.OnMediaStart != nil {
+						c.cfg.OnMediaStart(dlg.id, dlg.localRTPPort, earlyAns)
+					}
 					c.emitCallEvent("callState", dlg, rev)
 					// Support 100rel PRACK if required by carrier
 					if strings.Contains(strings.ToLower(resp.GetHeader("Require")), "100rel") {
@@ -407,12 +444,27 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 				continue
 			}
 			if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+				var finalAns *MediaAnswer
+				var needMediaStart bool
 				c.mu.Lock()
 				if toTag := extractTag(resp.GetHeader("To")); toTag != "" {
 					dlg.remoteTag = toTag
 				}
-				if ans, err := ParseSDP(resp.Body); err == nil {
-					dlg.remoteMedia = ans
+				c.captureDialogRouting(dlg, resp)
+				if len(resp.Body) > 0 {
+					if ans, err := ParseSDP(resp.Body); err == nil {
+						changed := !dlg.earlyStarted || dlg.remoteMedia == nil ||
+							!dlg.remoteMedia.RemoteIP.Equal(ans.RemoteIP) ||
+							dlg.remoteMedia.RemotePort != ans.RemotePort ||
+							dlg.remoteMedia.Codec != ans.Codec ||
+							dlg.remoteMedia.PayloadTyp != ans.PayloadTyp
+						dlg.remoteMedia = ans
+						finalAns = ans
+						needMediaStart = changed
+					}
+				} else if dlg.remoteMedia != nil && !dlg.earlyStarted {
+					finalAns = dlg.remoteMedia
+					needMediaStart = true
 				}
 				dlg.stage = "IN_CALL"
 				c.revision++
@@ -420,8 +472,8 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 				c.mu.Unlock()
 
 				c.sendACK(dlg, resp)
-				if dlg.remoteMedia != nil && c.cfg.OnMediaStart != nil {
-					c.cfg.OnMediaStart(dlg.id, dlg.localRTPPort, dlg.remoteMedia)
+				if needMediaStart && finalAns != nil && c.cfg.OnMediaStart != nil {
+					c.cfg.OnMediaStart(dlg.id, dlg.localRTPPort, finalAns)
 				}
 				c.emitCallEvent("callState", dlg, rev)
 				return map[string]any{"callId": dlg.id, "state": "IN_CALL"}, nil
@@ -484,7 +536,46 @@ func (c *Client) Reject(ctx context.Context, callID string) (map[string]any, err
 	return map[string]any{"callId": callID, "state": "ENDED"}, nil
 }
 
+func (c *Client) effectiveFromURI() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.associatedURI != "" {
+		return c.associatedURI
+	}
+	return c.cfg.IMPU
+}
+
+func (c *Client) effectiveServiceRoute() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.serviceRoute
+}
+
+func (c *Client) captureDialogRouting(dlg *callDialog, resp *Message) {
+	if contact := extractURI(resp.GetHeader("Contact")); contact != "" &&
+		(strings.HasPrefix(contact, "sip:") || strings.HasPrefix(contact, "sips:") || strings.HasPrefix(contact, "tel:")) {
+		dlg.remoteTarget = contact
+	}
+	rrs := resp.GetAllHeaders("Record-Route")
+	if len(rrs) > 0 {
+		// RFC 3261 §12.1.2: UAC route set is the Record-Route headers in reverse order.
+		var routes []string
+		for i := len(rrs) - 1; i >= 0; i-- {
+			for _, part := range strings.Split(rrs[i], ",") {
+				if p := strings.TrimSpace(part); p != "" {
+					routes = append(routes, p)
+				}
+			}
+		}
+		if len(routes) > 0 {
+			dlg.routeSet = routes
+		}
+	}
+}
+
 func (c *Client) CancelCall(ctx context.Context, callID string) (map[string]any, error) {
+	fromURI := c.effectiveFromURI()
+	sr := c.effectiveServiceRoute()
 	c.mu.Lock()
 	dlg := c.activeCall
 	if dlg == nil || dlg.id != callID {
@@ -494,10 +585,13 @@ func (c *Client) CancelCall(ctx context.Context, callID string) (map[string]any,
 	cancelMsg := &Message{Method: "CANCEL", RequestURI: dlg.remoteURI}
 	cancelMsg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), dlg.inviteBranch))
 	cancelMsg.AddHeader("Max-Forwards", "70")
-	cancelMsg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, dlg.localTag))
+	cancelMsg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", fromURI, dlg.localTag))
 	cancelMsg.AddHeader("To", fmt.Sprintf("<%s>", dlg.remoteURI))
 	cancelMsg.AddHeader("Call-ID", dlg.sipCallID)
 	cancelMsg.AddHeader("CSeq", fmt.Sprintf("%d CANCEL", dlg.inviteCSeq))
+	if sr != "" {
+		cancelMsg.AddHeader("Route", sr)
+	}
 	c.mu.Unlock()
 
 	_ = c.sendSIP(cancelMsg)
@@ -506,18 +600,23 @@ func (c *Client) CancelCall(ctx context.Context, callID string) (map[string]any,
 }
 
 func (c *Client) Hangup(ctx context.Context, callID string) (map[string]any, error) {
+	fromURI := c.effectiveFromURI()
 	c.mu.Lock()
 	dlg := c.activeCall
 	if dlg == nil || dlg.id != callID {
 		c.mu.Unlock()
 		return map[string]any{"callId": callID, "state": "ENDED"}, nil
 	}
+	target := dlg.remoteURI
+	if dlg.remoteTarget != "" {
+		target = dlg.remoteTarget
+	}
 	branch := "z9hG4bK" + randHex(8)
 	cseq := int(c.cseq.Add(1))
-	bye := &Message{Method: "BYE", RequestURI: dlg.remoteURI}
+	bye := &Message{Method: "BYE", RequestURI: target}
 	bye.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
 	bye.AddHeader("Max-Forwards", "70")
-	bye.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, dlg.localTag))
+	bye.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", fromURI, dlg.localTag))
 	toHdr := fmt.Sprintf("<%s>", dlg.remoteURI)
 	if dlg.remoteTag != "" {
 		toHdr += ";tag=" + dlg.remoteTag
@@ -525,6 +624,9 @@ func (c *Client) Hangup(ctx context.Context, callID string) (map[string]any, err
 	bye.AddHeader("To", toHdr)
 	bye.AddHeader("Call-ID", dlg.sipCallID)
 	bye.AddHeader("CSeq", fmt.Sprintf("%d BYE", cseq))
+	for _, r := range dlg.routeSet {
+		bye.AddHeader("Route", r)
+	}
 	c.mu.Unlock()
 
 	_ = c.sendSIP(bye)
@@ -549,11 +651,13 @@ func (c *Client) SendSMS(ctx context.Context, number, text string) (map[string]a
 	msg := &Message{Method: "MESSAGE", RequestURI: reqURI, Body: body}
 	msg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
 	msg.AddHeader("Max-Forwards", "70")
-	msg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, randHex(6)))
+	msg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), randHex(6)))
 	msg.AddHeader("To", fmt.Sprintf("<%s>", reqURI))
 	msg.AddHeader("Call-ID", smsID+"@"+c.localIP.String())
 	msg.AddHeader("CSeq", fmt.Sprintf("%d MESSAGE", cseq))
-	msg.AddHeader("P-Access-Network-Info", "IEEE-802.11;i-wlan-node-id=000000000000")
+	if sr := c.effectiveServiceRoute(); sr != "" {
+		msg.AddHeader("Route", sr)
+	}
 	msg.AddHeader("Content-Type", "application/vnd.3gpp.sms")
 
 	resp, err := c.sendRequestWaitFinal(ctx, branch, msg)
@@ -683,28 +787,44 @@ func (c *Client) sendPRACK(dlg *callDialog, prov *Message) {
 	if rseq == "" {
 		return
 	}
+	target := dlg.remoteURI
+	if dlg.remoteTarget != "" {
+		target = dlg.remoteTarget
+	}
 	branch := "z9hG4bK" + randHex(8)
 	cseq := int(c.cseq.Add(1))
-	prack := &Message{Method: "PRACK", RequestURI: dlg.remoteURI}
+	prack := &Message{Method: "PRACK", RequestURI: target}
 	prack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
 	prack.AddHeader("Max-Forwards", "70")
-	prack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, dlg.localTag))
+	prack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), dlg.localTag))
 	prack.AddHeader("To", prov.GetHeader("To"))
 	prack.AddHeader("Call-ID", dlg.sipCallID)
 	prack.AddHeader("CSeq", fmt.Sprintf("%d PRACK", cseq))
 	prack.AddHeader("RAck", rseq+" "+prov.GetHeader("CSeq"))
+	for _, r := range dlg.routeSet {
+		prack.AddHeader("Route", r)
+	}
 	_ = c.sendSIP(prack)
 }
 
 func (c *Client) sendACK(dlg *callDialog, resp *Message) {
+	target := dlg.remoteURI
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 && dlg.remoteTarget != "" {
+		target = dlg.remoteTarget
+	}
 	branch := "z9hG4bK" + randHex(8)
-	ack := &Message{Method: "ACK", RequestURI: dlg.remoteURI}
+	ack := &Message{Method: "ACK", RequestURI: target}
 	ack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
 	ack.AddHeader("Max-Forwards", "70")
-	ack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, dlg.localTag))
+	ack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), dlg.localTag))
 	ack.AddHeader("To", resp.GetHeader("To"))
 	ack.AddHeader("Call-ID", dlg.sipCallID)
 	ack.AddHeader("CSeq", fmt.Sprintf("%d ACK", dlg.inviteCSeq))
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		for _, r := range dlg.routeSet {
+			ack.AddHeader("Route", r)
+		}
+	}
 	_ = c.sendSIP(ack)
 }
 

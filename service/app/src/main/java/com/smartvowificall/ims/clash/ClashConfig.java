@@ -23,6 +23,8 @@ public final class ClashConfig {
   public static final int ROUTE_TABLE = 209;
   public static final int RULE_PREF_OIF = 1050;
   public static final int RULE_PREF_SRC = 1051;
+  /** Android AOSP FWMARK_PROTECTED_FROM_VPN (0x20000): bypasses system tun0 VPN. */
+  public static final int VPN_PROTECT_MARK = 0x20000;
 
   private static final Set<String> RESERVED_TARGETS = new HashSet<>(Arrays.asList(
       "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE", "GLOBAL"));
@@ -54,11 +56,28 @@ public final class ClashConfig {
   private ClashConfig() {}
 
   public static Built buildRuntimeConfig(String profileYaml, String secret) {
-    return buildRuntimeConfig(profileYaml, secret, false, CONTROLLER_PORT);
+    return buildRuntimeConfig(profileYaml, secret, false, CONTROLLER_PORT, null);
   }
 
   public static Built buildRuntimeConfig(
       String profileYaml, String secret, boolean externalControllerLan, int controllerPort) {
+    return buildRuntimeConfig(profileYaml, secret, externalControllerLan, controllerPort, null);
+  }
+
+  public static boolean isSafePhysicalUplink(String iface) {
+    if (iface == null || iface.isEmpty()) return false;
+    if (!iface.matches("[A-Za-z0-9_.-]{1,15}")) return false;
+    String lower = iface.toLowerCase(Locale.ROOT);
+    return !lower.equals("lo")
+        && !lower.startsWith("tun")
+        && !lower.startsWith("wfctun")
+        && !lower.startsWith("utun")
+        && !lower.startsWith("dummy");
+  }
+
+  public static Built buildRuntimeConfig(
+      String profileYaml, String secret, boolean externalControllerLan, int controllerPort,
+      String physicalUplink) {
     if (profileYaml == null || profileYaml.trim().isEmpty())
       throw new IllegalArgumentException("CLASH_PROFILE_EMPTY");
     if (secret == null || !secret.matches("[A-Za-z0-9_-]{16,128}"))
@@ -170,6 +189,10 @@ public final class ClashConfig {
     out.append("mixed-port: 0\n");
     out.append("ipv6: false\n");
     out.append("unified-delay: true\n");
+    out.append("routing-mark: ").append(VPN_PROTECT_MARK).append('\n');
+    if (isSafePhysicalUplink(physicalUplink)) {
+      out.append("interface-name: ").append(quoteYaml(physicalUplink)).append('\n');
+    }
     String controllerBind = (externalControllerLan ? "0.0.0.0" : CONTROLLER_HOST) + ":" + controllerPort;
     out.append("external-controller: ").append(controllerBind).append('\n');
     out.append("secret: ").append(quoteYaml(secret)).append('\n');
