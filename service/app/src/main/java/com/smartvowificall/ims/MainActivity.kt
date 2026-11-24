@@ -246,6 +246,15 @@ class MainActivity : ComponentActivity() {
                         logFeedback = if (on) "已开启脱敏遥测上传" else "已关闭遥测上传"
                         syncStateFromController()
                     },
+                    onSelectTelemetryRoute = { route ->
+                        rt.setTelemetryRoute(route)
+                        logFeedback = if (route == RuntimeController.TELEMETRY_ROUTE_SYSTEM) {
+                            "已切换遥测上传链路：系统路由"
+                        } else {
+                            "已切换遥测上传链路：Wi-Fi Calling 链路"
+                        }
+                        syncStateFromController()
+                    },
                     onSaveTelemetryEndpoint = { url ->
                         rt.setTelemetryEndpoint(url) { msg ->
                             runOnUiThread {
@@ -552,6 +561,7 @@ class MainActivity : ComponentActivity() {
             connections = connList,
             connectionsError = conns.error,
             telemetryEnabled = rt.telemetryEnabled(),
+            telemetryRoute = rt.telemetryRoute(),
             telemetryEndpoint = rt.telemetryEndpoint(),
             telemetryLastStatus = rt.telemetryLastStatus(),
             telemetryHistory = historyList
@@ -627,6 +637,7 @@ private fun MainShell(
     onRotateSecret: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onToggleTelemetry: (Boolean) -> Unit,
+    onSelectTelemetryRoute: (String) -> Unit,
     onSaveTelemetryEndpoint: (String) -> Unit,
     onUploadTelemetryNow: () -> Unit,
     onPreviewTelemetry: () -> Unit,
@@ -716,6 +727,7 @@ private fun MainShell(
                         logFeedback = logFeedback,
                         onRefreshAll = onRefreshAll,
                         onToggleTelemetry = onToggleTelemetry,
+                        onSelectTelemetryRoute = onSelectTelemetryRoute,
                         onSaveTelemetryEndpoint = onSaveTelemetryEndpoint,
                         onUploadTelemetryNow = onUploadTelemetryNow,
                         onPreviewTelemetry = onPreviewTelemetry,

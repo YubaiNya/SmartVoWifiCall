@@ -146,6 +146,7 @@ data class AppUiState(
     val connections: List<ConnectionRowUi> = emptyList(),
     val connectionsError: String = "",
     val telemetryEnabled: Boolean = false,
+    val telemetryRoute: String = "wificall",
     val telemetryEndpoint: String = "",
     val telemetryLastStatus: String = "",
     val telemetryHistory: List<TelemetryUploadRecordUi> = emptyList()
@@ -1353,6 +1354,7 @@ fun NetworkPage(
     logFeedback: String,
     onRefreshAll: () -> Unit,
     onToggleTelemetry: (Boolean) -> Unit,
+    onSelectTelemetryRoute: (String) -> Unit,
     onSaveTelemetryEndpoint: (String) -> Unit,
     onUploadTelemetryNow: () -> Unit,
     onPreviewTelemetry: () -> Unit,
@@ -1434,6 +1436,40 @@ fun NetworkPage(
                 checked = state.telemetryEnabled,
                 onCheckedChange = onToggleTelemetry
             )
+            HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    text = "上传链路",
+                    color = p.textPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "默认走内置 Wi-Fi Calling 代理链路（免系统代理）；未启用内置代理时可切换为系统路由",
+                    color = p.textSecondary,
+                    fontSize = 12.sp
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val isWifiCall = state.telemetryRoute != "system"
+                    ApplePillButton(
+                        text = "Wi-Fi Calling 链路",
+                        onClick = { onSelectTelemetryRoute("wificall") },
+                        primary = isWifiCall,
+                        modifier = Modifier.weight(1f)
+                    )
+                    ApplePillButton(
+                        text = "系统路由",
+                        onClick = { onSelectTelemetryRoute("system") },
+                        primary = !isWifiCall,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Text(

@@ -111,6 +111,8 @@ final class RuntimeController {
   }
   static final String DEFAULT_TELEMETRY_ENDPOINT =
       "https://smartvowificall-telemetry.yubainya.workers.dev/v1/telemetry";
+  static final String TELEMETRY_ROUTE_WIFICALL = "wificall";
+  static final String TELEMETRY_ROUTE_SYSTEM = "system";
   boolean telemetryEnabled() {
     // Strictly opt-in: disabled by default until user enables it.
     return prefs.getBoolean("telemetry_enabled", false);
@@ -118,6 +120,16 @@ final class RuntimeController {
   void setTelemetryEnabled(boolean enabled) {
     prefs.edit().putBoolean("telemetry_enabled", enabled).commit();
     events.record("I", "telemetry", enabled ? "enabled" : "disabled");
+  }
+  String telemetryRoute() {
+    String saved = prefs.getString("telemetry_route", TELEMETRY_ROUTE_WIFICALL);
+    return TELEMETRY_ROUTE_SYSTEM.equals(saved) ? TELEMETRY_ROUTE_SYSTEM : TELEMETRY_ROUTE_WIFICALL;
+  }
+  void setTelemetryRoute(String route) {
+    String normalized = TELEMETRY_ROUTE_SYSTEM.equals(route)
+        ? TELEMETRY_ROUTE_SYSTEM : TELEMETRY_ROUTE_WIFICALL;
+    prefs.edit().putString("telemetry_route", normalized).commit();
+    events.record("I", "telemetry", "route=" + normalized);
   }
   String telemetryEndpoint() {
     String saved = prefs.getString("telemetry_endpoint", "");
@@ -393,13 +405,16 @@ final class RuntimeController {
           done.accept("请先填写 Cloudflare Worker 遥测接口地址");
           return;
         }
+        String route = telemetryRoute();
+        String routeLabel = TELEMETRY_ROUTE_WIFICALL.equals(route) ? "Wi-Fi Calling 链路" : "系统路由";
         String payload = buildSanitizedTelemetryJson(logId, trigger, true);
-        TelemetryClient.UploadResult result =
-            TelemetryClient.upload(endpoint, payload, "", logId);
+        TelemetryClient.UploadResult result = TELEMETRY_ROUTE_WIFICALL.equals(route)
+            ? root.uploadTelemetryViaWifiCall(endpoint, logId, payload)
+            : TelemetryClient.upload(endpoint, payload, "", logId);
         String finalLogId = result.logId.isEmpty() ? logId : result.logId;
         String summary = result.ok
-            ? "上传成功 · ID: " + finalLogId
-            : "上传失败（" + result.code + "）· ID: " + finalLogId;
+            ? "上传成功（" + routeLabel + "）· ID: " + finalLogId
+            : "上传失败（" + result.code + " · " + routeLabel + "）· ID: " + finalLogId;
         prefs.edit()
             .putLong("telemetry_last_upload_ms", System.currentTimeMillis())
             .putString("telemetry_last_status", summary)
@@ -415,21 +430,24 @@ final class RuntimeController {
         reqSummary.put("schema", LogSanitizer.SCHEMA);
         reqSummary.put("logId", finalLogId);
         reqSummary.put("trigger", trigger);
+        reqSummary.put("route", route);
         reqSummary.put("payloadBytes", result.payloadBytes);
         networkLogs.recordHttp("telemetry_http", "POST", endpoint, result.httpStatus,
             result.durationMs, reqHdrs, reqSummary, result.responseHeaders, result.responseBody,
             result.ok ? null : result.code);
         events.record(result.ok ? "I" : "W", "telemetry",
-            "upload " + trigger + " id=" + finalLogId + " " + result.code);
+            "upload " + trigger + " route=" + route + " id=" + finalLogId + " " + result.code);
         done.accept(summary);
       } catch (Exception e) {
         String code = safeCode(e);
-        String summary = "上传失败（" + code + "）· ID: " + logId;
-        prefs.edit().putString("telemetry_last_status", summary).commit();
+        String hint = "WIFICALL_LINK_UNAVAILABLE".equals(code)
+            ? "Wi-Fi Calling 链路未就绪，请先开启内置代理或切换为系统路由"
+            : "上传失败（" + code + "）· ID: " + logId;
+        prefs.edit().putString("telemetry_last_status", hint).commit();
         recordTelemetryUpload(new TelemetryUploadRecord(
             logId, System.currentTimeMillis(), trigger, false, code, "", 0));
         events.record("W", "telemetry", "upload failed id=" + logId + ": " + code);
-        done.accept(summary);
+        done.accept(hint);
       } finally {
         telemetryInFlight.set(false);
       }

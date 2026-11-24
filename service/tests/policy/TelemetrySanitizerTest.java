@@ -7,6 +7,9 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -217,6 +220,48 @@ public final class TelemetrySanitizerTest {
       eq(logId, seenLogId.get(), "logId header");
       eq("k-test", seenKey.get(), "key header");
       eq(payload, seenBody.get(), "exact payload posted");
+
+      // 7. Direct UDP DNS + raw-socket HTTP upload test (Wi-Fi Calling netns upload path)
+      DatagramSocket dnsSock = new DatagramSocket(0, InetAddress.getByName("127.0.0.1"));
+      int dnsPort = dnsSock.getLocalPort();
+      Thread dnsThread = new Thread(() -> {
+        try {
+          byte[] qbuf = new byte[512];
+          DatagramPacket qp = new DatagramPacket(qbuf, qbuf.length);
+          dnsSock.setSoTimeout(3000);
+          dnsSock.receive(qp);
+          int qlen = qp.getLength();
+          ByteArrayOutputStream ans = new ByteArrayOutputStream();
+          ans.write(qbuf[0]); ans.write(qbuf[1]); // TXID
+          ans.write(0x81); ans.write(0x80);       // Standard response, no error
+          ans.write(0x00); ans.write(0x01);       // QDCOUNT=1
+          ans.write(0x00); ans.write(0x01);       // ANCOUNT=1
+          ans.write(0x00); ans.write(0x00);       // NSCOUNT=0
+          ans.write(0x00); ans.write(0x00);       // ARCOUNT=0
+          ans.write(qbuf, 12, qlen - 12);         // Echo question
+          ans.write(0xC0); ans.write(0x0C);       // Name pointer to offset 12
+          ans.write(0x00); ans.write(0x01);       // TYPE=A
+          ans.write(0x00); ans.write(0x01);       // CLASS=IN
+          ans.write(0x00); ans.write(0x00); ans.write(0x00); ans.write(0x3C); // TTL=60
+          ans.write(0x00); ans.write(0x04);       // RDLENGTH=4
+          ans.write(127); ans.write(0); ans.write(0); ans.write(1); // 127.0.0.1
+          byte[] respBytes = ans.toByteArray();
+          dnsSock.send(new DatagramPacket(respBytes, respBytes.length, qp.getAddress(), qp.getPort()));
+        } catch (Exception ignored) {
+        } finally {
+          dnsSock.close();
+        }
+      }, "test-udp-dns");
+      dnsThread.setDaemon(true);
+      dnsThread.start();
+      eq("127.0.0.1", TelemetryClient.resolveAOverUdp("telemetry.test.invalid", "127.0.0.1", dnsPort, 2000),
+          "UDP DNS A-record resolution");
+      TelemetryClient.UploadResult dnsRes =
+          TelemetryClient.uploadViaDns(url, payload, "k-dns", logId, "127.0.0.1", dnsPort);
+      check(dnsRes.ok, "netns raw socket upload ok");
+      eq(200, dnsRes.httpStatus, "netns http 200");
+      eq(logId, dnsRes.logId, "netns returned logId");
+      eq("k-dns", seenKey.get(), "netns key header");
     } finally {
       server.stop(0);
     }

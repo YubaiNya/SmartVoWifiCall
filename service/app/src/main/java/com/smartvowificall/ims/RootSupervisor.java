@@ -295,4 +295,41 @@ final class RootSupervisor {
   String collectClashHttpTrace() throws Exception {
     return run("[ -f /data/adb/smartvowificall_ims/clash/http-trace.jsonl ] && tail -n 50 /data/adb/smartvowificall_ims/clash/http-trace.jsonl || true");
   }
+  com.smartvowificall.ims.telemetry.TelemetryClient.UploadResult uploadTelemetryViaWifiCall(
+      String endpoint, String logId, String payloadJson) throws Exception {
+    String script =
+        "OWNER=/data/adb/smartvowificall_ims/clash/netns.owner; "
+        + "[ -f \"$OWNER\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        + "read -r nspid nsstart nsid < \"$OWNER\" || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        + "[ -n \"$nspid\" ] && [ -e \"/proc/$nspid/ns/net\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        + "live_ns=$(readlink \"/proc/$nspid/ns/net\" 2>/dev/null || :); "
+        + "root_ns=$(readlink /proc/1/ns/net 2>/dev/null || :); "
+        + "[ -n \"$live_ns\" ] && [ \"$live_ns\" = \"$nsid\" ] && [ \"$live_ns\" != \"$root_ns\" ] "
+        + "|| { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        + "nsenter --net=\"/proc/$nspid/ns/net\" -- /system/bin/env CLASSPATH="
+        + quote(context.getApplicationInfo().sourceDir)
+        + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootTelemetryMain "
+        + quote(endpoint) + " " + quote(logId);
+    String raw = run(script, payloadJson.getBytes(StandardCharsets.UTF_8));
+    JSONObject j = new JSONObject(raw);
+    Map<String, Object> headers = new LinkedHashMap<>();
+    JSONObject h = j.optJSONObject("responseHeaders");
+    if (h != null) {
+      Iterator<String> it = h.keys();
+      while (it.hasNext()) {
+        String k = it.next();
+        headers.put(k, h.optString(k, ""));
+      }
+    }
+    return new com.smartvowificall.ims.telemetry.TelemetryClient.UploadResult(
+        j.optBoolean("ok", false),
+        j.optInt("httpStatus", 0),
+        j.optString("code", "UPLOAD_FAILED"),
+        j.optString("logId", logId),
+        j.optString("recordPath", ""),
+        j.optInt("payloadBytes", payloadJson.getBytes(StandardCharsets.UTF_8).length),
+        j.optLong("durationMs", 0L),
+        headers,
+        j.optString("responseBody", ""));
+  }
 }
