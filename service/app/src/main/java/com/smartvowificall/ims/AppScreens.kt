@@ -867,6 +867,7 @@ fun ProxyPage(
     clashFeedback: String,
     onToggleClash: (Int, Boolean) -> Unit,
     onFetchSubscription: (Int, String) -> Unit,
+    onScanSubscriptionQr: (Int) -> Unit,
     onImportYaml: (Int) -> Unit,
     onReloadLocal: (Int) -> Unit,
     onCopyClashFrom: (Int, Int) -> Unit,
@@ -1050,6 +1051,18 @@ fun ProxyPage(
                         primary = true,
                         modifier = Modifier.weight(1f)
                     )
+                    ApplePillButton(
+                        text = "扫码订阅",
+                        onClick = { onScanSubscriptionQr(core.id) },
+                        primary = false,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ApplePillButton(
                         text = "导入 YAML",
                         onClick = { onImportYaml(core.id) },

@@ -29,7 +29,8 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                 str(SOURCE / "policy/ExclusiveRadio.java"), str(HERE / "ExclusiveRadioTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ExclusiveRadioTest"], check=True)
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
-                str(SOURCE / "clash/ClashConfig.java"), str(HERE / "ClashConfigTest.java")], check=True)
+                str(SOURCE / "clash/ClashConfig.java"), str(SOURCE / "clash/SubscriptionQrParser.java"),
+                str(HERE / "ClashConfigTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ClashConfigTest"], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),

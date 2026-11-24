@@ -1,4 +1,5 @@
 import com.smartvowificall.ims.clash.ClashConfig;
+import com.smartvowificall.ims.clash.SubscriptionQrParser;
 import java.util.*;
 
 /** Pure Java Clash config sanitizer tests; no mihomo binary, root, or network executed. */
@@ -158,6 +159,26 @@ public final class ClashConfigTest {
     check(inst1.yaml.contains("  listen: 127.0.0.1:1054\n"), "instance 1 uses isolated DNS port 1054");
     check(inst1.yaml.contains("external-controller: 127.0.0.1:19091\n"), "instance 1 uses controller port 19091");
     check(inst1.yaml.contains("interface-name: \"wlan0\"\n"), "instance 1 binds physical uplink wlan0");
+
+    // QR subscription URL parsing: plain HTTPS, clash://install-config, sub:// base64, invalid text
+    check("https://sub.example.com/api/v1?token=abc".equals(
+        SubscriptionQrParser.extractSubscriptionUrl("https://sub.example.com/api/v1?token=abc")),
+        "plain https QR parsed");
+    check("https://sub.example.com/clash?k=1&b=2".equals(
+        SubscriptionQrParser.extractSubscriptionUrl(
+            "clash://install-config?url=https%3A%2F%2Fsub.example.com%2Fclash%3Fk%3D1%26b%3D2&name=Test")),
+        "clash://install-config deep link parsed");
+    check("https://sub.example.com/meta".equals(
+        SubscriptionQrParser.extractSubscriptionUrl(
+            "clashmeta://install-config?name=Demo&url=https%3A%2F%2Fsub.example.com%2Fmeta")),
+        "clashmeta:// deep link parsed");
+    String b64 = Base64.getUrlEncoder().withoutPadding()
+        .encodeToString("https://sub.example.com/from-sub".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    check("https://sub.example.com/from-sub".equals(
+        SubscriptionQrParser.extractSubscriptionUrl("sub://" + b64)),
+        "sub:// base64 QR parsed");
+    check(SubscriptionQrParser.extractSubscriptionUrl("not a link") == null, "plain text rejected");
+    check(SubscriptionQrParser.extractSubscriptionUrl("javascript:alert(1)") == null, "javascript scheme rejected");
 
     System.out.println("PASS " + checks + " built-in Clash config sanitization assertions; no mihomo or network executed.");
   }

@@ -91,4 +91,12 @@ dependencies {
 
     // Kyant0 AndroidLiquidGlass / Backdrop real-time Liquid Glass refraction (2.0.1)
     implementation("io.github.kyant0:backdrop-android:2.0.1")
+
+    // CameraX + pure-Java ZXing QR decoder for offline camera & gallery subscription scanning
+    val cameraXVersion = "1.4.2"
+    implementation("androidx.camera:camera-core:$cameraXVersion")
+    implementation("androidx.camera:camera-camera2:$cameraXVersion")
+    implementation("androidx.camera:camera-lifecycle:$cameraXVersion")
+    implementation("androidx.camera:camera-view:$cameraXVersion")
+    implementation("com.google.zxing:core:3.5.3")
 }

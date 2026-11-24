@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
     private var pendingExportSanitized: Boolean = true
     private var pendingBillableSlot: Int = 0
     private var pendingImportClashId: Int = 0
+    private var pendingScanClashId: Int = 0
     private var connectionsCoreId by mutableIntStateOf(0)
     private var connectionsSnapshot by mutableStateOf(RuntimeController.ConnectionsSnapshot.EMPTY)
 
@@ -75,6 +76,32 @@ class MainActivity : ComponentActivity() {
             rt.setSlotBillable(slot, granted)
             overviewFeedback = if (granted) "已启用卡槽 ${slot + 1} 通话与短信" else "未授予麦克风权限，卡槽 ${slot + 1} 通话与短信未启用"
             syncStateFromController()
+        }
+
+    private val cameraPermLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                launchQrScanner(pendingScanClashId)
+            } else {
+                clashFeedback = "未授予摄像头权限，无法扫码添加订阅"
+            }
+        }
+
+    private val qrScannerLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { res ->
+            if (res.resultCode == RESULT_OK) {
+                val url = res.data?.getStringExtra(QrScannerActivity.EXTRA_SCANNED_URL)?.trim().orEmpty()
+                if (url.isNotEmpty()) {
+                    val cid = pendingScanClashId
+                    clashFeedback = "扫码成功，正在为内核 ${cid + 1} 拉取订阅…"
+                    rt.clashFetchSubscription(cid, url) { msg ->
+                        runOnUiThread {
+                            clashFeedback = msg
+                            syncStateFromController()
+                        }
+                    }
+                }
+            }
         }
 
     private val importYamlLauncher =
@@ -213,6 +240,9 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     },
+                    onScanSubscriptionQr = { cid ->
+                        requestScanSubscriptionQr(cid)
+                    },
                     onImportYaml = { cid ->
                         pendingImportClashId = cid
                         importYamlLauncher.launch(arrayOf("*/*"))
@@ -350,6 +380,21 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    private fun requestScanSubscriptionQr(clashId: Int) {
+        pendingScanClashId = clashId
+        if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchQrScanner(clashId)
+        } else {
+            cameraPermLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchQrScanner(clashId: Int) {
+        val intent = Intent(this, QrScannerActivity::class.java)
+            .putExtra(QrScannerActivity.EXTRA_CLASH_ID, clashId)
+        qrScannerLauncher.launch(intent)
     }
 
     private fun handleSlotBillableToggle(slot: Int, on: Boolean) {
@@ -764,6 +809,7 @@ private fun MainShell(
     onOpenRadioInfo: () -> Unit,
     onToggleClash: (Int, Boolean) -> Unit,
     onFetchSubscription: (Int, String) -> Unit,
+    onScanSubscriptionQr: (Int) -> Unit,
     onImportYaml: (Int) -> Unit,
     onReloadLocal: (Int) -> Unit,
     onCopyClashFrom: (Int, Int) -> Unit,
@@ -846,6 +892,7 @@ private fun MainShell(
                         clashFeedback = clashFeedback,
                         onToggleClash = onToggleClash,
                         onFetchSubscription = onFetchSubscription,
+                        onScanSubscriptionQr = onScanSubscriptionQr,
                         onImportYaml = onImportYaml,
                         onReloadLocal = onReloadLocal,
                         onCopyClashFrom = onCopyClashFrom,
