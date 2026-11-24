@@ -4,6 +4,34 @@
 
 ---
 
+## v0.6.0-dev — 2026-11-25
+
+> **双卡并发与双内置代理版本：解除国内外 SIM 卡限制、重构总开关省电停机与卡槽 1/2 独立控制、新增双内置 Clash 内核（`wfctun0` / `wfctun1`），并基于真机遥测修复单卡/老基带关蜂窝失败、SELinux 拦截与遥测上传稳定性。**
+
+### 核心新特性
+- **解除国内外 SIM 卡限制，支持双卡同时 VoWiFi**
+  - 移除对大陆 MCC（`460` / `461`）的硬性拦截，所有就绪 SIM 卡只要在对应卡槽开启开关即可拉起 VoWiFi（首次升级默认不自动接管大陆卡，避免误关蜂窝）。
+  - 双卡槽并发支持：卡槽 1 与卡槽 2 可同时运行独立的自研 Go 引擎、独立 `MmTelFeature`、独立通话/短信计费开关与独立 TUN 出口。
+- **总开关省电停机 + 停止前状态记忆恢复**
+  - 原通话开关升级为「网络通话总开关」：关闭后立即停止全部 VoWiFi 引擎、恢复所有卡槽原厂蜂窝/IMS，并自动记录停止前两个 Clash 内核的启停状态后全部停机省电；重新打开总开关时自动恢复停止前的内核开关与上次选中节点。
+  - 概览页新增卡槽 1 / 卡槽 2 独立卡片：各自展示地区标签、实时隧道 / IMS / 蜂窝 / 当前代理节点，支持一键绑定 `wfctun0`、`wfctun1` 或外部 TUN。
+- **双内置 Clash（`mihomo`）独立内核（`wfctun0` / `wfctun1`）**
+  - 新增内核 2（`clash1`，`wfctun1`，`198.19.1.1/30`，DNS `:1054`，控制端口 `:19091`），与内核 1（`wfctun0`，`198.19.0.1/30`，DNS `:1053`，控制端口 `:19090`）各自运行在独立 Linux 网络命名空间、各自绕过系统 `tun0` VPN、均由手动开关独立控制。
+  - 代理页与连接页顶部新增 **`内核 1 · wfctun0` | `内核 2 · wfctun1`** 切换栏，支持内核 2 一键从内核 1 复制订阅与配置、独立选节点/测速、独立查看连接与 External Controller 管理。
+
+### 真机兼容与遥测修复
+- **修复老基带与单卡设备 `RADIO_COMMAND_REJECTED`（实测反馈来自 POCO F3 SM8250 / Android 17）**
+  - 优先使用 `enableModemForSlot` 实现 DSDS 严格单卡隔离；当老 RIL 或单卡设备拒绝 `enableModemForSlot` 且不会影响其他未接管激活卡槽时，自动安全回退到 `setRadioForSubscriber` / `setRadioPowerForReason` / `setRadio`，并在射频租约中持久化恢复方式。
+- **补全 Android 17 与 `untrusted_app` SELinux 策略与 `priv-app` 自检**
+  - `sepolicy.rule` 扩展放行 `priv_app` / `priv_app_36` / `priv_app_37` / `untrusted_app` / `untrusted_app_all` 访问 `shell_data_file` 套接字及 `ksu` / `su` / `magisk` 守护连接；兼容性自检新增 `priv-app` 挂载检测提示。
+- **彻底修复遥测日志上传报错与节点名脱敏**
+  - `RootSupervisor` 改为异步写入 `stdin` 并安全忽略 `EPIPE`，根治 `IOException (Broken pipe)` 掩盖真实错误码的问题。
+  - 新增 `440 KB` UTF-8 报文预算自动尾部裁剪，彻底杜绝日志累积触发 `TELEMETRY_PAYLOAD_TOO_LARGE`。
+  - Wi-Fi Calling 链路上传新增 UDP DNS 自动重试（2 次）、60 秒超时、双内核存活 netns 逐项检测与内置代理未运行时的系统路由自动回退。
+  - 日常 `200 OK` 的 Clash `/configs`、`/proxies`、`/connections` 状态轮询不再写入 `http-trace.jsonl`，`LogSanitizer` 兜底拦截截断后的 `/proxies` JSON 杜绝代理节点名泄露。
+
+---
+
 ## v0.5.0-dev — 2026-11-24
 
 > **里程碑版本：底层协议栈 100% 纯 Go 自研，彻底摆脱 SoftVoWiFi 预编译二进制依赖，支持跨基带与 Android 14–17，实网修复系统 `tun0` 套娃与通话稳定性。**

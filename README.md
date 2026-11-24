@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.5.0--dev-0071E3?style=flat" alt="Release v0.5.0-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.0--dev-0071E3?style=flat" alt="Release v0.6.0-dev"></a>
   <img src="https://img.shields.io/badge/Android-14%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 14-17 Root">
   <img src="https://img.shields.io/badge/Engine-Pure%20Go%20Self--Owned-00ADD8?style=flat&logo=go&logoColor=white" alt="Pure Go Self-Owned Engine">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
@@ -130,17 +130,19 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 
 > 完整更新记录同步维护于 [UpLog.md](./UpLog.md)（详细技术验证见 [VERSION_HISTORY.md](./VERSION_HISTORY.md)）。
 
-### `v0.5.0-dev`（2026-11-24）— 纯自研 Go 引擎与实网通话里程碑
+### `v0.6.0-dev`（2026-11-25）— 双卡并发、双内置 Clash 内核与全平台兼容修复
 
-- **纯自研零依赖 Go VoWiFi 协议栈**：彻底移除 SoftVoWiFi 预编译二进制，纯 Go 静态编译 `vowifi-engine-arm64`（约 4.2 MB，待机 ~1.2 MB RSS），完整实现 IKEv2 + EAP-AKA/AKA'、纯用户态 IPsec ESP、IMS SIP/SMS 与 RTP/DTMF。
-- **内置 `mihomo` 自动绕开系统 `tun0` VPN**：通过 `fwmark 0x20000` 动态探测并绑定真实物理网卡（`wlan0` / `rmnet_data*`），消除双层套娃，3HK 实网冷启动注册降至 **1.78 秒**。
-- **常驻 `RootDaemonMain` + 跨基带 SIM AKA + Android 14–17**：独立 `/data/local/tmp/smartvowificall/root-daemon.sock`（0–4 ms 响应）；高通走 root netns QRTR、天玑 / Tensor / Exynos 走通用 Binder/APDU；放开 API 34–37 并新增兼容性自检与无 Root 只读模式。
-- **通道稳定性与通话体验全面修复**：RFC 7296 合规 DPD + 15s `0xFF` NAT-T 保活；断链即刻清空能力并下掉状态栏 VoWiFi 图标；RTP `JitterBuffer` 支持 `SSRC`/`Marker`/大跳变即时重同步防中途无声；`INVITE` Timer A 重传 + `183`/`180` 早期媒体 + 挂断秒刷 `VoiceServiceOverride` 修复连续拨号；新增硬件 AEC/NS/AGC、快捷磁贴、紧急恢复工具与 25 家海外运营商 / 5 家 OEM 适配库。
+- **解除国内外卡限制 & 双卡同时 VoWiFi**：不限大陆卡与海外卡，卡槽 1 / 卡槽 2 各自拥有独立 VoWiFi 开关、独立通话/短信开关、实时状态与节点展示，支持双卡并发注册 VoWiFi。
+- **总开关省电停机与状态恢复**：关闭总开关立即停掉全部后端引擎、恢复原厂蜂窝/IMS 并记住停止前两个 Clash 内核状态后全部停机省电；重新打开总开关自动恢复停止前的内核开关与节点。
+- **双内置 Clash 独立内核（`wfctun0` / `wfctun1`）**：双独立 Linux 网络命名空间与独立端口（`19090` / `19091`），均由手动开关独立启停、自动绕开系统 `tun0` VPN，内核 2 支持一键复制内核 1 配置。
+- **老基带/单卡兼容、SELinux 与遥测上传全面修复**：修复单卡/SM8250 等设备 `RADIO_COMMAND_REJECTED` 关蜂窝回退；补全 Android 17 / `untrusted_app` 的 `sepolicy.rule` 与 `priv-app` 自检；修复遥测上传 `EPIPE (IOException)`、超 512 KB 裁剪、DNS 重试与 `/proxies` 节点名脱敏。
 
 <details>
-<summary><strong>查看历史版本更新（v0.4.7-dev → v0.1.0-dev，同步自 UpLog.md）</strong></summary>
+<summary><strong>查看历史版本更新（v0.5.0-dev → v0.1.0-dev，同步自 UpLog.md）</strong></summary>
 
 <br>
+
+- **`v0.5.0-dev`（2026-11-24）**：底层协议栈 100% 纯 Go 自研（零 SoftVoWiFi 依赖，待机 ~1.2 MB RSS）；内置 `mihomo` 通过 `fwmark 0x20000` 自动绕开系统 `tun0`（3HK 冷启动注册 1.78 秒）；新增常驻 `RootDaemonMain`、跨基带 SIM AKA（高通 QRTR + 天玑/Tensor/Exynos Binder/APDU）、Android 14–17 适配与自检、RFC 7296 DPD / 断链秒下图标 / RTP 重同步 / 连续拨号修复、硬件 AEC/NS/AGC、快捷磁贴与 25 家运营商适配库。
 
 - **`v0.4.7-dev`（2026-11-24）**：遥测上传默认走 Wi-Fi Calling 隔离代理链路（支持一键切系统路由），升级 `[Hidden]` 双重脱敏、非隐私设备/SIM 排障信息与唯一日志 ID（`SVW-YYYYMMDD-XXXXXX`）。
 - **`v0.4.6-dev`（2026-11-23）**：新增可选脱敏遥测上传（默认关闭）+ Cloudflare Worker 中转服务，新增本地手动导出「脱敏日志 ZIP」与「原始全部日志 ZIP」。

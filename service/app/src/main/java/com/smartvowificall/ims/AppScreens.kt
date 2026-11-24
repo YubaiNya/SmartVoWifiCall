@@ -1719,7 +1719,7 @@ fun NetworkPage(
             ) {
                 StatusPill(label = "网络信息", color = p.accentGreen)
                 StatusPill(
-                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.5.0-dev",
+                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.6.0-dev",
                     color = p.accentBlue,
                     showDot = false
                 )
