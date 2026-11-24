@@ -451,9 +451,42 @@ final class RuntimeController {
         rootLogsText = "ROOT_LOG_COLLECTION_FAILED: " + safeCode(e);
       }
     }
-    return LogSanitizer.buildTelemetryPayload(
+    return buildBoundedTelemetryPayload(
         logId, telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
         dev, svc, diagMap, ifaceList, events.snapshot(120), netLogs, clashConns, rootLogsText);
+  }
+  private static String tailChars(String text, int maxChars) {
+    if (text == null || text.length() <= maxChars) return text == null ? "" : text;
+    if (maxChars <= 0) return "";
+    return "...(trimmed to fit upload limit)...\n" + text.substring(text.length() - maxChars);
+  }
+  private static String buildBoundedTelemetryPayload(String logId, String installId, String trigger,
+      long tsMs, String versionName, int versionCode, LogSanitizer.DeviceInfo dev,
+      LogSanitizer.ServiceTelemetry svc, Map<String, Object> diagMap,
+      List<Map<String, Object>> ifaceList, List<EventRingBuffer.Entry> evts,
+      List<Map<String, Object>> netLogs, List<Map<String, Object>> clashConns,
+      String rootLogsText) {
+    final int maxBytes = 440 * 1024;
+    String trimmedLogs = tailChars(rootLogsText, 180_000);
+    List<Map<String, Object>> trimmedNet = netLogs;
+    String payload = LogSanitizer.buildTelemetryPayload(
+        logId, installId, trigger, tsMs, versionName, versionCode,
+        dev, svc, diagMap, ifaceList, evts, trimmedNet, clashConns, trimmedLogs);
+    int[] logBudgets = new int[] {100_000, 48_000, 16_000, 0};
+    for (int budget : logBudgets) {
+      if (payload.getBytes(StandardCharsets.UTF_8).length <= maxBytes) return payload;
+      trimmedLogs = tailChars(rootLogsText, budget);
+      if (budget <= 48_000 && trimmedNet.size() > 30) {
+        trimmedNet = trimmedNet.subList(trimmedNet.size() - 30, trimmedNet.size());
+      }
+      if (budget == 0 && trimmedNet.size() > 10) {
+        trimmedNet = trimmedNet.subList(trimmedNet.size() - 10, trimmedNet.size());
+      }
+      payload = LogSanitizer.buildTelemetryPayload(
+          logId, installId, trigger, tsMs, versionName, versionCode,
+          dev, svc, diagMap, ifaceList, evts, trimmedNet, clashConns, trimmedLogs);
+    }
+    return payload;
   }
   void uploadTelemetryNow(String trigger, Consumer<String> done) {
     io.execute(() -> {
@@ -472,9 +505,23 @@ final class RuntimeController {
         String route = telemetryRoute();
         String routeLabel = TELEMETRY_ROUTE_WIFICALL.equals(route) ? "Wi-Fi Calling 链路" : "系统路由";
         String payload = buildSanitizedTelemetryJson(logId, trigger, true);
-        TelemetryClient.UploadResult result = TELEMETRY_ROUTE_WIFICALL.equals(route)
-            ? root.uploadTelemetryViaWifiCall(endpoint, logId, payload)
-            : TelemetryClient.upload(endpoint, payload, "", logId);
+        TelemetryClient.UploadResult result;
+        if (TELEMETRY_ROUTE_WIFICALL.equals(route)) {
+          try {
+            result = root.uploadTelemetryViaWifiCall(endpoint, logId, payload);
+          } catch (Exception wfcErr) {
+            String wfcCode = safeCode(wfcErr);
+            if ("WIFICALL_LINK_UNAVAILABLE".equals(wfcCode)) {
+              // Built-in Clash is stopped; fall back transparently to system route.
+              result = TelemetryClient.upload(endpoint, payload, "", logId);
+              routeLabel = "系统路由回退";
+            } else {
+              throw wfcErr;
+            }
+          }
+        } else {
+          result = TelemetryClient.upload(endpoint, payload, "", logId);
+        }
         String finalLogId = result.logId.isEmpty() ? logId : result.logId;
         String summary = result.ok
             ? "上传成功（" + routeLabel + "）· ID: " + finalLogId
@@ -520,6 +567,10 @@ final class RuntimeController {
   private void maybeAutoUploadTelemetry(boolean callsActive) {
     if (callsActive || !telemetryEnabled()) return;
     if (telemetryEndpoint().isEmpty()) return;
+    if (TELEMETRY_ROUTE_WIFICALL.equals(telemetryRoute())
+        && !(clash.running && clash.tunUp) && !(clash1.running && clash1.tunUp)) {
+      return;
+    }
     long last = prefs.getLong("telemetry_last_upload_ms", 0L);
     if (System.currentTimeMillis() - last < TimeUnit.HOURS.toMillis(6)) return;
     uploadTelemetryNow("periodic", ignored -> {});

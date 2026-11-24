@@ -25,9 +25,12 @@ final class RootSupervisor {
     return "'" + s.replace("'", "'\\''") + "'";
   }
   String run(String script) throws Exception {
-    return run(script, null);
+    return run(script, null, 30);
   }
   String run(String script, byte[] stdin) throws Exception {
+    return run(script, stdin, 30);
+  }
+  String run(String script, byte[] stdin, long timeoutSeconds) throws Exception {
     commandCount.incrementAndGet();
     Process p = new ProcessBuilder("su", "-c", script).start();
     Collector out = new Collector(p.getInputStream(), true),
@@ -37,13 +40,30 @@ final class RootSupervisor {
     drain.setDaemon(true);
     reader.start();
     drain.start();
+    // Write stdin asynchronously and ignore EPIPE when the child exits early with a JSON error.
+    Thread writer = null;
+    if (stdin != null && stdin.length > 0) {
+      writer = new Thread(() -> {
+        try (OutputStream os = p.getOutputStream()) {
+          os.write(stdin);
+          os.flush();
+        } catch (IOException ignored) {
+        }
+      }, "root-stdin");
+      writer.setDaemon(true);
+      writer.start();
+    } else {
+      try {
+        p.getOutputStream().close();
+      } catch (IOException ignored) {
+      }
+    }
     try {
-      if (stdin != null && stdin.length > 0) p.getOutputStream().write(stdin);
-      p.getOutputStream().close();
-      if (!p.waitFor(30, TimeUnit.SECONDS)) {
+      if (!p.waitFor(Math.max(5L, timeoutSeconds), TimeUnit.SECONDS)) {
         p.destroyForcibly();
         throw new IOException("ROOT_TIMEOUT");
       }
+      if (writer != null) writer.join(1500);
       reader.join(1500);
       drain.join(1500);
       if (reader.isAlive() || out.failed || out.overflow)
@@ -66,6 +86,7 @@ final class RootSupervisor {
       try {
         p.getInputStream().close();
         p.getErrorStream().close();
+        p.getOutputStream().close();
       } catch (IOException ignored) {
       }
     }
@@ -418,7 +439,7 @@ final class RootSupervisor {
     return run(script);
   }
   String collectClashHttpTrace() throws Exception {
-    return run("[ -f /data/adb/smartvowificall_ims/clash/http-trace.jsonl ] && tail -n 50 /data/adb/smartvowificall_ims/clash/http-trace.jsonl || true");
+    return run("for f in /data/adb/smartvowificall_ims/clash/http-trace.jsonl /data/adb/smartvowificall_ims/clash1/http-trace.jsonl; do [ -f \"$f\" ] && tail -n 25 \"$f\"; done || true");
   }
   com.smartvowificall.ims.policy.CompatReport compatCheck() {
     com.smartvowificall.ims.policy.CompatReport.Input in =
@@ -456,21 +477,22 @@ final class RootSupervisor {
   com.smartvowificall.ims.telemetry.TelemetryClient.UploadResult uploadTelemetryViaWifiCall(
       String endpoint, String logId, String payloadJson) throws Exception {
     String script =
-        "OWNER=''; "
-        + "for cand in /data/adb/smartvowificall_ims/clash/netns.owner /data/adb/smartvowificall_ims/clash1/netns.owner; do "
-        + "[ -f \"$cand\" ] && { OWNER=\"$cand\"; break; }; done; "
-        + "[ -n \"$OWNER\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
-        + "read -r nspid nsstart nsid < \"$OWNER\" || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
-        + "[ -n \"$nspid\" ] && [ -e \"/proc/$nspid/ns/net\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
-        + "live_ns=$(readlink \"/proc/$nspid/ns/net\" 2>/dev/null || :); "
+        "NS_PATH=''; "
         + "root_ns=$(readlink /proc/1/ns/net 2>/dev/null || :); "
-        + "[ -n \"$live_ns\" ] && [ \"$live_ns\" = \"$nsid\" ] && [ \"$live_ns\" != \"$root_ns\" ] "
-        + "|| { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
-        + "nsenter --net=\"/proc/$nspid/ns/net\" -- /system/bin/env CLASSPATH="
+        + "for cand in /data/adb/smartvowificall_ims/clash/netns.owner /data/adb/smartvowificall_ims/clash1/netns.owner; do "
+        + "[ -f \"$cand\" ] || continue; "
+        + "read -r nspid nsstart nsid < \"$cand\" 2>/dev/null || continue; "
+        + "[ -n \"$nspid\" ] && [ -e \"/proc/$nspid/ns/net\" ] && kill -0 \"$nspid\" 2>/dev/null || continue; "
+        + "live_ns=$(readlink \"/proc/$nspid/ns/net\" 2>/dev/null || :); "
+        + "[ -n \"$live_ns\" ] && [ \"$live_ns\" = \"$nsid\" ] && [ \"$live_ns\" != \"$root_ns\" ] || continue; "
+        + "NS_PATH=\"/proc/$nspid/ns/net\"; break; "
+        + "done; "
+        + "[ -n \"$NS_PATH\" ] || { echo '{\"ok\":false,\"code\":\"WIFICALL_LINK_UNAVAILABLE\"}'; exit 1; }; "
+        + "nsenter --net=\"$NS_PATH\" -- /system/bin/env CLASSPATH="
         + quote(context.getApplicationInfo().sourceDir)
         + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootTelemetryMain "
         + quote(endpoint) + " " + quote(logId);
-    String raw = run(script, payloadJson.getBytes(StandardCharsets.UTF_8));
+    String raw = run(script, payloadJson.getBytes(StandardCharsets.UTF_8), 60);
     JSONObject j = new JSONObject(raw);
     Map<String, Object> headers = new LinkedHashMap<>();
     JSONObject h = j.optJSONObject("responseHeaders");

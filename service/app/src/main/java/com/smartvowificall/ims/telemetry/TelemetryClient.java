@@ -34,9 +34,9 @@ import javax.net.ssl.SSLSocketFactory;
  */
 public final class TelemetryClient {
   public static final int MAX_PAYLOAD_BYTES = 512 * 1024;
-  private static final int CONNECT_TIMEOUT_MS = 10000;
-  private static final int READ_TIMEOUT_MS = 20000;
-  private static final int DNS_TIMEOUT_MS = 5000;
+  private static final int CONNECT_TIMEOUT_MS = 12000;
+  private static final int READ_TIMEOUT_MS = 25000;
+  private static final int DNS_TIMEOUT_MS = 4000;
   private static final SecureRandom RANDOM = new SecureRandom();
 
   public static final class UploadResult {
@@ -183,20 +183,30 @@ public final class TelemetryClient {
     Socket rawSocket = new Socket();
     Socket ioSocket = rawSocket;
     try {
-      rawSocket.connect(new InetSocketAddress(InetAddress.getByName(targetIp), port),
-          CONNECT_TIMEOUT_MS);
+      try {
+        rawSocket.connect(new InetSocketAddress(InetAddress.getByName(targetIp), port),
+            CONNECT_TIMEOUT_MS);
+      } catch (java.net.SocketTimeoutException e) {
+        throw new IOException("CONNECT_TIMEOUT", e);
+      }
       rawSocket.setSoTimeout(READ_TIMEOUT_MS);
       if (https) {
-        SSLSocket ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
-            .createSocket(rawSocket, host, port, true);
-        SSLParameters params = ssl.getSSLParameters();
-        params.setEndpointIdentificationAlgorithm("HTTPS");
-        if (!isIpv4Literal(host)) {
-          params.setServerNames(Collections.singletonList(new SNIHostName(host)));
+        try {
+          SSLSocket ssl = (SSLSocket) ((SSLSocketFactory) SSLSocketFactory.getDefault())
+              .createSocket(rawSocket, host, port, true);
+          SSLParameters params = ssl.getSSLParameters();
+          params.setEndpointIdentificationAlgorithm("HTTPS");
+          if (!isIpv4Literal(host)) {
+            params.setServerNames(Collections.singletonList(new SNIHostName(host)));
+          }
+          ssl.setSSLParameters(params);
+          ssl.startHandshake();
+          ioSocket = ssl;
+        } catch (java.net.SocketTimeoutException e) {
+          throw new IOException("TLS_TIMEOUT", e);
+        } catch (javax.net.ssl.SSLException e) {
+          throw new IOException("TLS_HANDSHAKE_FAILED", e);
         }
-        ssl.setSSLParameters(params);
-        ssl.startHandshake();
-        ioSocket = ssl;
       }
 
       String hostHeader = (port == (https ? 443 : 80)) ? host : host + ":" + port;
@@ -222,7 +232,12 @@ public final class TelemetryClient {
       out.flush();
 
       BufferedInputStream in = new BufferedInputStream(ioSocket.getInputStream());
-      String statusLine = readHttpLine(in);
+      String statusLine;
+      try {
+        statusLine = readHttpLine(in);
+      } catch (java.net.SocketTimeoutException e) {
+        throw new IOException("READ_TIMEOUT", e);
+      }
       if (statusLine == null || !statusLine.startsWith("HTTP/")) {
         throw new IOException("TELEMETRY_HTTP_INVALID");
       }
@@ -286,43 +301,52 @@ public final class TelemetryClient {
     q.write(0x00); q.write(0x01); // QCLASS=IN
     byte[] query = q.toByteArray();
 
-    try (DatagramSocket sock = new DatagramSocket()) {
-      sock.setSoTimeout(timeoutMs);
-      InetAddress dnsAddr = InetAddress.getByName(dnsServerIp);
-      sock.send(new DatagramPacket(query, query.length, dnsAddr, dnsPort));
-      byte[] buf = new byte[1024];
-      DatagramPacket resp = new DatagramPacket(buf, buf.length);
-      sock.receive(resp);
-      int len = resp.getLength();
-      if (len < 12) throw new IOException("DNS_RESPONSE_SHORT");
-      int respId = ((buf[0] & 0xFF) << 8) | (buf[1] & 0xFF);
-      if (respId != txId) throw new IOException("DNS_TXID_MISMATCH");
-      int rcode = buf[3] & 0x0F;
-      if (rcode != 0) throw new IOException("DNS_RCODE_" + rcode);
-      int qdCount = ((buf[4] & 0xFF) << 8) | (buf[5] & 0xFF);
-      int anCount = ((buf[6] & 0xFF) << 8) | (buf[7] & 0xFF);
-      int off = 12;
-      for (int i = 0; i < qdCount; i++) {
-        off = skipDnsName(buf, off, len);
-        off += 4;
-        if (off > len) throw new IOException("DNS_PARSE_ERROR");
-      }
-      for (int i = 0; i < anCount; i++) {
-        off = skipDnsName(buf, off, len);
-        if (off + 10 > len) throw new IOException("DNS_PARSE_ERROR");
-        int type = ((buf[off] & 0xFF) << 8) | (buf[off + 1] & 0xFF);
-        int cls = ((buf[off + 2] & 0xFF) << 8) | (buf[off + 3] & 0xFF);
-        int rdLen = ((buf[off + 8] & 0xFF) << 8) | (buf[off + 9] & 0xFF);
-        off += 10;
-        if (off + rdLen > len) throw new IOException("DNS_PARSE_ERROR");
-        if (type == 1 && cls == 1 && rdLen == 4) {
-          byte[] ipBytes = new byte[] {buf[off], buf[off + 1], buf[off + 2], buf[off + 3]};
-          return Inet4Address.getByAddress(ipBytes).getHostAddress();
+    IOException lastErr = null;
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try (DatagramSocket sock = new DatagramSocket()) {
+        sock.setSoTimeout(timeoutMs);
+        InetAddress dnsAddr = InetAddress.getByName(dnsServerIp);
+        sock.send(new DatagramPacket(query, query.length, dnsAddr, dnsPort));
+        byte[] buf = new byte[1024];
+        DatagramPacket resp = new DatagramPacket(buf, buf.length);
+        sock.receive(resp);
+        int len = resp.getLength();
+        if (len < 12) throw new IOException("DNS_RESPONSE_SHORT");
+        int respId = ((buf[0] & 0xFF) << 8) | (buf[1] & 0xFF);
+        if (respId != txId) throw new IOException("DNS_TXID_MISMATCH");
+        int rcode = buf[3] & 0x0F;
+        if (rcode != 0) throw new IOException("DNS_RCODE_" + rcode);
+        int qdCount = ((buf[4] & 0xFF) << 8) | (buf[5] & 0xFF);
+        int anCount = ((buf[6] & 0xFF) << 8) | (buf[7] & 0xFF);
+        int off = 12;
+        for (int i = 0; i < qdCount; i++) {
+          off = skipDnsName(buf, off, len);
+          off += 4;
+          if (off > len) throw new IOException("DNS_PARSE_ERROR");
         }
-        off += rdLen;
+        for (int i = 0; i < anCount; i++) {
+          off = skipDnsName(buf, off, len);
+          if (off + 10 > len) throw new IOException("DNS_PARSE_ERROR");
+          int type = ((buf[off] & 0xFF) << 8) | (buf[off + 1] & 0xFF);
+          int cls = ((buf[off + 2] & 0xFF) << 8) | (buf[off + 3] & 0xFF);
+          int rdLen = ((buf[off + 8] & 0xFF) << 8) | (buf[off + 9] & 0xFF);
+          off += 10;
+          if (off + rdLen > len) throw new IOException("DNS_PARSE_ERROR");
+          if (type == 1 && cls == 1 && rdLen == 4) {
+            byte[] ipBytes = new byte[] {buf[off], buf[off + 1], buf[off + 2], buf[off + 3]};
+            return Inet4Address.getByAddress(ipBytes).getHostAddress();
+          }
+          off += rdLen;
+        }
+        throw new IOException("DNS_NO_A_RECORD");
+      } catch (java.net.SocketTimeoutException e) {
+        lastErr = new IOException("DNS_TIMEOUT", e);
+      } catch (IOException e) {
+        lastErr = e;
+        if (attempt == 1) throw e;
       }
-      throw new IOException("DNS_NO_A_RECORD");
     }
+    throw lastErr != null ? lastErr : new IOException("DNS_TIMEOUT");
   }
 
   private static int skipDnsName(byte[] buf, int off, int len) throws IOException {
