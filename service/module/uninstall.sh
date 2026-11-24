@@ -25,7 +25,8 @@ fi
 if [ -f "$BASE/run/root-daemon.pid" ]; then
  read -r dpid < "$BASE/run/root-daemon.pid" 2>/dev/null || dpid=
  [ -n "$dpid" ] && kill -TERM "$dpid" 2>/dev/null || :
- rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" /data/local/tmp/vowifi/root-daemon.sock
+ rm -f "$BASE/run/root-daemon.pid" "$BASE/run/root-daemon.owner" /data/local/tmp/smartvowificall/root-daemon.sock /data/local/tmp/vowifi/root-daemon.sock
+ rmdir /data/local/tmp/smartvowificall 2>/dev/null || :
 fi
 sh "$MODDIR/clash-control.sh" stop >/dev/null 2>&1 || exit 1
 i=0

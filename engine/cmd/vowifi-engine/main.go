@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,14 +11,19 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/config"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/runtime"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/simauth"
 )
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "config-verify" {
 		os.Exit(runConfigVerify(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "qrtr-auth" {
+		os.Exit(runQRTRAuth(os.Args[2:]))
 	}
 
 	var (
@@ -114,4 +121,35 @@ func runConfigVerify(args []string) int {
 func writeVerifyJSON(ok bool, code string) {
 	b, _ := json.Marshal(map[string]any{"ok": ok, "code": code})
 	fmt.Println(string(b))
+}
+
+func runQRTRAuth(args []string) int {
+	fs := flag.NewFlagSet("qrtr-auth", flag.ContinueOnError)
+	slot := fs.Int("slot", 0, "SIM slot index")
+	chB64 := fs.String("challenge", "", "Base64 TS 31.102 UMTS AKA challenge")
+	if err := fs.Parse(args); err != nil || *chB64 == "" {
+		writeVerifyJSON(false, "INVALID_ARGUMENT")
+		return 1
+	}
+	ch, err := base64.StdEncoding.DecodeString(*chB64)
+	if err != nil {
+		writeVerifyJSON(false, "CHALLENGE_BASE64_INVALID")
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	q := &simauth.QRTRProvider{Timeout: 5 * time.Second}
+	raw, err := q.AuthenticateRaw(ctx, *slot, ch)
+	if err != nil {
+		b, _ := json.Marshal(map[string]any{"ok": false, "code": err.Error()})
+		fmt.Println(string(b))
+		return 1
+	}
+	b, _ := json.Marshal(map[string]any{
+		"ok":             true,
+		"method":         "qrtr",
+		"responseBase64": base64.StdEncoding.EncodeToString(raw),
+	})
+	fmt.Println(string(b))
+	return 0
 }

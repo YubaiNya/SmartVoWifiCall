@@ -19,3 +19,7 @@ func (q *QRTRProvider) Name() string {
 func (q *QRTRProvider) Authenticate(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
 	return nil, errors.New("QRTR_UNSUPPORTED_PLATFORM")
 }
+
+func (q *QRTRProvider) AuthenticateRaw(ctx context.Context, slot int, challenge []byte) ([]byte, error) {
+	return nil, errors.New("QRTR_UNSUPPORTED_PLATFORM")
+}

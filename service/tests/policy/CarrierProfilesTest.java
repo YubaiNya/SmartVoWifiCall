@@ -26,7 +26,7 @@ public final class CarrierProfilesTest {
     CarrierProfiles.Carrier hk3 = builtIn.findByPlmn("45403");
     check(hk3 != null, "3HK found");
     check(hk3.strictHomeIp, "3HK strict home IP");
-    check("epdg.epc.mnc003.mcc454.pub.3gppnetwork.org".equals(hk3.epdgFqdn), "3HK ePDG FQDN");
+    check("wlan.three.com.hk".equals(hk3.epdgFqdn), "3HK ePDG FQDN");
     check(hk3.uiSummary().contains("香港"), "3HK summary recommends HK");
 
     CarrierProfiles.Carrier threeUk = builtIn.findByPlmn("23420");

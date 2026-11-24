@@ -17,6 +17,24 @@ import (
 	"math/big"
 )
 
+// RFC 2409 Group 2 (1024-bit MODP) prime.
+const modp1024Hex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
+	"29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
+	"EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245" +
+	"E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED" +
+	"EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE65381" +
+	"FFFFFFFFFFFFFFFF"
+
+// RFC 3526 Group 5 (1536-bit MODP) prime.
+const modp1536Hex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
+	"29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
+	"EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245" +
+	"E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED" +
+	"EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D" +
+	"C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F" +
+	"83655D23DCA3AD961C62F356208552BB9ED529077096966D" +
+	"670C354E4ABC9804F1746C08CA237327FFFFFFFFFFFFFFFF"
+
 // RFC 3526 Group 14 (2048-bit MODP) prime.
 const modp2048Hex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
 	"29024E088A67CC74020BBEA63B139B22514A08798E3404DD" +
@@ -30,14 +48,28 @@ const modp2048Hex = "FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1" +
 	"DE2BCBF6955817183995497CEA956AE515D2261898FA0510" +
 	"15728E5A8AACAA68FFFFFFFFFFFFFFFF"
 
-var modp2048Prime = func() *big.Int {
-	b, _ := hex.DecodeString(modp2048Hex)
+var (
+	modp1024Prime = mustBigHex(modp1024Hex)
+	modp1536Prime = mustBigHex(modp1536Hex)
+	modp2048Prime = mustBigHex(modp2048Hex)
+)
+
+func mustBigHex(h string) *big.Int {
+	b, _ := hex.DecodeString(h)
 	return new(big.Int).SetBytes(b)
-}()
+}
 
 const (
+	DHGroupMODP1024 uint16 = 2
+	DHGroupMODP1536 uint16 = 5
 	DHGroupMODP2048 uint16 = 14
 	DHGroupECP256   uint16 = 19
+
+	PRFAlgHMACSHA1   uint16 = 2
+	PRFAlgHMACSHA256 uint16 = 5
+
+	AuthAlgHMACSHA196    uint16 = 2
+	AuthAlgHMACSHA256128 uint16 = 12
 )
 
 type DHKeyPair struct {
@@ -47,44 +79,55 @@ type DHKeyPair struct {
 	ecPriv  *ecdh.PrivateKey
 }
 
-func GenerateDH(group uint16) (*DHKeyPair, error) {
+func modpParams(group uint16) (*big.Int, int, bool) {
 	switch group {
+	case DHGroupMODP1024:
+		return modp1024Prime, 128, true
+	case DHGroupMODP1536:
+		return modp1536Prime, 192, true
 	case DHGroupMODP2048:
+		return modp2048Prime, 256, true
+	default:
+		return nil, 0, false
+	}
+}
+
+func GenerateDH(group uint16) (*DHKeyPair, error) {
+	if prime, size, ok := modpParams(group); ok {
 		privBytes := make([]byte, 32)
 		if _, err := rand.Read(privBytes); err != nil {
 			return nil, err
 		}
 		priv := new(big.Int).SetBytes(privBytes)
 		g := big.NewInt(2)
-		pub := new(big.Int).Exp(g, priv, modp2048Prime)
-		pubBytes := make([]byte, 256)
+		pub := new(big.Int).Exp(g, priv, prime)
+		pubBytes := make([]byte, size)
 		pub.FillBytes(pubBytes)
 		return &DHKeyPair{Group: group, Public: pubBytes, privBig: priv}, nil
-	case DHGroupECP256:
+	}
+	if group == DHGroupECP256 {
 		priv, err := ecdh.P256().GenerateKey(rand.Reader)
 		if err != nil {
 			return nil, err
 		}
-		// IKEv2 ECP-256 KE payload is raw X||Y (64 bytes, stripping 0x04 uncompressed prefix).
 		raw := priv.PublicKey().Bytes()
 		return &DHKeyPair{Group: group, Public: append([]byte(nil), raw[1:]...), ecPriv: priv}, nil
-	default:
-		return nil, fmt.Errorf("UNSUPPORTED_DH_GROUP_%d", group)
 	}
+	return nil, fmt.Errorf("UNSUPPORTED_DH_GROUP_%d", group)
 }
 
 func (kp *DHKeyPair) SharedSecret(peerPub []byte) ([]byte, error) {
-	switch kp.Group {
-	case DHGroupMODP2048:
+	if prime, size, ok := modpParams(kp.Group); ok {
 		if len(peerPub) == 0 {
 			return nil, errors.New("DH_PEER_EMPTY")
 		}
 		p := new(big.Int).SetBytes(peerPub)
-		secret := new(big.Int).Exp(p, kp.privBig, modp2048Prime)
-		out := make([]byte, 256)
+		secret := new(big.Int).Exp(p, kp.privBig, prime)
+		out := make([]byte, size)
 		secret.FillBytes(out)
 		return out, nil
-	case DHGroupECP256:
+	}
+	if kp.Group == DHGroupECP256 {
 		if len(peerPub) != 64 {
 			return nil, errors.New("ECDH_PEER_LEN_INVALID")
 		}
@@ -96,24 +139,40 @@ func (kp *DHKeyPair) SharedSecret(peerPub []byte) ([]byte, error) {
 			return nil, err
 		}
 		return kp.ecPriv.ECDH(pub)
-	default:
-		return nil, errors.New("UNSUPPORTED_DH_GROUP")
 	}
+	return nil, errors.New("UNSUPPORTED_DH_GROUP")
 }
 
-// PRF computes HMAC-SHA256(key, data).
-func PRFSHA256(key, data []byte) []byte {
-	m := hmac.New(sha256.New, key)
+// IKESuite holds the negotiated IKE_SA cipher/PRF/integrity parameters.
+type IKESuite struct {
+	EncKeyLen int    // 16 or 32
+	PRFID     uint16 // PRFAlgHMACSHA256 or PRFAlgHMACSHA1
+	AuthID    uint16 // AuthAlgHMACSHA256128 or AuthAlgHMACSHA196
+	AEAD      bool
+}
+
+func DefaultIKESuite() IKESuite {
+	return IKESuite{EncKeyLen: 16, PRFID: PRFAlgHMACSHA256, AuthID: AuthAlgHMACSHA256128}
+}
+
+func prfHashFunc(prfID uint16) func() hash.Hash {
+	if prfID == PRFAlgHMACSHA1 {
+		return sha1.New
+	}
+	return sha256.New
+}
+
+func prfWithHash(newH func() hash.Hash, key, data []byte) []byte {
+	m := hmac.New(newH, key)
 	m.Write(data)
 	return m.Sum(nil)
 }
 
-// PRFPlus implements RFC 7296 §2.13 prf+(K, S) using HMAC-SHA256.
-func PRFPlusSHA256(key, seed []byte, outLen int) []byte {
+func prfPlusWithHash(newH func() hash.Hash, key, seed []byte, outLen int) []byte {
 	var out []byte
 	var prev []byte
 	for counter := byte(1); len(out) < outLen; counter++ {
-		m := hmac.New(sha256.New, key)
+		m := hmac.New(newH, key)
 		m.Write(prev)
 		m.Write(seed)
 		m.Write([]byte{counter})
@@ -123,21 +182,79 @@ func PRFPlusSHA256(key, seed []byte, outLen int) []byte {
 	return out[:outLen]
 }
 
-// IKEKeys holds the RFC 7296 IKE_SA derived symmetric keys (AES-128-CBC + HMAC-SHA256-128 or AES-GCM-128).
+// PRF computes HMAC-SHA256(key, data).
+func PRFSHA256(key, data []byte) []byte {
+	return prfWithHash(sha256.New, key, data)
+}
+
+// PRFPlus implements RFC 7296 §2.13 prf+(K, S) using HMAC-SHA256.
+func PRFPlusSHA256(key, seed []byte, outLen int) []byte {
+	return prfPlusWithHash(sha256.New, key, seed, outLen)
+}
+
+// IKEKeys holds the RFC 7296 IKE_SA derived symmetric keys.
 type IKEKeys struct {
-	SKd  []byte
-	SKai []byte
-	SKar []byte
-	SKei []byte
-	SKer []byte
-	SKpi []byte
-	SKpr []byte
-	AEAD bool
+	SKd   []byte
+	SKai  []byte
+	SKar  []byte
+	SKei  []byte
+	SKer  []byte
+	SKpi  []byte
+	SKpr  []byte
+	AEAD  bool
+	Suite IKESuite
+}
+
+func (k *IKEKeys) PRF(key, data []byte) []byte {
+	return prfWithHash(prfHashFunc(k.Suite.PRFID), key, data)
+}
+
+func (k *IKEKeys) PRFPlus(key, seed []byte, outLen int) []byte {
+	return prfPlusWithHash(prfHashFunc(k.Suite.PRFID), key, seed, outLen)
+}
+
+func (k *IKEKeys) IntegHash() func() hash.Hash {
+	if k.Suite.AuthID == AuthAlgHMACSHA196 {
+		return sha1.New
+	}
+	return sha256.New
+}
+
+func (k *IKEKeys) ICVLen() int {
+	if k.Suite.AuthID == AuthAlgHMACSHA196 {
+		return 12
+	}
+	return 16
 }
 
 func DeriveIKEKeys(ni, nr, sharedSecret []byte, spii, spir uint64, aead bool) *IKEKeys {
+	suite := DefaultIKESuite()
+	suite.AEAD = aead
+	return DeriveIKEKeysWithSuite(ni, nr, sharedSecret, spii, spir, suite)
+}
+
+func DeriveIKEKeysWithSuite(ni, nr, sharedSecret []byte, spii, spir uint64, suite IKESuite) *IKEKeys {
+	if suite.EncKeyLen == 0 {
+		suite.EncKeyLen = 16
+	}
+	if suite.PRFID == 0 {
+		suite.PRFID = PRFAlgHMACSHA256
+	}
+	if suite.AuthID == 0 {
+		suite.AuthID = AuthAlgHMACSHA256128
+	}
+	hFn := prfHashFunc(suite.PRFID)
+	prfLen := 32
+	if suite.PRFID == PRFAlgHMACSHA1 {
+		prfLen = 20
+	}
+	authLen := 32
+	if suite.AuthID == AuthAlgHMACSHA196 {
+		authLen = 20
+	}
+
 	nonceKey := append(append([]byte(nil), ni...), nr...)
-	skeyseed := PRFSHA256(nonceKey, sharedSecret)
+	skeyseed := prfWithHash(hFn, nonceKey, sharedSecret)
 
 	var seed []byte
 	seed = append(seed, ni...)
@@ -147,29 +264,29 @@ func DeriveIKEKeys(ni, nr, sharedSecret []byte, spii, spir uint64, aead bool) *I
 	binary.BigEndian.PutUint64(spis[8:16], spir)
 	seed = append(seed, spis[:]...)
 
-	if aead {
-		// AES-128-GCM: SK_d(32), SK_ei(20=16+4salt), SK_er(20), SK_pi(32), SK_pr(32)
-		km := PRFPlusSHA256(skeyseed, seed, 32+20+20+32+32)
-		return &IKEKeys{
-			SKd:  km[0:32],
-			SKei: km[32:52],
-			SKer: km[52:72],
-			SKpi: km[72:104],
-			SKpr: km[104:136],
-			AEAD: true,
-		}
+	if suite.AEAD {
+		encTotal := suite.EncKeyLen + 4
+		km := prfPlusWithHash(hFn, skeyseed, seed, prfLen+encTotal*2+prfLen*2)
+		off := 0
+		skd := km[off : off+prfLen]; off += prfLen
+		skei := km[off : off+encTotal]; off += encTotal
+		sker := km[off : off+encTotal]; off += encTotal
+		skpi := km[off : off+prfLen]; off += prfLen
+		skpr := km[off : off+prfLen]
+		return &IKEKeys{SKd: skd, SKei: skei, SKer: sker, SKpi: skpi, SKpr: skpr, AEAD: true, Suite: suite}
 	}
-	// AES-128-CBC + HMAC-SHA256-128: SK_d(32), SK_ai(32), SK_ar(32), SK_ei(16), SK_er(16), SK_pi(32), SK_pr(32)
-	km := PRFPlusSHA256(skeyseed, seed, 32+32+32+16+16+32+32)
+	km := prfPlusWithHash(hFn, skeyseed, seed, prfLen+authLen*2+suite.EncKeyLen*2+prfLen*2)
+	off := 0
+	skd := km[off : off+prfLen]; off += prfLen
+	skai := km[off : off+authLen]; off += authLen
+	skar := km[off : off+authLen]; off += authLen
+	skei := km[off : off+suite.EncKeyLen]; off += suite.EncKeyLen
+	sker := km[off : off+suite.EncKeyLen]; off += suite.EncKeyLen
+	skpi := km[off : off+prfLen]; off += prfLen
+	skpr := km[off : off+prfLen]
 	return &IKEKeys{
-		SKd:  km[0:32],
-		SKai: km[32:64],
-		SKar: km[64:96],
-		SKei: km[96:112],
-		SKer: km[112:128],
-		SKpi: km[128:160],
-		SKpr: km[160:192],
-		AEAD: false,
+		SKd: skd, SKai: skai, SKar: skar, SKei: skei, SKer: sker, SKpi: skpi, SKpr: skpr,
+		AEAD: false, Suite: suite,
 	}
 }
 
@@ -179,14 +296,24 @@ func DeriveChildKeymat(skd, ni, nr []byte, length int) []byte {
 	return PRFPlusSHA256(skd, seed, length)
 }
 
+func (k *IKEKeys) DeriveChildKeymat(ni, nr []byte, length int) []byte {
+	seed := append(append([]byte(nil), ni...), nr...)
+	return k.PRFPlus(k.SKd, seed, length)
+}
+
 // ComputeAuthPayload computes RFC 7296 §2.15 AUTH = prf(prf(key, "Key Pad for IKEv2"), signedOctets).
 func ComputeAuthPayload(key, initPacket, peerNonce, idPayloadBody, skp []byte) []byte {
+	return ComputeAuthPayloadWithPRF(PRFAlgHMACSHA256, key, initPacket, peerNonce, idPayloadBody, skp)
+}
+
+func ComputeAuthPayloadWithPRF(prfID uint16, key, initPacket, peerNonce, idPayloadBody, skp []byte) []byte {
+	hFn := prfHashFunc(prfID)
 	signed := make([]byte, 0, len(initPacket)+len(peerNonce)+32)
 	signed = append(signed, initPacket...)
 	signed = append(signed, peerNonce...)
-	signed = append(signed, PRFSHA256(skp, idPayloadBody)...)
-	inner := PRFSHA256(key, []byte("Key Pad for IKEv2"))
-	return PRFSHA256(inner, signed)
+	signed = append(signed, prfWithHash(hFn, skp, idPayloadBody)...)
+	inner := prfWithHash(hFn, key, []byte("Key Pad for IKEv2"))
+	return prfWithHash(hFn, inner, signed)
 }
 
 // EAPAKAKeys holds keys derived per RFC 4187 (EAP-AKA) or RFC 5448 (EAP-AKA').
@@ -425,13 +552,14 @@ func verifyAndDecryptSK(keys *IKEKeys, fromInitiator bool, fullPacket []byte, sk
 		return plain[:len(plain)-padLen-1], nil
 	}
 
-	if len(skBody) < aes.BlockSize+aes.BlockSize+16 {
+	icvLen := keys.ICVLen()
+	if len(skBody) < aes.BlockSize+aes.BlockSize+icvLen {
 		return nil, errors.New("IKE_SK_CBC_SHORT")
 	}
-	mac := hmac.New(sha256.New, authKey)
-	mac.Write(fullPacket[:len(fullPacket)-16])
-	expected := mac.Sum(nil)[:16]
-	if subtle.ConstantTimeCompare(fullPacket[len(fullPacket)-16:], expected) != 1 {
+	mac := hmac.New(keys.IntegHash(), authKey)
+	mac.Write(fullPacket[:len(fullPacket)-icvLen])
+	expected := mac.Sum(nil)[:icvLen]
+	if subtle.ConstantTimeCompare(fullPacket[len(fullPacket)-icvLen:], expected) != 1 {
 		return nil, errors.New("IKE_SK_HMAC_FAILED")
 	}
 	blk, err := aes.NewCipher(encKey)
@@ -439,7 +567,7 @@ func verifyAndDecryptSK(keys *IKEKeys, fromInitiator bool, fullPacket []byte, sk
 		return nil, err
 	}
 	iv := skBody[:aes.BlockSize]
-	ct := skBody[aes.BlockSize : len(skBody)-16]
+	ct := skBody[aes.BlockSize : len(skBody)-icvLen]
 	if len(ct) == 0 || len(ct)%aes.BlockSize != 0 {
 		return nil, errors.New("IKE_SK_CBC_ALIGN")
 	}

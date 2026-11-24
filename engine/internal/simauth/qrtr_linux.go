@@ -73,6 +73,44 @@ func (q *QRTRProvider) Authenticate(ctx context.Context, req AuthRequest) (*Auth
 		return nil, err
 	}
 
+	if req.AppType == AppISIM {
+		// On Qualcomm QMI UIM, try GW USIM session (0x00/0x02) since 3GPP EAP-AKA uses USIM.
+		// Keep GW slot mapping; non-provisioning AID sessions are handled if needed.
+	}
+	// Try both 0-based GW session mapping (slot 0 -> 0x00, slot 1 -> 0x02) and card-slot fallback.
+	rawResp, err := q.authenticateRaw(ctx, fd, node, port, sessionType, challenge)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUMTSResponse(rawResp)
+}
+
+// AuthenticateRaw executes QMI UIM AUTHENTICATE and returns the raw TS 31.102 response bytes.
+func (q *QRTRProvider) AuthenticateRaw(ctx context.Context, slot int, challenge []byte) ([]byte, error) {
+	fd, err := syscall.Socket(afQipcrtr, syscall.SOCK_DGRAM, 0)
+	if err != nil {
+		return nil, fmt.Errorf("QRTR_UNAVAILABLE: %w", err)
+	}
+	defer syscall.Close(fd)
+	timeout := q.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	tv := syscall.NsecToTimeval(timeout.Nanoseconds())
+	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
+	_ = syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_SNDTIMEO, &tv)
+	node, port, err := discoverQMIService(fd, qmiServiceUIM)
+	if err != nil {
+		return nil, err
+	}
+	sessionType := byte(0x00)
+	if slot == 1 {
+		sessionType = 0x02
+	}
+	return q.authenticateRaw(ctx, fd, node, port, sessionType, challenge)
+}
+
+func (q *QRTRProvider) authenticateRaw(ctx context.Context, fd int, node, port uint32, sessionType byte, challenge []byte) ([]byte, error) {
 	// Build QMI UIM AUTHENTICATE (0x0034) request:
 	// TLV 0x01: Session Information (session_type[1], aid_len[1]=0)
 	// TLV 0x02: Authentication Data (context[1]=0x03 UMTS AKA, data_len[2 LE], challenge)
@@ -117,12 +155,7 @@ func (q *QRTRProvider) Authenticate(ctx context.Context, req AuthRequest) (*Auth
 		if respFlag != 0x02 || respTx != txID || respMsg != qmiUIMAuthenticate {
 			continue
 		}
-		tlvs := buf[7:n]
-		authRaw, err := extractQMIUIMAuthTLV(tlvs)
-		if err != nil {
-			return nil, err
-		}
-		return ParseUMTSResponse(authRaw)
+		return extractQMIUIMAuthTLV(buf[7:n])
 	}
 }
 
@@ -166,11 +199,25 @@ func extractQMIUIMAuthTLV(tlvs []byte) ([]byte, error) {
 }
 
 func discoverQMIService(fd int, serviceID uint32) (uint32, uint32, error) {
-	// QRTR_CMD_NEW_LOOKUP (cmd=9): [cmd:4][service:4][instance:4][node:4][port:4]
+	// Query local node via getsockname (auto-binds AF_QIPCRTR socket and returns local node ID).
+	localNode := uint32(1)
+	var selfSA sockaddrQRTR
+	selfLen := uint32(unsafe.Sizeof(selfSA))
+	_, _, errno := syscall.Syscall(
+		syscall.SYS_GETSOCKNAME,
+		uintptr(fd),
+		uintptr(unsafe.Pointer(&selfSA)),
+		uintptr(unsafe.Pointer(&selfLen)),
+	)
+	if errno == 0 {
+		localNode = selfSA.Node
+	}
+
+	// QRTR_TYPE_NEW_LOOKUP (cmd=10): [cmd:4][service:4][instance:4][node:4][port:4]
 	var lookup [20]byte
-	binary.LittleEndian.PutUint32(lookup[0:4], 9)
+	binary.LittleEndian.PutUint32(lookup[0:4], 10)
 	binary.LittleEndian.PutUint32(lookup[4:8], serviceID)
-	if err := qrtrSendTo(fd, qrtrNodeBcast, qrtrPortCtrl, lookup[:]); err != nil {
+	if err := qrtrSendTo(fd, localNode, qrtrPortCtrl, lookup[:]); err != nil {
 		return 0, 0, fmt.Errorf("QRTR_LOOKUP_SEND_FAILED: %w", err)
 	}
 	buf := make([]byte, 512)

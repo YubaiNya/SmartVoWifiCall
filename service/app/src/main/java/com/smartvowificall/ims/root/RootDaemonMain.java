@@ -12,6 +12,8 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -27,16 +29,23 @@ import org.json.JSONObject;
  */
 public final class RootDaemonMain {
   private static final String APP_PACKAGE = "com.smartvowificall.ims";
+  private static final String LOCK_PATH = "/data/adb/smartvowificall_ims/run/root-daemon.lock";
   private static final AtomicLong REQUEST_COUNT = new AtomicLong();
   private static volatile long startedAtMs;
   private static volatile int cachedAppUid = -1;
   private static volatile long lastUidRefreshMs = 0L;
+  private static RandomAccessFile instanceLockRaf;
+  private static FileLock instanceLock;
 
   private RootDaemonMain() {}
 
   public static void main(String[] args) {
     try {
       if (Process.myUid() != 0) throw new SecurityException("ROOT_REQUIRED");
+      if (!acquireSingleInstanceLock()) {
+        // Another RootDaemonMain instance already holds the lock; exit cleanly.
+        System.exit(0);
+      }
       if (Looper.myLooper() == null) Looper.prepareMainLooper();
       startedAtMs = SystemClock.elapsedRealtime();
 
@@ -57,6 +66,32 @@ public final class RootDaemonMain {
     } catch (Throwable t) {
       System.err.println("RootDaemonMain fatal: " + t.getClass().getSimpleName());
       System.exit(1);
+    }
+  }
+
+  private static boolean acquireSingleInstanceLock() {
+    try {
+      File lockFile = new File(LOCK_PATH);
+      File parent = lockFile.getParentFile();
+      if (parent != null && !parent.isDirectory()) {
+        parent.mkdirs();
+        Os.chmod(parent.getAbsolutePath(), 0700);
+      }
+      RandomAccessFile raf = new RandomAccessFile(lockFile, "rw");
+      Os.chmod(lockFile.getAbsolutePath(), 0600);
+      FileLock lock = raf.getChannel().tryLock();
+      if (lock == null) {
+        raf.close();
+        return false;
+      }
+      instanceLockRaf = raf;
+      instanceLock = lock;
+      return true;
+    } catch (java.nio.channels.OverlappingFileLockException e) {
+      return false;
+    } catch (Throwable t) {
+      System.err.println("RootDaemonMain lock error: " + t.getClass().getSimpleName());
+      return false;
     }
   }
 

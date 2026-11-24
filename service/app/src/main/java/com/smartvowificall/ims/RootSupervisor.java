@@ -132,8 +132,8 @@ final class RootSupervisor {
       try {
         int myUid = android.os.Process.myUid();
         String apk = context.getApplicationInfo().sourceDir;
-        String cmd = "BASE=/data/adb/smartvowificall_ims; mkdir -p \"$BASE/run\" /data/local/tmp/vowifi; "
-            + "chmod 0711 /data/local/tmp/vowifi; "
+        String cmd = "BASE=/data/adb/smartvowificall_ims; mkdir -p \"$BASE/run\" /data/local/tmp/smartvowificall; "
+            + "chmod 0711 /data/local/tmp/smartvowificall; "
             + "setsid env CLASSPATH=" + quote(apk)
             + " /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "
             + quote(RootDaemonProtocol.DEFAULT_SOCKET_PATH) + " " + myUid

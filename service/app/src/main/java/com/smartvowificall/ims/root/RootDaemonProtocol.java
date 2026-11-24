@@ -16,7 +16,7 @@ import java.util.Set;
  * Framing: single-line UTF-8 JSON per request/response over a protected Unix Domain Socket.
  */
 public final class RootDaemonProtocol {
-  public static final String DEFAULT_SOCKET_PATH = "/data/local/tmp/vowifi/root-daemon.sock";
+  public static final String DEFAULT_SOCKET_PATH = "/data/local/tmp/smartvowificall/root-daemon.sock";
   public static final int MAX_REQUEST_LINE_BYTES = 6 * 1024 * 1024;
   public static final int MAX_STDIN_BYTES = 4 * 1024 * 1024;
   public static final int MAX_ARGS = 16;

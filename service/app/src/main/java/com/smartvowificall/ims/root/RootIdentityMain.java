@@ -1270,6 +1270,14 @@ public final class RootIdentityMain {
           hasMethod(tel, "getIccAuthentication", int.class, String.class, String.class, int.class, int.class, String.class)
           || hasMethod(tel, "getIccAuthentication", int.class, String.class, int.class, int.class, String.class);
     } catch (Throwable ignored) {}
+    if (!iccAuthAvailable) {
+      try {
+        Class<?> subInfo = Class.forName("com.android.internal.telephony.IPhoneSubInfo");
+        iccAuthAvailable =
+            hasMethod(subInfo, "getIccAuthentication", int.class, String.class, String.class, int.class, int.class, String.class)
+            || hasMethod(subInfo, "getIccAuthentication", int.class, String.class, int.class, int.class, String.class);
+      } catch (Throwable ignored) {}
+    }
 
     com.smartvowificall.ims.policy.ChipsetStrategy.Family family =
         com.smartvowificall.ims.policy.ChipsetStrategy.detect(

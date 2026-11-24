@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 )
 
 // AppType matches Android TelephonyManager APPTYPE constants.
@@ -157,7 +158,7 @@ func (a *AutoProvider) Name() string {
 }
 
 func (a *AutoProvider) Authenticate(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
-	var lastErr error
+	var errs []string
 	for _, p := range a.Providers {
 		if p == nil {
 			continue
@@ -166,10 +167,10 @@ func (a *AutoProvider) Authenticate(ctx context.Context, req AuthRequest) (*Auth
 		if err == nil && resp != nil {
 			return resp, nil
 		}
-		lastErr = fmt.Errorf("%s: %w", p.Name(), err)
+		errs = append(errs, fmt.Sprintf("%s: %v", p.Name(), err))
 	}
-	if lastErr == nil {
+	if len(errs) == 0 {
 		return nil, errors.New("SIM_AKA_NO_PROVIDER")
 	}
-	return nil, lastErr
+	return nil, errors.New(strings.Join(errs, "; "))
 }

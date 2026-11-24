@@ -166,7 +166,8 @@ func (c *Client) Register(ctx context.Context) error {
 	c.mu.Unlock()
 
 	authHeader := ""
-	for attempt := 0; attempt < 4; attempt++ {
+	expires := 600000 // 3GPP TS 24.229 §5.1.1.2.1 standard initial IMS registration interval
+	for attempt := 0; attempt < 5; attempt++ {
 		c.mu.Lock()
 		c.regCSeq++
 		cseq := c.regCSeq
@@ -185,9 +186,10 @@ func (c *Client) Register(ctx context.Context) error {
 		msg.AddHeader("Call-ID", callID)
 		msg.AddHeader("CSeq", fmt.Sprintf("%d REGISTER", cseq))
 		msg.AddHeader("Contact", c.contactURI()+";+g.3gpp.icsi-ref=\"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel\";+g.3gpp.smsip")
-		msg.AddHeader("Expires", "3600")
-		msg.AddHeader("P-Access-Network-Info", "IEEE-802.11;i-wlan-node-id=000000000000")
-		msg.AddHeader("Supported", "path, gruu, sec-agree")
+		msg.AddHeader("Expires", strconv.Itoa(expires))
+		msg.AddHeader("Allow", "INVITE, ACK, CANCEL, BYE, UPDATE, PRACK, MESSAGE, NOTIFY, REFER, OPTIONS")
+		msg.AddHeader("Supported", "path, gruu, sec-agree, 100rel")
+		msg.AddHeader("User-Agent", "SmartVoWifiCall-IMS/1.0")
 		if authHeader != "" {
 			msg.AddHeader("Authorization", authHeader)
 		} else {
@@ -215,6 +217,17 @@ func (c *Client) Register(ctx context.Context) error {
 				c.cfg.Logger.Info("sip", "IMS REGISTER 200 OK", nil)
 			}
 			return nil
+		}
+		if resp.StatusCode == 423 {
+			if minExp, err := strconv.Atoi(strings.TrimSpace(resp.GetHeader("Min-Expires"))); err == nil && minExp > expires {
+				expires = minExp
+			} else if expires < 600000 {
+				expires = 600000
+			}
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Info("sip", fmt.Sprintf("REGISTER 423 Interval Too Brief -> retrying with Expires=%d", expires), nil)
+			}
+			continue
 		}
 		if resp.StatusCode == 401 {
 			www := resp.GetHeader("WWW-Authenticate")
@@ -277,6 +290,14 @@ func (c *Client) Register(ctx context.Context) error {
 				authHeader += fmt.Sprintf(", opaque=\"%s\"", opq)
 			}
 			continue
+		}
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Warn("sip", fmt.Sprintf("REGISTER rejected attempt=%d status=%d %s", attempt, resp.StatusCode, resp.Reason), map[string]any{
+				"reasonHdr": resp.GetHeader("Reason"),
+				"warning":   resp.GetHeader("Warning"),
+				"secServer": resp.GetHeader("Security-Server"),
+				"wwwAuth":   resp.GetHeader("WWW-Authenticate") != "",
+			})
 		}
 		c.setRegState("DISCONNECTED", false)
 		return fmt.Errorf("SIP_REGISTER_HTTP_%d", resp.StatusCode)

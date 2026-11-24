@@ -231,50 +231,100 @@ func (c *Client) replyInformational(req []byte) {
 }
 
 func (c *Client) handshake(ctx context.Context) error {
-	// 1. IKE_SA_INIT
-	dh, err := GenerateDH(DHGroupMODP2048)
-	if err != nil {
-		return err
-	}
-	ni := make([]byte, 32)
-	_, _ = rand.Read(ni)
+	// 1. IKE_SA_INIT (handles COOKIE=16390 and INVALID_KE_PAYLOAD=17 automatic retries)
+	dhGroup := DHGroupMODP2048
+	var cookie []byte
+	var dh *DHKeyPair
+	var ni, nr, initReq []byte
+	var respHdr Header
+	var respPayloads []Payload
 
-	natSrc := natHash(c.spii, 0, c.conn.LocalAddr().(*net.UDPAddr))
-	natDst := natHash(c.spii, 0, c.conn.RemoteAddr().(*net.UDPAddr))
-	initPayloads := []Payload{
-		{Type: PayloadSA, Body: BuildIKESAProposal(DHGroupMODP2048)},
-		{Type: PayloadKE, Body: BuildKEPayload(DHGroupMODP2048, dh.Public)},
-		{Type: PayloadNonce, Body: ni},
-		{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionSourceIP, natSrc)},
-		{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionDestIP, natDst)},
-	}
-	initReq := EncodePacket(Header{
-		SPIi:      c.spii,
-		Exchange:  ExchangeIKESAInit,
-		Flags:     FlagInitiator,
-		MessageID: 0,
-	}, initPayloads)
+	for initTry := 0; initTry < 3; initTry++ {
+		var err error
+		dh, err = GenerateDH(dhGroup)
+		if err != nil {
+			return err
+		}
+		ni = make([]byte, 32)
+		_, _ = rand.Read(ni)
 
-	initRespRaw, err := c.exchange(ctx, 0, initReq)
-	if err != nil {
-		return fmt.Errorf("IKE_SA_INIT_FAILED: %w", err)
+		natSrc := natHash(c.spii, 0, c.conn.LocalAddr().(*net.UDPAddr))
+		natDst := natHash(c.spii, 0, c.conn.RemoteAddr().(*net.UDPAddr))
+		initPayloads := make([]Payload, 0, 6)
+		if len(cookie) > 0 {
+			initPayloads = append(initPayloads, Payload{Type: PayloadNotify, Body: buildNotify(16390, cookie)})
+		}
+		initPayloads = append(initPayloads,
+			Payload{Type: PayloadSA, Body: BuildMultiIKESAProposal(dhGroup)},
+			Payload{Type: PayloadKE, Body: BuildKEPayload(dhGroup, dh.Public)},
+			Payload{Type: PayloadNonce, Body: ni},
+			Payload{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionSourceIP, natSrc)},
+			Payload{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionDestIP, natDst)},
+		)
+		initReq = EncodePacket(Header{
+			SPIi:      c.spii,
+			Exchange:  ExchangeIKESAInit,
+			Flags:     FlagInitiator,
+			MessageID: 0,
+		}, initPayloads)
+
+		initRespRaw, err := c.exchange(ctx, 0, initReq)
+		if err != nil {
+			return fmt.Errorf("IKE_SA_INIT_FAILED: %w", err)
+		}
+		respHdr, respPayloads, err = DecodePacket(initRespRaw)
+		if err != nil {
+			return fmt.Errorf("IKE_SA_INIT_DECODE: %w", err)
+		}
+		if FindPayload(respPayloads, PayloadKE) != nil && FindPayload(respPayloads, PayloadNonce) != nil {
+			break
+		}
+		retried := false
+		var notifies []uint16
+		for _, p := range respPayloads {
+			if p.Type == PayloadNotify {
+				if nt, ndata, ok := ParseNotify(p.Body); ok {
+					notifies = append(notifies, nt)
+					if nt == 16390 && len(ndata) > 0 {
+						cookie = append([]byte(nil), ndata...)
+						retried = true
+					} else if nt == 17 && len(ndata) >= 2 {
+						dhGroup = binary.BigEndian.Uint16(ndata[0:2])
+						retried = true
+					}
+				}
+			}
+		}
+		if retried {
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Info("ikev2", fmt.Sprintf("IKE_SA_INIT retrying dh=%d cookieLen=%d notifies=%v", dhGroup, len(cookie), notifies), nil)
+			}
+			continue
+		}
+		return fmt.Errorf("IKE_SA_INIT_REJECTED_NOTIFIES_%v", notifies)
 	}
-	respHdr, respPayloads, err := DecodePacket(initRespRaw)
-	if err != nil {
-		return fmt.Errorf("IKE_SA_INIT_DECODE: %w", err)
-	}
+
 	c.spir = respHdr.SPIr
+	saRespP := FindPayload(respPayloads, PayloadSA)
 	keP := FindPayload(respPayloads, PayloadKE)
 	nrP := FindPayload(respPayloads, PayloadNonce)
 	if keP == nil || len(keP.Body) < 4 || nrP == nil || len(nrP.Body) < 16 {
 		return errors.New("IKE_SA_INIT_MISSING_KE_OR_NONCE")
 	}
-	nr := nrP.Body
+	ikeSuite := DefaultIKESuite()
+	if saRespP != nil {
+		ikeSuite = ParseSelectedIKESuite(saRespP.Body)
+	}
+	nr = nrP.Body
 	secret, err := dh.SharedSecret(keP.Body[4:])
 	if err != nil {
 		return fmt.Errorf("IKE_DH_FAILED: %w", err)
 	}
-	c.keys = DeriveIKEKeys(ni, nr, secret, c.spii, c.spir, false)
+	c.keys = DeriveIKEKeysWithSuite(ni, nr, secret, c.spii, c.spir, ikeSuite)
+	if c.cfg.Logger != nil {
+		c.cfg.Logger.Info("ikev2", fmt.Sprintf("IKE_SA_INIT established dh=%d encBytes=%d prf=%d auth=%d",
+			dhGroup, ikeSuite.EncKeyLen, ikeSuite.PRFID, ikeSuite.AuthID), nil)
+	}
 
 	// Switch to UDP 4500 NAT-T if configured or responder sent NAT notifications while on port 500.
 	if !c.nattMode && c.cfg.NATTAddr != "" {
@@ -306,7 +356,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		{Type: PayloadIDi, Body: idiBody},
 		{Type: PayloadIDr, Body: idrBody},
 		{Type: PayloadCP, Body: BuildCFGRequest()},
-		{Type: PayloadSA, Body: BuildChildESPProposal(localChildSPI, false)},
+		{Type: PayloadSA, Body: BuildMultiChildESPProposal(localChildSPI)},
 		{Type: PayloadTSi, Body: BuildTSAllIPv4()},
 		{Type: PayloadTSr, Body: BuildTSAllIPv4()},
 	}
@@ -335,7 +385,15 @@ func (c *Client) handshake(ctx context.Context) error {
 	for round := 0; round < 6; round++ {
 		eapP := FindPayload(respInner, PayloadEAP)
 		if eapP == nil {
-			return errors.New("IKE_AUTH_MISSING_EAP")
+			var notifies []uint16
+			for _, p := range respInner {
+				if p.Type == PayloadNotify {
+					if nt, _, ok := ParseNotify(p.Body); ok {
+						notifies = append(notifies, nt)
+					}
+				}
+			}
+			return fmt.Errorf("IKE_AUTH_MISSING_EAP_NOTIFIES_%v", notifies)
 		}
 		if len(eapP.Body) < 4 {
 			return errors.New("IKE_EAP_SHORT")
@@ -348,21 +406,81 @@ func (c *Client) handshake(ctx context.Context) error {
 		if code == EAPCodeFailure {
 			return errors.New("IKE_EAP_FAILURE")
 		}
-		if code != EAPCodeRequest || len(eapP.Body) < 8 {
+		if code != EAPCodeRequest || len(eapP.Body) < 5 {
 			return fmt.Errorf("IKE_EAP_UNEXPECTED_CODE_%d", code)
 		}
 		eapType := eapP.Body[4]
-		subtype := eapP.Body[5]
-		if (eapType != EAPTypeAKA && eapType != EAPTypeAKAPrime) || subtype != AKAChallenge {
-			return fmt.Errorf("IKE_EAP_UNSUPPORTED_TYPE_%d_%d", eapType, subtype)
-		}
-
-		eapReply, derivedMSK, err := c.handleEAPAKAChallenge(ctx, eapID, eapType, eapP.Body)
-		if err != nil {
-			return err
-		}
-		if len(derivedMSK) > 0 {
-			msk = derivedMSK
+		var eapReply []byte
+		if eapType == 1 {
+			// Standard RFC 3748 EAP-Request/Identity
+			idBytes := []byte(c.cfg.EAPIdentity)
+			eapReply = make([]byte, 5+len(idBytes))
+			eapReply[0] = EAPCodeResponse
+			eapReply[1] = eapID
+			binary.BigEndian.PutUint16(eapReply[2:4], uint16(len(eapReply)))
+			eapReply[4] = 1
+			copy(eapReply[5:], idBytes)
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Info("ikev2", "answered EAP-Identity request", nil)
+			}
+		} else {
+			if len(eapP.Body) < 8 {
+				return fmt.Errorf("IKE_EAP_SHORT_TYPE_%d", eapType)
+			}
+			subtype := eapP.Body[5]
+			if eapType != EAPTypeAKA && eapType != EAPTypeAKAPrime {
+				return fmt.Errorf("IKE_EAP_UNSUPPORTED_TYPE_%d_%d", eapType, subtype)
+			}
+			switch subtype {
+			case 5: // RFC 4187 AKA-Identity
+				idBytes := []byte(c.cfg.EAPIdentity)
+				pad := (4 - ((4 + len(idBytes)) % 4)) % 4
+				attrLenBytes := 4 + len(idBytes) + pad
+				var buf bytes.Buffer
+				buf.Write([]byte{EAPCodeResponse, eapID, 0, 0, eapType, 5, 0, 0})
+				buf.WriteByte(14) // AT_IDENTITY
+				buf.WriteByte(byte(attrLenBytes / 4))
+				var idLen [2]byte
+				binary.BigEndian.PutUint16(idLen[:], uint16(len(idBytes)))
+				buf.Write(idLen[:])
+				buf.Write(idBytes)
+				if pad > 0 {
+					buf.Write(make([]byte, pad))
+				}
+				eapReply = buf.Bytes()
+				binary.BigEndian.PutUint16(eapReply[2:4], uint16(len(eapReply)))
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("answered EAP-AKA Identity (type=%d)", eapType), nil)
+				}
+			case AKAChallenge:
+				var derivedMSK []byte
+				eapReply, derivedMSK, err = c.handleEAPAKAChallenge(ctx, eapID, eapType, eapP.Body)
+				if err != nil {
+					return err
+				}
+				if len(derivedMSK) > 0 {
+					msk = derivedMSK
+				}
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("answered EAP-AKA Challenge (type=%d mskLen=%d)", eapType, len(msk)), nil)
+				}
+			case 12: // AKA-Notification
+				notifCode := uint16(0)
+				off := 8
+				for off+4 <= len(eapP.Body) {
+					alen := int(eapP.Body[off+1]) * 4
+					if alen < 4 || off+alen > len(eapP.Body) {
+						break
+					}
+					if eapP.Body[off] == 12 { // AT_NOTIFICATION
+						notifCode = binary.BigEndian.Uint16(eapP.Body[off+2 : off+4])
+					}
+					off += alen
+				}
+				return fmt.Errorf("IKE_EAP_AKA_NOTIFICATION_%d", notifCode)
+			default:
+				return fmt.Errorf("IKE_EAP_UNSUPPORTED_TYPE_%d_%d", eapType, subtype)
+			}
 		}
 
 		c.msgID++
@@ -389,8 +507,8 @@ func (c *Client) handshake(ctx context.Context) error {
 		return errors.New("IKE_EAP_NO_MSK")
 	}
 
-	// 4. Final IKE_AUTH with AUTH signed by MSK
-	authData := ComputeAuthPayload(msk[:32], initReq, nr, idiBody, c.keys.SKpi)
+	// 4. Final IKE_AUTH with AUTH signed by full 64-byte MSK (RFC 7296 §2.16)
+	authData := ComputeAuthPayloadWithPRF(c.keys.Suite.PRFID, msk, initReq, nr, idiBody, c.keys.SKpi)
 	authBody := append([]byte{2, 0, 0, 0}, authData...) // Auth Method 2 = Shared Key MIC
 	c.msgID++
 	finalReq, err := EncodeEncryptedPacket(Header{
@@ -415,24 +533,49 @@ func (c *Client) handshake(ctx context.Context) error {
 	cpP := FindPayload(finalInner, PayloadCP)
 	saP := FindPayload(finalInner, PayloadSA)
 	if cpP == nil || saP == nil {
-		return errors.New("IKE_AUTH_FINAL_MISSING_CP_OR_SA")
+		var notifies []uint16
+		for _, p := range finalInner {
+			if p.Type == PayloadNotify {
+				if nt, _, ok := ParseNotify(p.Body); ok {
+					notifies = append(notifies, nt)
+				}
+			}
+		}
+		return fmt.Errorf("IKE_AUTH_FINAL_MISSING_CP_OR_SA_NOTIFIES_%v", notifies)
 	}
 	cfgRes, err := ParseCFGReply(cpP.Body)
 	if err != nil || cfgRes.LocalIP == nil {
 		return errors.New("IKE_AUTH_NO_LOCAL_IP")
 	}
-	remoteChildSPI, ok := ParseChildSASPI(saP.Body)
+	remoteChildSPI, childEncLen, childAuthID, ok := ParseSelectedChildSA(saP.Body)
 	if !ok {
 		return errors.New("IKE_AUTH_NO_CHILD_SPI")
 	}
+	childAuthLen := 32
+	childSuite := ipsec.SuiteAESCBC128HMACSHA256
+	if childAuthID == AuthAlgHMACSHA196 {
+		childAuthLen = 20
+		if childEncLen == 32 {
+			childSuite = ipsec.SuiteAESCBC256HMACSHA1
+		} else {
+			childSuite = ipsec.SuiteAESCBC128HMACSHA1
+		}
+	} else if childEncLen == 32 {
+		childSuite = ipsec.SuiteAESCBC256HMACSHA256
+	}
 
-	// Derive Child SA KEYMAT: Enc_i(16) || Auth_i(32) || Enc_r(16) || Auth_r(32)
-	km := DeriveChildKeymat(c.keys.SKd, ni, nr, 16+32+16+32)
-	outSA, err := ipsec.NewSA(remoteChildSPI, ipsec.SuiteAESCBC128HMACSHA256, km[0:16], km[16:48], nil)
+	// Derive Child SA KEYMAT: Enc_i || Auth_i || Enc_r || Auth_r using negotiated IKE PRF
+	km := c.keys.DeriveChildKeymat(ni, nr, 2*(childEncLen+childAuthLen))
+	off := 0
+	encI := km[off : off+childEncLen]; off += childEncLen
+	authI := km[off : off+childAuthLen]; off += childAuthLen
+	encR := km[off : off+childEncLen]; off += childEncLen
+	authR := km[off : off+childAuthLen]
+	outSA, err := ipsec.NewSA(remoteChildSPI, childSuite, encI, authI, nil)
 	if err != nil {
 		return err
 	}
-	inSA, err := ipsec.NewSA(localChildSPI, ipsec.SuiteAESCBC128HMACSHA256, km[48:64], km[64:96], nil)
+	inSA, err := ipsec.NewSA(localChildSPI, childSuite, encR, authR, nil)
 	if err != nil {
 		return err
 	}

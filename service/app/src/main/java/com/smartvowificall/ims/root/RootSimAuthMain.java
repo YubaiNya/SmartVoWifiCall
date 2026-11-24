@@ -29,6 +29,7 @@ public final class RootSimAuthMain {
   public static final String DEFAULT_SOCKET_PATH = "/data/adb/smartvowificall_ims/run/sim-aka.sock";
   private static final String USIM_AID = "A0000000871002";
   private static final String ISIM_AID = "A0000000871004";
+  private static final String ENGINE_BIN = "/data/adb/modules/smartvowificall/bin/vowifi-engine-arm64";
 
   private RootSimAuthMain() {}
 
@@ -159,10 +160,54 @@ public final class RootSimAuthMain {
             .put("responseBase64", apduResp);
       }
     }
+    // Qualcomm DSDS root-netns QRTR fallback (works even when enableModemForSlot=false turns off RIL)
+    String qrtrResp = callAuthenticateViaQrtrHelper(slot, challengeB64);
+    if (qrtrResp != null && !qrtrResp.isEmpty()) {
+      return new JSONObject().put("ok", true).put("method", "qrtrRootNetns")
+          .put("appType", appType)
+          .put("responseBase64", qrtrResp);
+    }
     return new JSONObject().put("ok", false).put("code", "ICC_AUTH_UNAVAILABLE");
   }
 
+  private static String callAuthenticateViaQrtrHelper(int slot, String challengeB64) {
+    try {
+      if (!new File(ENGINE_BIN).canExecute()) return null;
+      java.lang.Process p = new ProcessBuilder(
+          ENGINE_BIN, "qrtr-auth", "--slot=" + slot, "--challenge=" + challengeB64)
+          .redirectErrorStream(true).start();
+      if (!p.waitFor(8, java.util.concurrent.TimeUnit.SECONDS)) {
+        p.destroyForcibly();
+        return null;
+      }
+      byte[] out = p.getInputStream().readAllBytes();
+      JSONObject j = new JSONObject(new String(out, StandardCharsets.UTF_8).trim());
+      if (j.optBoolean("ok", false)) {
+        return j.optString("responseBase64", "");
+      }
+    } catch (Throwable ignored) {}
+    return null;
+  }
+
   private static String callGetIccAuthentication(int subId, int appType, int authType, String data) {
+    // Primary AOSP service: IPhoneSubInfo.getIccAuthentication (Android 11-17)
+    try {
+      Object val = binderCall("iphonesubinfo", "com.android.internal.telephony.IPhoneSubInfo",
+          "getIccAuthentication",
+          new Class<?>[] {int.class, String.class, String.class, int.class, int.class, String.class},
+          new Object[] {subId, "root", null, appType, authType, data});
+      if (val instanceof String && !((String) val).isEmpty()) return (String) val;
+    } catch (Throwable ignored) {
+    }
+    try {
+      Object val = binderCall("iphonesubinfo", "com.android.internal.telephony.IPhoneSubInfo",
+          "getIccAuthentication",
+          new Class<?>[] {int.class, String.class, int.class, int.class, String.class},
+          new Object[] {subId, "root", appType, authType, data});
+      if (val instanceof String && !((String) val).isEmpty()) return (String) val;
+    } catch (Throwable ignored) {
+    }
+    // OEM fallback: ITelephony.getIccAuthentication
     try {
       Object val = binderCall("phone", "com.android.internal.telephony.ITelephony",
           "getIccAuthentication",
@@ -171,7 +216,6 @@ public final class RootSimAuthMain {
       if (val instanceof String && !((String) val).isEmpty()) return (String) val;
     } catch (Throwable ignored) {
     }
-    // Older/OEM signature without attributionTag
     try {
       Object val = binderCall("phone", "com.android.internal.telephony.ITelephony",
           "getIccAuthentication",

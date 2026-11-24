@@ -33,7 +33,8 @@ APP_SYNCED=0
 # No RECORD_AUDIO grant and no audio connections in the registration-only workflow.
 network_pid=
 network_start=
-DAEMON_SOCK=/data/local/tmp/vowifi/root-daemon.sock
+DAEMON_DIR=/data/local/tmp/smartvowificall
+DAEMON_SOCK="$DAEMON_DIR/root-daemon.sock"
 app_uid() {
  stat -c '%u' /data/data/com.smartvowificall.ims 2>/dev/null || echo ""
 }
@@ -49,6 +50,8 @@ stop_root_daemon() {
 }
 start_root_daemon() {
  uid=$(app_uid)
+ mkdir -p "$DAEMON_DIR" "$BASE/run"
+ chmod 0711 "$DAEMON_DIR"
  if [ -f "$BASE/run/root-daemon.pid" ] && [ -f "$BASE/run/root-daemon.owner" ]; then
   read -r dpid < "$BASE/run/root-daemon.pid" 2>/dev/null || dpid=
   read -r dopid dostart < "$BASE/run/root-daemon.owner" 2>/dev/null || { dopid=; dostart=; }
@@ -60,9 +63,6 @@ start_root_daemon() {
    return 0
   fi
  fi
- mkdir -p /data/local/tmp/vowifi "$BASE/run"
- chmod 0711 /data/local/tmp/vowifi
- rm -f "$DAEMON_SOCK"
  CLASSPATH="$APK" /system/bin/app_process /system/bin com.smartvowificall.ims.root.RootDaemonMain "$DAEMON_SOCK" "${uid:-}" >>"$BASE/run/root-daemon.log" 2>&1 &
  dpid=$!
  dstart=$(proc_start "$dpid" 2>/dev/null || :)

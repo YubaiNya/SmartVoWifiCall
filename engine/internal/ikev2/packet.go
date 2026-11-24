@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -185,7 +184,8 @@ func EncodeEncryptedPacket(h Header, innerPayloads []Payload, keys *IKEKeys, ini
 	ct := make([]byte, len(padded))
 	cipher.NewCBCEncrypter(blk, iv).CryptBlocks(ct, padded)
 
-	skLen := 4 + len(iv) + len(ct) + 16
+	icvLen := keys.ICVLen()
+	skLen := 4 + len(iv) + len(ct) + icvLen
 	totalLen := 28 + skLen
 	out := make([]byte, totalLen)
 	binary.BigEndian.PutUint64(out[0:8], h.SPIi)
@@ -202,9 +202,9 @@ func EncodeEncryptedPacket(h Header, innerPayloads []Payload, keys *IKEKeys, ini
 	copy(out[32:32+len(iv)], iv)
 	copy(out[32+len(iv):32+len(iv)+len(ct)], ct)
 
-	mac := hmac.New(sha256.New, authKey)
-	mac.Write(out[:len(out)-16])
-	copy(out[len(out)-16:], mac.Sum(nil)[:16])
+	mac := hmac.New(keys.IntegHash(), authKey)
+	mac.Write(out[:len(out)-icvLen])
+	copy(out[len(out)-icvLen:], mac.Sum(nil)[:icvLen])
 	return out, nil
 }
 
@@ -299,7 +299,7 @@ func FindPayload(payloads []Payload, ptype byte) *Payload {
 	return nil
 }
 
-// BuildIKEProposal builds an IKE_SA SA payload proposing AES-128-CBC + HMAC-SHA256-128 + PRF-HMAC-SHA256 + MODP-2048.
+// BuildIKESAProposal builds a single-transform IKE_SA proposal (AES-128-CBC + HMAC-SHA256-128 + PRF-HMAC-SHA256).
 func BuildIKESAProposal(dhGroup uint16) []byte {
 	transforms := [][]byte{
 		buildTransform(1, 12, 128), // ENCR_AES_CBC 128-bit
@@ -310,7 +310,31 @@ func BuildIKESAProposal(dhGroup uint16) []byte {
 	return buildProposal(1, 1, nil, transforms)
 }
 
-// BuildChildESPProposal builds a Child SA ESP proposal (AES-128-GCM or AES-128-CBC+HMAC-SHA256).
+// BuildMultiIKESAProposal builds a multi-transform IKE_SA offer compatible with real 3GPP carrier ePDGs:
+// AES-CBC (256/128), PRF (HMAC-SHA2-256 / HMAC-SHA1), INTEG (HMAC-SHA2-256-128 / HMAC-SHA1-96),
+// DH (primary group plus standard fallback groups 14, 5, 2, 19).
+func BuildMultiIKESAProposal(dhGroup uint16) []byte {
+	dhGroups := []uint16{dhGroup}
+	for _, g := range []uint16{DHGroupMODP2048, DHGroupMODP1536, DHGroupMODP1024, DHGroupECP256} {
+		if g != dhGroup {
+			dhGroups = append(dhGroups, g)
+		}
+	}
+	transforms := [][]byte{
+		buildTransform(1, 12, 256), // ENCR_AES_CBC 256-bit
+		buildTransform(1, 12, 128), // ENCR_AES_CBC 128-bit
+		buildTransform(2, 5, 0),    // PRF_HMAC_SHA2_256
+		buildTransform(2, 2, 0),    // PRF_HMAC_SHA1
+		buildTransform(3, 12, 0),   // AUTH_HMAC_SHA2_256_128
+		buildTransform(3, 2, 0),    // AUTH_HMAC_SHA1_96
+	}
+	for _, g := range dhGroups {
+		transforms = append(transforms, buildTransform(4, g, 0))
+	}
+	return buildProposal(1, 1, nil, transforms)
+}
+
+// BuildChildESPProposal builds a single-transform Child SA ESP proposal (AES-128-GCM or AES-128-CBC+HMAC-SHA256).
 func BuildChildESPProposal(spi uint32, gcm bool) []byte {
 	var spiBytes [4]byte
 	binary.BigEndian.PutUint32(spiBytes[:], spi)
@@ -328,6 +352,113 @@ func BuildChildESPProposal(spi uint32, gcm bool) []byte {
 		}
 	}
 	return buildProposal(1, 3, spiBytes[:], transforms)
+}
+
+// BuildMultiChildESPProposal builds a multi-transform Child SA ESP offer (AES-CBC-256/128 + SHA256/SHA1).
+func BuildMultiChildESPProposal(spi uint32) []byte {
+	var spiBytes [4]byte
+	binary.BigEndian.PutUint32(spiBytes[:], spi)
+	transforms := [][]byte{
+		buildTransform(1, 12, 256), // ENCR_AES_CBC 256-bit
+		buildTransform(1, 12, 128), // ENCR_AES_CBC 128-bit
+		buildTransform(3, 12, 0),   // AUTH_HMAC_SHA2_256_128
+		buildTransform(3, 2, 0),    // AUTH_HMAC_SHA1_96
+		buildTransform(5, 0, 0),    // ESN=No
+	}
+	return buildProposal(1, 3, spiBytes[:], transforms)
+}
+
+// ParseSelectedIKESuite parses the responder's chosen IKE_SA transforms from an SA payload.
+func ParseSelectedIKESuite(saBody []byte) IKESuite {
+	suite := DefaultIKESuite()
+	if len(saBody) < 8 {
+		return suite
+	}
+	spiLen := int(saBody[6])
+	numTr := int(saBody[7])
+	off := 8 + spiLen
+	for i := 0; i < numTr && off+8 <= len(saBody); i++ {
+		tLen := int(binary.BigEndian.Uint16(saBody[off+2 : off+4]))
+		if tLen < 8 || off+tLen > len(saBody) {
+			break
+		}
+		tType := saBody[off+4]
+		tID := binary.BigEndian.Uint16(saBody[off+6 : off+8])
+		var keyBits uint16
+		if tLen >= 12 && saBody[off+8] == 0x80 && saBody[off+9] == 0x0E {
+			keyBits = binary.BigEndian.Uint16(saBody[off+10 : off+12])
+		}
+		switch tType {
+		case 1: // ENCR
+			if keyBits == 256 {
+				suite.EncKeyLen = 32
+			} else if keyBits == 128 {
+				suite.EncKeyLen = 16
+			}
+			if tID == 20 {
+				suite.AEAD = true
+			}
+		case 2: // PRF
+			suite.PRFID = tID
+		case 3: // INTEG
+			suite.AuthID = tID
+		}
+		off += tLen
+	}
+	return suite
+}
+
+// ParseSelectedChildSA extracts responder ESP SPI and chosen encryption/integrity parameters.
+func ParseSelectedChildSA(saBody []byte) (spi uint32, encKeyLen int, authID uint16, ok bool) {
+	encKeyLen = 16
+	authID = AuthAlgHMACSHA256128
+	if len(saBody) < 12 {
+		return 0, encKeyLen, authID, false
+	}
+	spiLen := int(saBody[6])
+	numTr := int(saBody[7])
+	if spiLen != 4 || len(saBody) < 8+spiLen {
+		return 0, encKeyLen, authID, false
+	}
+	spi = binary.BigEndian.Uint32(saBody[8:12])
+	off := 8 + spiLen
+	for i := 0; i < numTr && off+8 <= len(saBody); i++ {
+		tLen := int(binary.BigEndian.Uint16(saBody[off+2 : off+4]))
+		if tLen < 8 || off+tLen > len(saBody) {
+			break
+		}
+		tType := saBody[off+4]
+		tID := binary.BigEndian.Uint16(saBody[off+6 : off+8])
+		var keyBits uint16
+		if tLen >= 12 && saBody[off+8] == 0x80 && saBody[off+9] == 0x0E {
+			keyBits = binary.BigEndian.Uint16(saBody[off+10 : off+12])
+		}
+		switch tType {
+		case 1:
+			if keyBits == 256 {
+				encKeyLen = 32
+			} else if keyBits == 128 {
+				encKeyLen = 16
+			}
+		case 3:
+			authID = tID
+		}
+		off += tLen
+	}
+	return spi, encKeyLen, authID, true
+}
+
+// ParseNotify decodes an IKEv2 Notify payload body.
+func ParseNotify(body []byte) (notifyType uint16, data []byte, ok bool) {
+	if len(body) < 4 {
+		return 0, nil, false
+	}
+	spiLen := int(body[1])
+	notifyType = binary.BigEndian.Uint16(body[2:4])
+	if 4+spiLen > len(body) {
+		return notifyType, nil, true
+	}
+	return notifyType, body[4+spiLen:], true
 }
 
 func buildProposal(num, protoID byte, spi []byte, transforms [][]byte) []byte {

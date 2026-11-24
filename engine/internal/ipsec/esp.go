@@ -23,6 +23,7 @@ const (
 	SuiteAESCBC128HMACSHA256
 	SuiteAESCBC256HMACSHA256
 	SuiteAESCBC128HMACSHA1
+	SuiteAESCBC256HMACSHA1
 )
 
 // ReplayWindow implements RFC 4303 64-bit sliding anti-replay window.
@@ -230,7 +231,7 @@ func (sa *SA) Decrypt(esp []byte) (byte, []byte, error) {
 
 func (sa *SA) hmacParams() (int, func() hash.Hash) {
 	switch sa.Suite {
-	case SuiteAESCBC128HMACSHA1:
+	case SuiteAESCBC128HMACSHA1, SuiteAESCBC256HMACSHA1:
 		return 12, sha1.New
 	default:
 		return 16, sha256.New

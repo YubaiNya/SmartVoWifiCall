@@ -29,8 +29,11 @@ func TestValidateStrictAndDerivations(t *testing.T) {
 	if err := c.Validate(true); err != nil {
 		t.Fatalf("expected valid config, got: %v", err)
 	}
-	if got := c.EffectiveEPDG(); got != "epdg.epc.mnc003.mcc454.pub.3gppnetwork.org" {
-		t.Fatalf("unexpected ePDG FQDN: %s", got)
+	if got := c.EffectiveEPDG(); got != "wlan.three.com.hk" {
+		t.Fatalf("unexpected 3HK ePDG FQDN: %s", got)
+	}
+	if got := DeriveEPDGFQDN("234", "20"); got != "epdg.epc.mnc020.mcc234.pub.3gppnetwork.org" {
+		t.Fatalf("unexpected derived 3GPP ePDG FQDN: %s", got)
 	}
 	if got := c.EffectiveEAPIdentity(); got != "0454030000000001@wlan.mnc003.mcc454.3gppnetwork.org" {
 		t.Fatalf("unexpected EAP identity: %s", got)

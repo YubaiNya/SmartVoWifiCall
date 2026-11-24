@@ -320,6 +320,9 @@ func resolveAOverUDP(ctx context.Context, host, dnsAddr string) (net.IP, error) 
 		if rtype == 1 && rclass == 1 && rdlen == 4 {
 			ip := make(net.IP, 4)
 			copy(ip, buf[off:off+4])
+			if ip.IsLoopback() || ip.IsUnspecified() {
+				return nil, fmt.Errorf("DNS_LOOPBACK_OR_UNSPECIFIED_%s", ip.String())
+			}
 			return ip, nil
 		}
 		off += rdlen
