@@ -84,7 +84,7 @@ function sanitizeString(input, maxLen = 8192) {
   s = s.replace(/\btel:\+?[0-9][0-9\-().\s]{4,18}/gi, `tel:${HIDDEN}`);
   s = s.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, HIDDEN);
   s = s.replace(/(?<!\w)\+[1-9]\d{6,14}\b/g, HIDDEN);
-  s = s.replace(/\b(?!127\.0\.0\.1\b)(?!198\.19\.0\.\d+\b)(?:\d{1,3}\.){3}\d{1,3}\b/g, HIDDEN);
+  s = s.replace(/(?<![\w.])(?!127\.0\.0\.1(?![\w.]))(?!198\.19\.0\.\d+(?![\w.]))(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?![\w.])/g, HIDDEN);
   s = s.replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{0,4}\b/gi, HIDDEN);
   s = s.replace(/\b\d{14,22}\b/g, HIDDEN);
   return s;

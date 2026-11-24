@@ -108,9 +108,15 @@ public final class TelemetrySanitizerTest {
     String logId = LogSanitizer.generateLogId(1763890000000L);
     check(logId.matches("SVW-\\d{8}-[0-9A-F]{6}"), "logId format: " + logId);
     LogSanitizer.DeviceInfo dev = new LogSanitizer.DeviceInfo(
-        "Xiaomi", "Xiaomi", "24129PN74C", "dada", "dada", "qcom", "kalama",
-        37, "17", "2026-11-05", "OS3.0", "arm64-v8a", Collections.singletonList("arm64-v8a"),
-        "zh-CN", "Asia/Shanghai", "6.6.30-android17", "Xiaomi/dada/dada:17/release-keys");
+        "Xiaomi", "Xiaomi", "24129PN74C", "Xiaomi 15", "24129PN74C",
+        "dada", "dada", "qcom", "kalama", "Qualcomm", "SM8750", 8, 16384L, 6200L,
+        "1200x2670", 480, "HyperOS OS4.0 (4.0.4.0.XOCCNXM.D02)", "AQ3A.250226.002",
+        37, "17", "2026-11-05", "4.0.4.0.XOCCNXM.D02",
+        "MPSS.DE.7.0.c1-00012", "1.19.0", "CN",
+        "arm64-v8a", Collections.singletonList("arm64-v8a"),
+        "zh-CN", "Asia/Shanghai", "6.6.30-android17",
+        "Linux version 6.6.30-android17-g123456 (user@example.com) #1 SMP PREEMPT",
+        "Xiaomi/dada/dada:17/release-keys");
     LogSanitizer.ClashTelemetry clash = new LogSanitizer.ClashTelemetry(
         true, true, true, true, 42, false, 19090, "netns-1", "");
     LogSanitizer.SimTelemetry sim = new LogSanitizer.SimTelemetry(
@@ -132,6 +138,21 @@ public final class TelemetrySanitizerTest {
     eq(logId, parsed.get("logId"), "logId preserved");
     eq(uuid, parsed.get("installId"), "installId");
     eq("manual", parsed.get("trigger"), "trigger");
+    Map<String, Object> devOut = (Map<String, Object>) parsed.get("device");
+    eq("Xiaomi 15", devOut.get("marketName"), "marketName");
+    eq("24129PN74C", devOut.get("certModel"), "certModel");
+    eq("Qualcomm", devOut.get("socManufacturer"), "socManufacturer");
+    eq("SM8750", devOut.get("socModel"), "socModel");
+    eq(8L, devOut.get("cpuCores"), "cpuCores");
+    eq(16384L, devOut.get("totalRamMb"), "totalRamMb");
+    eq("1200x2670", devOut.get("screenResolution"), "screenResolution");
+    eq(480L, devOut.get("screenDensityDpi"), "screenDensityDpi");
+    eq("HyperOS OS4.0 (4.0.4.0.XOCCNXM.D02)", devOut.get("osVersion"), "osVersion");
+    eq("MPSS.DE.7.0.c1-00012", devOut.get("basebandVersion"), "basebandVersion");
+    eq("1.19.0", devOut.get("hardwareRevision"), "hardwareRevision");
+    eq("CN", devOut.get("hardwareRegion"), "hardwareRegion");
+    check(String.valueOf(devOut.get("kernelFull")).contains("Linux version 6.6.30"), "kernelFull preserved");
+    check(!String.valueOf(devOut.get("kernelFull")).contains("user@example.com"), "email in kernel string sanitized");
     Map<String, Object> svcOut = (Map<String, Object>) parsed.get("service");
     List<Map<String, Object>> simsOut = (List<Map<String, Object>>) svcOut.get("sims");
     eq("GB", simsOut.get(0).get("countryIso"), "SIM countryIso");

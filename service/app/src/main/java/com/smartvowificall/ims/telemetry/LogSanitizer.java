@@ -73,8 +73,9 @@ public final class LogSanitizer {
           + "currentNode|savedNode|preferredClashNode|lanIpv4|serial|androidId|ssid|bssid|"
           + "x-telemetry-key)\"?\\s*[:=]\\s*)"
           + "(\"[^\"]*\"|'[^']*'|(?i:(?:Bearer|Basic)\\s+)?[^\\s,;}\\]\\n]+)");
-  private static final Pattern IPV4_RE =
-      Pattern.compile("\\b(?!127\\.0\\.0\\.1\\b)(?!198\\.19\\.0\\.\\d+\\b)(?:\\d{1,3}\\.){3}\\d{1,3}\\b");
+  private static final Pattern IPV4_RE = Pattern.compile(
+      "(?<![\\w.])(?!127\\.0\\.0\\.1(?![\\w.]))(?!198\\.19\\.0\\.\\d+(?![\\w.]))"
+          + "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}(?![\\w.])");
   private static final Pattern IPV6_RE =
       Pattern.compile("\\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{0,4}\\b");
   private static final Pattern LONG_DIGITS_RE =
@@ -292,47 +293,91 @@ public final class LogSanitizer {
     public final String manufacturer;
     public final String brand;
     public final String model;
+    public final String marketName;
+    public final String certModel;
     public final String device;
     public final String product;
     public final String hardware;
     public final String board;
+    public final String socManufacturer;
+    public final String socModel;
+    public final int cpuCores;
+    public final long totalRamMb;
+    public final long availRamMb;
+    public final String screenResolution;
+    public final int screenDensityDpi;
+    public final String osVersion;
+    public final String buildDisplay;
     public final int sdkInt;
     public final String release;
     public final String securityPatch;
     public final String incremental;
+    public final String basebandVersion;
+    public final String hardwareRevision;
+    public final String hardwareRegion;
     public final String abi;
     public final List<String> supportedAbis;
     public final String locale;
     public final String timezone;
     public final String kernelVersion;
+    public final String kernelFull;
     public final String fingerprint;
 
     public DeviceInfo(String manufacturer, String model, int sdkInt, String release, String abi) {
-      this(manufacturer, "", model, "", "", "", "", sdkInt, release, "", "", abi,
+      this(manufacturer, "", model, "", "", "", "", "", "", "", "", 0, 0L, 0L, "", 0, "", "",
+          sdkInt, release, "", "", "", "", "", abi,
           abi == null || abi.isEmpty() ? Collections.emptyList() : Collections.singletonList(abi),
-          "", "", "", "");
+          "", "", "", "", "");
     }
 
     public DeviceInfo(String manufacturer, String brand, String model, String device,
         String product, String hardware, String board, int sdkInt, String release,
         String securityPatch, String incremental, String abi, List<String> supportedAbis,
         String locale, String timezone, String kernelVersion, String fingerprint) {
+      this(manufacturer, brand, model, "", "", device, product, hardware, board, "", "", 0,
+          0L, 0L, "", 0, "", "", sdkInt, release, securityPatch, incremental, "", "", "",
+          abi, supportedAbis, locale, timezone, kernelVersion, "", fingerprint);
+    }
+
+    public DeviceInfo(String manufacturer, String brand, String model, String marketName,
+        String certModel, String device, String product, String hardware, String board,
+        String socManufacturer, String socModel, int cpuCores, long totalRamMb, long availRamMb,
+        String screenResolution, int screenDensityDpi, String osVersion, String buildDisplay,
+        int sdkInt, String release, String securityPatch, String incremental,
+        String basebandVersion, String hardwareRevision, String hardwareRegion, String abi,
+        List<String> supportedAbis, String locale, String timezone, String kernelVersion,
+        String kernelFull, String fingerprint) {
       this.manufacturer = safeShort(manufacturer, 48);
       this.brand = safeShort(brand, 48);
       this.model = safeShort(model, 64);
+      this.marketName = safeShort(sanitizeText(marketName), 64);
+      this.certModel = safeShort(sanitizeText(certModel), 64);
       this.device = safeShort(device, 48);
       this.product = safeShort(product, 64);
       this.hardware = safeShort(hardware, 48);
       this.board = safeShort(board, 48);
+      this.socManufacturer = safeShort(socManufacturer, 48);
+      this.socModel = safeShort(socModel, 64);
+      this.cpuCores = Math.max(0, cpuCores);
+      this.totalRamMb = Math.max(0L, totalRamMb);
+      this.availRamMb = Math.max(0L, availRamMb);
+      this.screenResolution = safeShort(screenResolution, 32);
+      this.screenDensityDpi = Math.max(0, screenDensityDpi);
+      this.osVersion = safeShort(sanitizeText(osVersion), 128);
+      this.buildDisplay = safeShort(sanitizeText(buildDisplay), 128);
       this.sdkInt = sdkInt;
       this.release = safeShort(release, 24);
       this.securityPatch = safeShort(securityPatch, 24);
       this.incremental = safeShort(incremental, 64);
+      this.basebandVersion = safeShort(sanitizeText(basebandVersion), 160);
+      this.hardwareRevision = safeShort(sanitizeText(hardwareRevision), 64);
+      this.hardwareRegion = safeShort(sanitizeText(hardwareRegion), 32);
       this.abi = safeShort(abi, 24);
       this.supportedAbis = supportedAbis == null ? Collections.emptyList() : supportedAbis;
       this.locale = safeShort(locale, 32);
       this.timezone = safeShort(timezone, 48);
-      this.kernelVersion = safeShort(kernelVersion, 128);
+      this.kernelVersion = safeShort(sanitizeText(kernelVersion), 128);
+      this.kernelFull = safeShort(sanitizeText(kernelFull), 256);
       this.fingerprint = safeShort(fingerprint, 160);
     }
   }
@@ -520,19 +565,34 @@ public final class LogSanitizer {
       devMap.put("manufacturer", device.manufacturer);
       devMap.put("brand", device.brand);
       devMap.put("model", device.model);
+      devMap.put("marketName", device.marketName);
+      devMap.put("certModel", device.certModel);
       devMap.put("device", device.device);
       devMap.put("product", device.product);
       devMap.put("hardware", device.hardware);
       devMap.put("board", device.board);
+      devMap.put("socManufacturer", device.socManufacturer);
+      devMap.put("socModel", device.socModel);
+      devMap.put("cpuCores", device.cpuCores);
+      devMap.put("totalRamMb", device.totalRamMb);
+      devMap.put("availRamMb", device.availRamMb);
+      devMap.put("screenResolution", device.screenResolution);
+      devMap.put("screenDensityDpi", device.screenDensityDpi);
+      devMap.put("osVersion", device.osVersion);
+      devMap.put("buildDisplay", device.buildDisplay);
       devMap.put("sdkInt", device.sdkInt);
       devMap.put("release", device.release);
       devMap.put("securityPatch", device.securityPatch);
       devMap.put("incremental", device.incremental);
+      devMap.put("basebandVersion", device.basebandVersion);
+      devMap.put("hardwareRevision", device.hardwareRevision);
+      devMap.put("hardwareRegion", device.hardwareRegion);
       devMap.put("abi", device.abi);
       devMap.put("supportedAbis", device.supportedAbis);
       devMap.put("locale", device.locale);
       devMap.put("timezone", device.timezone);
       devMap.put("kernelVersion", device.kernelVersion);
+      devMap.put("kernelFull", device.kernelFull);
       devMap.put("fingerprint", device.fingerprint);
       devMap.put("serial", HIDDEN);
       devMap.put("androidId", HIDDEN);

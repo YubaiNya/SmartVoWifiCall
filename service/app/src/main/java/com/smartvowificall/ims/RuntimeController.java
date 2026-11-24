@@ -290,24 +290,7 @@ final class RuntimeController {
     List<String> supportedAbis = Build.SUPPORTED_ABIS == null
         ? Collections.emptyList() : Arrays.asList(Build.SUPPORTED_ABIS);
     String abi = supportedAbis.isEmpty() ? "" : supportedAbis.get(0);
-    LogSanitizer.DeviceInfo dev = new LogSanitizer.DeviceInfo(
-        Build.MANUFACTURER,
-        Build.BRAND,
-        Build.MODEL,
-        Build.DEVICE,
-        Build.PRODUCT,
-        Build.HARDWARE,
-        Build.BOARD,
-        Build.VERSION.SDK_INT,
-        Build.VERSION.RELEASE,
-        Build.VERSION.SECURITY_PATCH,
-        Build.VERSION.INCREMENTAL,
-        abi,
-        supportedAbis,
-        Locale.getDefault().toLanguageTag(),
-        TimeZone.getDefault().getID(),
-        System.getProperty("os.version", ""),
-        Build.FINGERPRINT);
+    LogSanitizer.DeviceInfo dev = collectDeviceInfo(abi, supportedAbis);
     ClashState cs = clash;
     LogSanitizer.ClashTelemetry clashTel = new LogSanitizer.ClashTelemetry(
         clashEnabled(), cs.hasProfile, cs.running, cs.tunUp, cs.nodes.size(),
@@ -492,6 +475,170 @@ final class RuntimeController {
         done.accept("导出日志失败：" + safeCode(e));
       }
     });
+  }
+  private LogSanitizer.DeviceInfo collectDeviceInfo(String abi, List<String> supportedAbis) {
+    String marketName = firstNonEmptyProp(
+        "ro.product.marketname",
+        "ro.product.vendor.marketname",
+        "ro.product.odm.marketname",
+        "ro.config.marketing_name",
+        "ro.vendor.oplus.market.name");
+    String certModel = firstNonEmptyProp(
+        "ro.product.cert",
+        "ro.product.vendor.cert",
+        "ro.product.odm.cert");
+    if (certModel.isEmpty()) certModel = Build.MODEL == null ? "" : Build.MODEL;
+
+    String socManufacturer = "";
+    String socModel = "";
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      socManufacturer = Build.SOC_MANUFACTURER == null ? "" : Build.SOC_MANUFACTURER;
+      socModel = Build.SOC_MODEL == null ? "" : Build.SOC_MODEL;
+    }
+    if (socManufacturer.isEmpty() || "unknown".equalsIgnoreCase(socManufacturer)) {
+      socManufacturer = firstNonEmptyProp("ro.soc.manufacturer");
+    }
+    if (socModel.isEmpty() || "unknown".equalsIgnoreCase(socModel)) {
+      socModel = firstNonEmptyProp("ro.soc.model", "ro.hardware.chipname", "ro.board.platform");
+    }
+
+    long totalRamMb = 0L;
+    long availRamMb = 0L;
+    try {
+      android.app.ActivityManager am = context.getSystemService(android.app.ActivityManager.class);
+      if (am != null) {
+        android.app.ActivityManager.MemoryInfo mi = new android.app.ActivityManager.MemoryInfo();
+        am.getMemoryInfo(mi);
+        totalRamMb = mi.totalMem / (1024L * 1024L);
+        availRamMb = mi.availMem / (1024L * 1024L);
+      }
+    } catch (Exception ignored) {
+    }
+
+    String screenResolution = "";
+    int screenDensityDpi = 0;
+    try {
+      android.util.DisplayMetrics dm = context.getResources().getDisplayMetrics();
+      if (dm != null) screenDensityDpi = dm.densityDpi;
+      android.view.WindowManager wm = context.getSystemService(android.view.WindowManager.class);
+      if (wm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        android.graphics.Rect bounds = wm.getMaximumWindowMetrics().getBounds();
+        if (bounds.width() > 0 && bounds.height() > 0) {
+          screenResolution = bounds.width() + "x" + bounds.height();
+        }
+      }
+      if (screenResolution.isEmpty() && dm != null && dm.widthPixels > 0 && dm.heightPixels > 0) {
+        screenResolution = dm.widthPixels + "x" + dm.heightPixels;
+      }
+    } catch (Exception ignored) {
+    }
+
+    String osVersion = collectVendorOsVersion();
+    String baseband = "";
+    try {
+      String r = Build.getRadioVersion();
+      if (r != null && !r.trim().isEmpty()) baseband = r.trim();
+    } catch (Exception ignored) {
+    }
+    if (baseband.isEmpty()) {
+      baseband = firstNonEmptyProp("gsm.version.baseband", "ro.baseband");
+    }
+
+    String hardwareRevision = firstNonEmptyProp(
+        "ro.boot.hardware.revision",
+        "ro.boot.hwversion",
+        "ro.hardware.revision",
+        "ro.boot.hwlevel");
+    String hardwareRegion = firstNonEmptyProp("ro.boot.hwc", "ro.miui.region");
+
+    String kernelFull = "";
+    try {
+      java.io.File procVer = new java.io.File("/proc/version");
+      if (procVer.isFile()) {
+        try (java.io.BufferedReader br = new java.io.BufferedReader(
+            new java.io.InputStreamReader(new java.io.FileInputStream(procVer), StandardCharsets.UTF_8))) {
+          String line = br.readLine();
+          if (line != null) kernelFull = line.trim();
+        }
+      }
+    } catch (Exception ignored) {
+    }
+
+    return new LogSanitizer.DeviceInfo(
+        Build.MANUFACTURER,
+        Build.BRAND,
+        Build.MODEL,
+        marketName,
+        certModel,
+        Build.DEVICE,
+        Build.PRODUCT,
+        Build.HARDWARE,
+        Build.BOARD,
+        socManufacturer,
+        socModel,
+        Runtime.getRuntime().availableProcessors(),
+        totalRamMb,
+        availRamMb,
+        screenResolution,
+        screenDensityDpi,
+        osVersion,
+        Build.DISPLAY,
+        Build.VERSION.SDK_INT,
+        Build.VERSION.RELEASE,
+        Build.VERSION.SECURITY_PATCH,
+        Build.VERSION.INCREMENTAL,
+        baseband,
+        hardwareRevision,
+        hardwareRegion,
+        abi,
+        supportedAbis,
+        Locale.getDefault().toLanguageTag(),
+        TimeZone.getDefault().getID(),
+        System.getProperty("os.version", ""),
+        kernelFull,
+        Build.FINGERPRINT);
+  }
+  private static String collectVendorOsVersion() {
+    String miOsInc = sysProp("ro.mi.os.version.incremental");
+    String miOsName = sysProp("ro.mi.os.version.name");
+    if (!miOsInc.isEmpty()) {
+      return miOsName.isEmpty() ? "HyperOS " + miOsInc : "HyperOS " + miOsName + " (" + miOsInc + ")";
+    }
+    String miui = sysProp("ro.miui.ui.version.name");
+    if (!miui.isEmpty()) {
+      String inc = Build.VERSION.INCREMENTAL == null ? "" : Build.VERSION.INCREMENTAL;
+      return inc.isEmpty() ? "MIUI " + miui : "MIUI " + miui + " (" + inc + ")";
+    }
+    String oplus = firstNonEmptyProp("ro.build.version.oplusrom", "ro.build.version.opporom");
+    if (!oplus.isEmpty()) return "ColorOS " + oplus;
+    String vivo = sysProp("ro.vivo.os.build.display.id");
+    if (!vivo.isEmpty()) return vivo;
+    String magic = sysProp("ro.build.version.magic");
+    if (!magic.isEmpty()) return "MagicOS " + magic;
+    String harmony = sysProp("hw_sc.build.platform.version");
+    if (!harmony.isEmpty()) return "HarmonyOS " + harmony;
+    String emui = sysProp("ro.build.version.emui");
+    if (!emui.isEmpty()) return emui;
+    String oneUi = sysProp("ro.build.version.oneui");
+    if (!oneUi.isEmpty()) return "OneUI " + oneUi;
+    return Build.DISPLAY == null ? "" : Build.DISPLAY;
+  }
+  private static String firstNonEmptyProp(String... keys) {
+    for (String k : keys) {
+      String v = sysProp(k);
+      if (!v.isEmpty() && !"unknown".equalsIgnoreCase(v)) return v;
+    }
+    return "";
+  }
+  private static String sysProp(String key) {
+    try {
+      String v = (String) Class.forName("android.os.SystemProperties")
+          .getMethod("get", String.class, String.class)
+          .invoke(null, key, "");
+      return v == null ? "" : v.trim();
+    } catch (Exception ignored) {
+      return "";
+    }
   }
   private static void writeZipEntry(ZipOutputStream zip, String name, String content) throws Exception {
     zip.putNextEntry(new ZipEntry(name));
