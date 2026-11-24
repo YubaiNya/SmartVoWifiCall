@@ -70,7 +70,8 @@ data class SimCardUi(
     val imsState: String,
     val registered: Boolean,
     val tunnelState: String,
-    val voiceServiceOverride: Boolean
+    val voiceServiceOverride: Boolean,
+    val carrierProfileHint: String = ""
 )
 
 @Immutable
@@ -432,6 +433,15 @@ private fun SimCardView(
                 fontSize = 13.sp
             )
         } else {
+            if (sim.carrierProfileHint.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = sim.carrierProfileHint,
+                    color = p.accentBlue,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
             Spacer(Modifier.height(14.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),

@@ -520,7 +520,8 @@ class MainActivity : ComponentActivity() {
                         imsState = b?.ims ?: "IDLE",
                         registered = b?.registered == true,
                         tunnelState = b?.tunnel ?: "IDLE",
-                        voiceServiceOverride = b?.voiceServiceOverride?.lastApplied() == true
+                        voiceServiceOverride = b?.voiceServiceOverride?.lastApplied() == true,
+                        carrierProfileHint = if (elig) rt.carrierHintForPlmn(s.policy.homePlmn) else ""
                     )
                 )
             }

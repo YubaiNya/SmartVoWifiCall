@@ -71,6 +71,12 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                  str(HERE / "ChipsetStrategyTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ChipsetStrategyTest"], check=True)
 
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-cp", str(OUT), "-d", str(OUT),
+                 str(SOURCE / "engine/JsonCodec.java"),
+                 str(SOURCE / "policy/CarrierProfiles.java"),
+                 str(HERE / "CarrierProfilesTest.java")], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "CarrierProfilesTest"], check=True)
+
 # Compile the Android adapters, but execute only their pure validation functions on the host.
 SDK = Path(os.environ.get("VOWIFI_ANDROID_SDK", r"D:\Android\Sdk"))
 ANDROID = SDK / "platforms/android-36/android.jar"

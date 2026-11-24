@@ -69,10 +69,8 @@
 
 ---
 
-## P5：基于遥测 v2 沉淀「运营商 & 机型适配库」
+## P5：基于遥测 v2 沉淀「运营商 & 机型适配库」 ✅
 
-利用已上线的脱敏遥测 v2（含 `countryIso`、`carrierName`、`homePlmn`、`socModel`、`osVersion`、`basebandVersion`、网络包体与原始日志）：
-
-- [ ] 统计并整理海外主流运营商的最佳参数（自定义 ePDG 域名、DNS 策略、归属国 IP 严格度、SIP 位置头/鉴权特性）
-- [ ] 整理不同 OEM / ROM 的单卡射频与 IMS 覆盖特例
-- [ ] 沉淀为轻量内置/可更新的 JSON 运营商与机型规则表，实现“插卡选节点即通”
+- [x] 整理并内置覆盖港/澳/英/美/日/新/澳/台/泰/德/加 25 家主流海外运营商的 JSON 规则库（[`carrier_profiles.json`](service/app/src/main/assets/carrier_profiles.json)），包含 ePDG FQDN、推荐代理地区、归属国 IP 校验强度与 SIP PANI 脱敏策略，并严格过滤大陆 PLMN（460/461）
+- [x] 整理小米/Google Pixel/三星/OnePlus/OPPO 五大主流 OEM 的单卡射频与 IMS 覆盖特例清单
+- [x] 实现 Java（`CarrierProfiles`，支持本地热更新叠加 `carrier_profiles_override.json`）与 Go（`engine/internal/config/profiles.go`）双端适配库，并在 App「概览」页海外 SIM 卡片直接展示匹配运营商与推荐节点提示，实现“插卡选节点即通”

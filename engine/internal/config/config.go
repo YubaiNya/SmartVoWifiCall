@@ -105,10 +105,13 @@ func DeriveEPDGFQDN(mcc, mnc string) string {
 	return fmt.Sprintf("epdg.epc.mnc%s.mcc%s.pub.3gppnetwork.org", PadMNC3(mnc), mcc)
 }
 
-// EffectiveEPDG returns explicit epdgFqdn or derived 3GPP FQDN.
+// EffectiveEPDG returns explicit epdgFqdn, carrier-registry override, or derived 3GPP FQDN.
 func (c *Config) EffectiveEPDG() string {
 	if strings.TrimSpace(c.EPDG) != "" {
 		return strings.TrimSpace(c.EPDG)
+	}
+	if hint, ok := LookupCarrierHint(c.MCC, c.MNC); ok && hint.EPDGFQDN != "" {
+		return hint.EPDGFQDN
 	}
 	return DeriveEPDGFQDN(c.MCC, c.MNC)
 }

@@ -1716,6 +1716,42 @@ final class RuntimeController {
     });
   }
 
+  private volatile com.smartvowificall.ims.policy.CarrierProfiles carrierProfiles;
+
+  com.smartvowificall.ims.policy.CarrierProfiles carrierProfiles() {
+    com.smartvowificall.ims.policy.CarrierProfiles loaded = carrierProfiles;
+    if (loaded != null) return loaded;
+    synchronized (this) {
+      if (carrierProfiles != null) return carrierProfiles;
+      try {
+        String baseJson = "";
+        try (java.io.InputStream in = context.getAssets().open("carrier_profiles.json")) {
+          baseJson = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String overlayJson = null;
+        java.io.File overlay = new java.io.File(
+            context.createDeviceProtectedStorageContext().getFilesDir(), "carrier_profiles_override.json");
+        if (overlay.isFile() && overlay.length() <= 512 * 1024) {
+          overlayJson = new String(java.nio.file.Files.readAllBytes(overlay.toPath()),
+              java.nio.charset.StandardCharsets.UTF_8);
+        }
+        carrierProfiles = com.smartvowificall.ims.policy.CarrierProfiles.parseAndMerge(baseJson, overlayJson);
+      } catch (Throwable ignored) {
+        try {
+          carrierProfiles = com.smartvowificall.ims.policy.CarrierProfiles.parseJson("{}");
+        } catch (Throwable ignored2) {}
+      }
+      return carrierProfiles;
+    }
+  }
+
+  String carrierHintForPlmn(String homePlmn) {
+    com.smartvowificall.ims.policy.CarrierProfiles profiles = carrierProfiles();
+    if (profiles == null) return "";
+    com.smartvowificall.ims.policy.CarrierProfiles.Carrier c = profiles.findByPlmn(homePlmn);
+    return c == null ? "" : c.uiSummary();
+  }
+
   static final class ClashConnection {
     final String id, network, type, source, destination, rule, rulePayload, start;
     final List<String> chains;
