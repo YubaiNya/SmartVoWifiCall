@@ -191,12 +191,12 @@ class MainActivity : ComponentActivity() {
                     },
                     onToggleClash = { cid, on ->
                         val tunDev = ClashConfig.tunDeviceForInstance(cid)
-                        rt.setClashEnabled(cid, on)
-                        clashFeedback = if (on) {
-                            if (rt.enabled()) "已开启内核 ${cid + 1}（$tunDev）"
-                            else "已记录开启内核 ${cid + 1}（$tunDev），打开总开关后启动"
+                        if (on && !rt.enabled()) {
+                            clashFeedback = "总开关已关闭（省电模式），请先在概览页开启总开关"
                         } else {
-                            "已关闭内核 ${cid + 1}（$tunDev）"
+                            rt.setClashEnabled(cid, on)
+                            clashFeedback = if (on) "已开启内核 ${cid + 1}（$tunDev）"
+                            else "已关闭内核 ${cid + 1}（$tunDev）"
                         }
                         syncStateFromController()
                     },
@@ -540,6 +540,7 @@ class MainActivity : ComponentActivity() {
                 id = id,
                 tunDevice = ClashConfig.tunDeviceForInstance(id),
                 enabled = rt.clashEnabled(id),
+                willRestore = rt.clashWillRestore(id),
                 hasProfile = cs.hasProfile,
                 running = cs.running,
                 tunUp = cs.tunUp,

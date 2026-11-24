@@ -128,10 +128,17 @@ final class RuntimeController {
         ? prefs.getBoolean("clash_enabled.1", false)
         : prefs.getBoolean("clash_enabled", false);
   }
+  boolean clashWillRestore(int instanceId) {
+    return !enabled() && prefs.getBoolean("clash_restore." + instanceId, false);
+  }
   void setClashEnabled(boolean v) {
     setClashEnabled(0, v);
   }
   void setClashEnabled(int instanceId, boolean v) {
+    if (v && !enabled()) {
+      // Master switch is OFF (battery-saving mode); do not leave Clash switches visually ON.
+      return;
+    }
     String key = instanceId == 1 ? "clash_enabled.1" : "clash_enabled";
     prefs.edit().putBoolean(key, v).commit();
     if (v) {
@@ -932,9 +939,26 @@ final class RuntimeController {
     root.verifyRadioOff(binding.sim);
   }
   void setEnabled(boolean v) {
-    // Master switch: OFF stops all backend engines & both Clash cores for battery saving.
-    // Built-in Clash cores remain manually controlled by their own switches.
-    prefs.edit().putBoolean("enabled", v).commit();
+    // Master switch:
+    // - OFF: snapshot pre-stop Clash core states, flip both Clash switches OFF, and stop all backend
+    //   engines & Clash cores for battery saving.
+    // - ON: restore Clash cores to their exact pre-stop ON/OFF state.
+    boolean wasEnabled = enabled();
+    SharedPreferences.Editor ed = prefs.edit().putBoolean("enabled", v);
+    if (!v && wasEnabled) {
+      ed.putBoolean("clash_restore.0", clashEnabled(0))
+          .putBoolean("clash_restore.1", clashEnabled(1))
+          .putBoolean("clash_enabled", false)
+          .putBoolean("clash_enabled.1", false);
+    } else if (v && !wasEnabled) {
+      if (prefs.contains("clash_restore.0") || prefs.contains("clash_restore.1")) {
+        ed.putBoolean("clash_enabled", prefs.getBoolean("clash_restore.0", false))
+            .putBoolean("clash_enabled.1", prefs.getBoolean("clash_restore.1", false))
+            .remove("clash_restore.0")
+            .remove("clash_restore.1");
+      }
+    }
+    ed.commit();
     shutdownComplete = false;
     fallback.reset();
     fallbackReleasedSlots.clear();

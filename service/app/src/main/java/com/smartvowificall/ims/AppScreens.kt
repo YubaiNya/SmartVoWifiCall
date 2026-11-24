@@ -103,6 +103,7 @@ data class ClashCoreUi(
     val id: Int,
     val tunDevice: String,
     val enabled: Boolean = false,
+    val willRestore: Boolean = false,
     val hasProfile: Boolean = false,
     val running: Boolean = false,
     val tunUp: Boolean = false,
@@ -336,7 +337,7 @@ fun OverviewPage(
                     label = "内核 1 · ${ClashConfig.TUN_DEVICE}",
                     value = when {
                         core0.running && core0.tunUp -> core0.currentNode.ifEmpty { "运行中" }
-                        core0.enabled && !state.enabled -> "待总开关"
+                        !state.enabled && core0.willRestore -> "已停机（开后恢复）"
                         core0.enabled -> "启动中"
                         else -> "已关闭"
                     },
@@ -347,7 +348,7 @@ fun OverviewPage(
                     label = "内核 2 · ${ClashConfig.TUN_DEVICE_1}",
                     value = when {
                         core1.running && core1.tunUp -> core1.currentNode.ifEmpty { "运行中" }
-                        core1.enabled && !state.enabled -> "待总开关"
+                        !state.enabled && core1.willRestore -> "已停机（开后恢复）"
                         core1.enabled -> "启动中"
                         else -> "已关闭"
                     },
@@ -919,8 +920,9 @@ fun ProxyPage(
             ) {
                 StatusPill(
                     label = when {
+                        !state.enabled && core.willRestore -> "总开关已停（开后自动恢复）"
+                        !state.enabled -> "总开关已关（省电）"
                         !core.enabled -> "手动已关闭"
-                        !state.enabled -> "待开启总开关"
                         core.running && core.tunUp -> "已就绪 · ${core.tunDevice}"
                         core.running -> "正在启动"
                         core.hasProfile -> "待启动"
@@ -1009,11 +1011,12 @@ fun ProxyPage(
         AppleMiuixCard(insideMargin = PaddingValues(bottom = 16.dp)) {
             SwitchPreference(
                 title = "启用内核 ${core.id + 1}（${core.tunDevice}）",
-                summary = if (!state.enabled)
-                    "手动开关；总开关关闭时自动全部停机省电，开启总开关后生效"
-                else
-                    "手动启停 ${core.tunDevice} 独立 Clash 内核，关闭后立即停机省电",
-                checked = core.enabled,
+                summary = when {
+                    !state.enabled && core.willRestore -> "已随总开关停机省电；重新开启总开关后自动恢复运行"
+                    !state.enabled -> "总开关已关闭（省电模式），请先在概览页开启总开关"
+                    else -> "手动启停 ${core.tunDevice} 独立 Clash 内核，关闭后立即停机省电"
+                },
+                checked = state.enabled && core.enabled,
                 onCheckedChange = { on -> onToggleClash(core.id, on) }
             )
             HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
