@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.6--dev-0071E3?style=flat" alt="Release v0.4.6-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.7--dev-0071E3?style=flat" alt="Release v0.4.7-dev"></a>
   <img src="https://img.shields.io/badge/Android-13%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 13-17 Root">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
   <br>

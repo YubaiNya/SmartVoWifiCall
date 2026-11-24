@@ -1390,7 +1390,7 @@ fun NetworkPage(
             ) {
                 StatusPill(label = "网络信息", color = p.accentGreen)
                 StatusPill(
-                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.4.6-dev",
+                    label = if (state.appVersion.isNotEmpty()) "v${state.appVersion}" else "v0.4.7-dev",
                     color = p.accentBlue,
                     showDot = false
                 )

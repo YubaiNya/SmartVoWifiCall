@@ -1,5 +1,13 @@
 # 版本记录
 
+## v0.4.7-dev — 2026-11-24
+
+应用与模块 versionCode=18，遥测上传升级为默认走 Wi-Fi Calling 隔离代理链路（可手动切换系统路由），补齐非隐私设备与 SIM 排障信息，并完善 README 遥测说明。
+
+- **Wi-Fi Calling 链路默认上传 + 系统路由切换**：新增 [RootTelemetryMain.java](service/app/src/main/java/com/smartvowificall/ims/root/RootTelemetryMain.java) 与 [TelemetryClient.java](service/app/src/main/java/com/smartvowificall/ims/telemetry/TelemetryClient.java) `resolveAOverUdp` / `uploadViaDns`，通过 `nsenter` 进入内置 Clash 隔离网络命名空间，使用 `wfctun0`（UDP DNS `1.1.1.1:53` + 完整 TLS SNI/证书校验）直接上传，无需手机主网络开启系统代理；在「网络 → 日志与遥测」支持一键切换为「系统路由」。
+- **遥测 v2 完整结构与 `[Hidden]` 脱敏**：保留完整原始日志、网络请求（Clash HTTP / 引擎 RPC & 事件帧）包体结构、非隐私设备信息（市场名、认证型号、SoC、内存、分辨率/DPI、厂商系统版本、基带版本、内核版本、硬件版本）及 SIM 国家/运营商信息，所有敏感字段统一显示为 `[Hidden]`；新增唯一日志 ID（`SVW-YYYYMMDD-XXXXXX`）与 App 内上传记录一键复制。
+- **文档与测试**：[README.md](README.md) 新增「日志与遥测」章节；82 项遥测脱敏与回环 UDP DNS / 原始套接字上传断言全部通过。
+
 ## v0.4.6-dev — 2026-11-23
 
 应用与模块 versionCode=17，新增可选脱敏遥测日志上传（默认关闭）与手动导出全部日志功能，配套 Cloudflare Worker 中转服务写入私有 GitHub 仓库。

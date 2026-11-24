@@ -1,6 +1,6 @@
 id=smartvowificall
 name=SmartVoWifiCall Independent IMS
-version=0.4.6-dev
-versionCode=17
+version=0.4.7-dev
+versionCode=18
 author=Local development
 description=Standalone per-SIM IMS service with Apple/Miuix Liquid Glass UI, isolated built-in Clash (wfctun0, no Android VPN), External Controller, and Live Connections.
