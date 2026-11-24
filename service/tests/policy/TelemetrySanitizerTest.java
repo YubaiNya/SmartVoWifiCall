@@ -169,6 +169,17 @@ public final class TelemetrySanitizerTest {
     check(String.valueOf(parsed.get("rawLogs")).contains("IKE_SA_INIT ok"), "rawLogs preserved");
     check(String.valueOf(parsed.get("rawLogs")).contains("[Hidden]"), "rawLogs redacts with [Hidden]");
 
+    // 4b. Truncated /proxies JSON string must never leak proxy node names; 198.19.1.1 preserved
+    Object redactedProxies = LogSanitizer.sanitizeStructure(
+        "{\"proxies\":{\"WFC-PROXY\":{\"all\":[\"SecretUK-Node-01\"],\"now\":\"SecretUK-Node-01\"}...(truncated)",
+        "responseBody");
+    eq(LogSanitizer.HIDDEN, redactedProxies, "truncated /proxies JSON string redacted completely");
+    check(LogSanitizer.sanitizeText("wfctun1 ip=198.19.1.1").contains("198.19.1.1"),
+        "wfctun1 diagnostic IP preserved");
+    eq("http://127.0.0.1:19090/proxies/WFC-PROXY",
+        LogSanitizer.sanitizeUrl("http://127.0.0.1:19090/proxies/WFC-PROXY"),
+        "WFC-PROXY group URL preserved");
+
     // 5. Endpoint validation
     eq("https://example.workers.dev/v1/telemetry",
         TelemetryClient.normalizeAndValidateEndpoint("https://example.workers.dev"), "auto append path");

@@ -74,7 +74,7 @@ public final class LogSanitizer {
           + "x-telemetry-key)\"?\\s*[:=]\\s*)"
           + "(\"[^\"]*\"|'[^']*'|(?i:(?:Bearer|Basic)\\s+)?[^\\s,;}\\]\\n]+)");
   private static final Pattern IPV4_RE = Pattern.compile(
-      "(?<![\\w.])(?!127\\.0\\.0\\.1(?![\\w.]))(?!198\\.19\\.0\\.\\d+(?![\\w.]))"
+      "(?<![\\w.])(?!127\\.0\\.0\\.1(?![\\w.]))(?!198\\.19\\.[01]\\.\\d+(?![\\w.]))"
           + "(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)(?:\\.(?:25[0-5]|2[0-4]\\d|1\\d\\d|[1-9]?\\d)){3}(?![\\w.])");
   private static final Pattern IPV6_RE =
       Pattern.compile("\\b(?:[0-9a-fA-F]{1,4}:){3,7}[0-9a-fA-F]{0,4}\\b");
@@ -155,7 +155,8 @@ public final class LogSanitizer {
       int q = url.indexOf('?');
       String base = q >= 0 ? url.substring(0, q) : url;
       // Hide URL-encoded proxy node names after /proxies/<group> if not standard group
-      if (isLocal && base.contains("/proxies/") && !base.endsWith("/proxies/VoWiFi")) {
+      if (isLocal && base.contains("/proxies/")
+          && !base.endsWith("/proxies/VoWiFi") && !base.endsWith("/proxies/WFC-PROXY")) {
         int idx = base.indexOf("/proxies/");
         base = base.substring(0, idx + "/proxies/".length()) + HIDDEN;
       }
@@ -207,6 +208,10 @@ public final class LogSanitizer {
     if (value instanceof String) {
       String s = (String) value;
       if (s.isEmpty()) return "";
+      if (s.contains("\"proxies\":{") || s.contains("\"WFC-PROXY\":{")
+          || s.contains("\"VoWiFi\":{")) {
+        return HIDDEN;
+      }
       if (s.length() > 4096) s = s.substring(0, 4096) + "...(truncated)";
       return sanitizeText(s);
     }
@@ -220,7 +225,8 @@ public final class LogSanitizer {
         Object item = src.get(i);
         if (maskItems && item instanceof String) {
           String s = (String) item;
-          out.add("DIRECT".equals(s) || "REJECT".equals(s) || "VoWiFi".equals(s) ? s : HIDDEN);
+          out.add("DIRECT".equals(s) || "REJECT".equals(s) || "VoWiFi".equals(s)
+              || "WFC-PROXY".equals(s) ? s : HIDDEN);
         } else {
           out.add(sanitizeStructure(item, parentKey, depth + 1));
         }
@@ -238,8 +244,8 @@ public final class LogSanitizer {
         String rawKey = String.valueOf(e.getKey());
         String keyLower = rawKey.toLowerCase(Locale.US);
         String outKey = rawKey;
-        if (maskChildKeys && !"VoWiFi".equals(rawKey) && !"DIRECT".equals(rawKey)
-            && !"REJECT".equals(rawKey) && !"GLOBAL".equals(rawKey)) {
+        if (maskChildKeys && !"VoWiFi".equals(rawKey) && !"WFC-PROXY".equals(rawKey)
+            && !"DIRECT".equals(rawKey) && !"REJECT".equals(rawKey) && !"GLOBAL".equals(rawKey)) {
           outKey = HIDDEN + "#" + count;
         }
         Object rawVal = e.getValue();
@@ -248,8 +254,8 @@ public final class LogSanitizer {
         } else if ("name".equals(keyLower) && ("nodes".equals(pk) || "proxies".equals(pk)
             || "requestbody".equals(pk) || "responsebody".equals(pk))) {
           String sv = rawVal == null ? "" : String.valueOf(rawVal);
-          out.put(outKey, (sv.isEmpty() || "VoWiFi".equals(sv) || "DIRECT".equals(sv)
-              || "REJECT".equals(sv) || "GLOBAL".equals(sv)) ? sv : HIDDEN);
+          out.put(outKey, (sv.isEmpty() || "VoWiFi".equals(sv) || "WFC-PROXY".equals(sv)
+              || "DIRECT".equals(sv) || "REJECT".equals(sv) || "GLOBAL".equals(sv)) ? sv : HIDDEN);
         } else {
           out.put(outKey, sanitizeStructure(rawVal, rawKey, depth + 1));
         }

@@ -679,8 +679,14 @@ public final class RootClashMain {
       try (InputStream in = conn.getInputStream()) {
         byte[] body = readAllLimited(in, MAX_PROFILE_BYTES);
         String bodyText = new String(body, StandardCharsets.UTF_8);
-        recordHttpTrace("clash_http", "GET", target, code, durMs, reqHeaders, null, respHeaders,
-            NetworkLogBuffer.parseJsonOrText(bodyText, 4096), null);
+        // Skip routine high-frequency 200 OK status polls (/configs, /proxies, /connections) so
+        // http-trace.jsonl stays compact and never stores truncated proxy-node lists.
+        boolean routinePoll = "/configs".equals(path) || "/proxies".equals(path)
+            || "/connections".equals(path);
+        if (!routinePoll) {
+          recordHttpTrace("clash_http", "GET", target, code, durMs, reqHeaders, null, respHeaders,
+              NetworkLogBuffer.parseJsonOrText(bodyText, 4096), null);
+        }
         return new JSONObject(bodyText);
       }
     } finally {

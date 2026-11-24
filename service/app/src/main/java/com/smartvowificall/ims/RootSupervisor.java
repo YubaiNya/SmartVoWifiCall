@@ -424,6 +424,8 @@ final class RootSupervisor {
     com.smartvowificall.ims.policy.CompatReport.Input in =
         new com.smartvowificall.ims.policy.CompatReport.Input();
     in.apiLevel = android.os.Build.VERSION.SDK_INT;
+    in.privilegedApp = (context.getApplicationInfo().flags
+        & android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0;
     try {
       boolean viaDaemon = false;
       JSONObject j;

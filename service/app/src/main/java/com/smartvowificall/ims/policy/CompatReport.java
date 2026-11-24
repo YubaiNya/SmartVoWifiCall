@@ -24,6 +24,7 @@ public final class CompatReport {
     public int apiLevel;
     public boolean rootAvailable;
     public boolean daemonActive;
+    public boolean privilegedApp = true;
     public boolean moduleInstalled;
     public boolean engineBinaryReady;
     public String imsOverrideVariant = "";   // "api35_5arg" | "api34_4arg" | ""
@@ -91,6 +92,12 @@ public final class CompatReport {
         in.daemonActive ? "Root 已授权，RootDaemonMain 常驻低延迟通道在线"
                         : "Root 已授权（当前通过 su 回退，常驻进程将自动拉起）"));
 
+    items.add(new CheckItem("priv_app", "系统特权安装 (priv-app)",
+        in.privilegedApp ? STATUS_OK : STATUS_WARN,
+        in.privilegedApp
+            ? "已作为系统特权应用挂载运行"
+            : "当前以普通应用运行（untrusted_app）；KernelSU 1.x+ 请确认已安装 meta-overlayfs / Magic Mount 元模块并重启"));
+
     boolean modOk = in.moduleInstalled && in.engineBinaryReady;
     items.add(new CheckItem("module_engine", "模块与自研 Go 引擎",
         modOk ? STATUS_OK : STATUS_FAIL,
@@ -134,7 +141,7 @@ public final class CompatReport {
       return new CompatReport(MODE_UNSUPPORTED,
           "检测到关键接口缺失或环境不完整，请查看下方红标项", items);
     }
-    if (!modemOk || !voiceOk || !in.daemonActive || in.apiLevel > MAX_VERIFIED_API) {
+    if (!modemOk || !voiceOk || !in.daemonActive || !in.privilegedApp || in.apiLevel > MAX_VERIFIED_API) {
       return new CompatReport(MODE_DEGRADED_COMPAT,
           "核心通话能力可用（部分增强接口处于兼容降级模式）", items);
     }

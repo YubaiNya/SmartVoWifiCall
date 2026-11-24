@@ -564,6 +564,9 @@ public final class RootIdentityMain {
     }
   }
 
+  private static final String RADIO_METHOD_MODEM = "modem";
+  private static final String RADIO_METHOD_SUB = "radio_sub";
+
   private static File radioJournal(int slot) throws Exception {
     if (slot < 0 || slot > 7) throw new Failure("INVALID_SLOT");
     File result = new File(RADIO_DIR, slot + ".json");
@@ -571,25 +574,138 @@ public final class RootIdentityMain {
       throw new Failure("RADIO_PATH_INVALID");
     return result;
   }
-  private static int radioState(Identity identity) throws Exception {
-    if (identity.phoneId < 0) throw new Failure("RADIO_STATE_UNKNOWN");
+  private static boolean isModemEnabledForSlot(int phoneId) throws Exception {
     // Per-slot modem stack status (PhoneConfigurationManager / RIL_REQUEST_ENABLE_MODEM).
     // Supports API 34-37 isModemEnabledForSlot signatures.
     Object enabled;
     try {
       enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
-          new Class<?>[] {int.class, String.class, String.class}, new Object[] {identity.phoneId, "root", null});
+          new Class<?>[] {int.class, String.class, String.class}, new Object[] {phoneId, "root", null});
     } catch (NoSuchMethodException e1) {
       try {
         enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
-            new Class<?>[] {int.class, String.class}, new Object[] {identity.phoneId, "root"});
+            new Class<?>[] {int.class, String.class}, new Object[] {phoneId, "root"});
       } catch (NoSuchMethodException e2) {
         enabled = binderCall("phone", "com.android.internal.telephony.ITelephony", "isModemEnabledForSlot",
-            new Class<?>[] {int.class}, new Object[] {identity.phoneId});
+            new Class<?>[] {int.class}, new Object[] {phoneId});
       }
     }
     if (!(enabled instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
-    return ((Boolean) enabled) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+    return (Boolean) enabled;
+  }
+  private static boolean isSubRadioOn(int subId) throws Exception {
+    Object on;
+    try {
+      on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnForSubscriberWithFeature",
+          new Class<?>[] {int.class, String.class, String.class}, new Object[] {subId, "root", null});
+    } catch (NoSuchMethodException e1) {
+      try {
+        on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnForSubscriber",
+            new Class<?>[] {int.class, String.class}, new Object[] {subId, "root"});
+      } catch (NoSuchMethodException e2) {
+        try {
+          on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnWithFeature",
+              new Class<?>[] {String.class, String.class}, new Object[] {"root", null});
+        } catch (NoSuchMethodException e3) {
+          on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOn",
+              new Class<?>[] {String.class}, new Object[] {"root"});
+        }
+      }
+    }
+    if (!(on instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
+    return (Boolean) on;
+  }
+  private static String currentLeaseRadioMethod(int slot) {
+    try {
+      File file = radioJournal(slot);
+      if (!file.isFile()) return RADIO_METHOD_MODEM;
+      JSONObject lease = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+      String method = lease.optString("method", RADIO_METHOD_MODEM);
+      return RADIO_METHOD_SUB.equals(method) ? RADIO_METHOD_SUB : RADIO_METHOD_MODEM;
+    } catch (Exception ignored) {
+      return RADIO_METHOD_MODEM;
+    }
+  }
+  private static int radioState(Identity identity) throws Exception {
+    if (identity.phoneId < 0) throw new Failure("RADIO_STATE_UNKNOWN");
+    String method = currentLeaseRadioMethod(identity.slotId);
+    if (RADIO_METHOD_SUB.equals(method)) {
+      return isSubRadioOn(identity.subId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+    }
+    try {
+      return isModemEnabledForSlot(identity.phoneId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+    } catch (NoSuchMethodException ignored) {
+      return isSubRadioOn(identity.subId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+    }
+  }
+  private static boolean tryEnableModemForSlot(int phoneId, boolean on) throws Exception {
+    try {
+      Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "enableModemForSlot",
+          new Class<?>[] {int.class, boolean.class}, new Object[] {phoneId, on});
+      return Boolean.TRUE.equals(ok);
+    } catch (NoSuchMethodException ignored) {
+      return false;
+    }
+  }
+  private static boolean trySetSubRadioPower(int subId, int phoneId, boolean on, boolean allowGlobal)
+      throws Exception {
+    if (subId >= 0) {
+      try {
+        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "setRadioForSubscriber",
+            new Class<?>[] {int.class, boolean.class}, new Object[] {subId, on});
+        if (Boolean.TRUE.equals(ok)) return true;
+      } catch (NoSuchMethodException ignored) {
+      }
+    }
+    if (phoneId >= 0) {
+      try {
+        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "setRadioPowerForReason",
+            new Class<?>[] {int.class, boolean.class, boolean.class, boolean.class, int.class},
+            new Object[] {phoneId, on, false, false, 0});
+        // setRadioPowerForReason returns void (null) or boolean depending on AOSP API level.
+        if (ok == null || Boolean.TRUE.equals(ok)) return true;
+      } catch (NoSuchMethodException ignored) {
+      }
+    }
+    if (allowGlobal) {
+      try {
+        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "setRadio",
+            new Class<?>[] {boolean.class}, new Object[] {on});
+        if (Boolean.TRUE.equals(ok)) return true;
+      } catch (NoSuchMethodException ignored) {
+      }
+      try {
+        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "setRadioPower",
+            new Class<?>[] {boolean.class}, new Object[] {on});
+        if (Boolean.TRUE.equals(ok)) return true;
+      } catch (NoSuchMethodException ignored) {
+      }
+    }
+    return false;
+  }
+  /**
+   * Per-subscription radio power fallback is safe when there is no other active SIM whose cellular
+   * radio could be inadvertently affected (e.g. single-SIM devices, only 1 SIM inserted, or all other
+   * active slots are already leased by SmartVoWifiCall).
+   */
+  private static boolean canUseSubRadioFallback(Context context, int targetSlot) throws Exception {
+    List<SubscriptionInfo> active = activeSubscriptions(context);
+    if (active.size() <= 1) return true;
+    for (SubscriptionInfo info : active) {
+      int otherSlot = info.getSimSlotIndex();
+      if (otherSlot < 0 || otherSlot == targetSlot) continue;
+      if (!radioJournal(otherSlot).isFile()) return false;
+    }
+    return true;
+  }
+  private static void updateLeaseRadioMethod(int slot, String method) throws Exception {
+    File file = radioJournal(slot);
+    if (!file.isFile()) return;
+    JSONObject value = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
+    if (!method.equals(value.optString("method", RADIO_METHOD_MODEM))) {
+      value.put("method", method);
+      writePrivateFile(file, value.toString().getBytes(StandardCharsets.UTF_8), RADIO_DIR);
+    }
   }
   private static boolean airplaneModeOn() throws Exception {
     // ActivityThread.systemMain() is not an AMS-registered app process, so ContentResolver
@@ -633,7 +749,8 @@ public final class RootIdentityMain {
         requireIdle(context);
         JSONObject value = new JSONObject().put("owner", IMS_PACKAGE).put("slot", identity.slotId)
             .put("subId", identity.subId).put("simKey", sha256(identity.iccid))
-            .put("homePlmn", identity.homePlmn).put("restoreOn", restoreOn);
+            .put("homePlmn", identity.homePlmn).put("restoreOn", restoreOn)
+            .put("method", RADIO_METHOD_MODEM);
         writePrivateFile(radioJournal(identity.slotId), value.toString().getBytes(StandardCharsets.UTF_8), RADIO_DIR);
       }
       public void power(boolean on) throws Exception {
@@ -648,11 +765,28 @@ public final class RootIdentityMain {
         }
         Identity fresh = requireCurrentIdentity(context, identity.subId, identity.slotId);
         if (!identity.sameIdentity(fresh)) throw new Failure("SUBSCRIPTION_CHANGED");
-        // Both requestRadioPowerOffForReason and setRadioForSubscriber power off both SIMs
-        // on this Qualcomm DSDS modem. enableModemForSlot sends ENABLE_MODEM to phoneId only.
-        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony", "enableModemForSlot",
-            new Class<?>[] {int.class, boolean.class}, new Object[] {identity.phoneId, on});
-        if (!Boolean.TRUE.equals(ok)) throw new Failure("RADIO_COMMAND_REJECTED");
+        String leaseMethod = currentLeaseRadioMethod(identity.slotId);
+        if (on && RADIO_METHOD_SUB.equals(leaseMethod)) {
+          if (trySetSubRadioPower(identity.subId, identity.phoneId, true, true)) return;
+          if (tryEnableModemForSlot(identity.phoneId, true)) return;
+          throw new Failure("RADIO_COMMAND_REJECTED");
+        }
+        // Primary: enableModemForSlot sends ENABLE_MODEM to phoneId only (true per-slot DSDS).
+        if (tryEnableModemForSlot(identity.phoneId, on)) {
+          updateLeaseRadioMethod(identity.slotId, RADIO_METHOD_MODEM);
+          return;
+        }
+        // Fallback: legacy RILs (e.g. SM8250 on Android 17) or single-SIM setups reject
+        // enableModemForSlot(0, false). Safely fall back to per-subscription radio power when no
+        // other unleased active SIM could be affected.
+        if (on || canUseSubRadioFallback(context, identity.slotId)) {
+          boolean singleSim = activeSubscriptions(context).size() <= 1;
+          if (trySetSubRadioPower(identity.subId, identity.phoneId, on, singleSim || on)) {
+            if (!on) updateLeaseRadioMethod(identity.slotId, RADIO_METHOD_SUB);
+            return;
+          }
+        }
+        throw new Failure("RADIO_COMMAND_REJECTED");
       }
       public void forget() throws Exception { Files.deleteIfExists(radioJournal(identity.slotId).toPath()); }
     };
@@ -683,6 +817,7 @@ public final class RootIdentityMain {
     JSONObject lease = new JSONObject(new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8));
     if (!IMS_PACKAGE.equals(lease.optString("owner")) || lease.optInt("slot", -1) != slot)
       throw new Failure("RADIO_LEASE_INVALID");
+    String leaseMethod = lease.optString("method", RADIO_METHOD_MODEM);
     // Do not apply an old SIM's radio preference to a replacement card.
     int sub = currentSubForSlot(context, slot);
     if (sub != lease.optInt("subId", -1)) {
@@ -694,10 +829,10 @@ public final class RootIdentityMain {
         requireIdle(context);
         int phoneId = sub >= 0 ? subscriptionMapping("getPhoneId", sub) : slot;
         if (phoneId < 0) phoneId = slot;
-        Object ok = binderCall("phone", "com.android.internal.telephony.ITelephony",
-            "enableModemForSlot", new Class<?>[] {int.class, boolean.class},
-            new Object[] {phoneId, true});
-        if (!Boolean.TRUE.equals(ok)) throw new Failure("RADIO_COMMAND_REJECTED");
+        boolean restored = RADIO_METHOD_SUB.equals(leaseMethod)
+            ? (trySetSubRadioPower(sub, phoneId, true, true) || tryEnableModemForSlot(phoneId, true))
+            : (tryEnableModemForSlot(phoneId, true) || trySetSubRadioPower(sub, phoneId, true, true));
+        if (!restored) throw new Failure("RADIO_COMMAND_REJECTED");
       }
       Files.deleteIfExists(file.toPath());
       return true;

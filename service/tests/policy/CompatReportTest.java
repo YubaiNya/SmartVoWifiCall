@@ -24,7 +24,22 @@ public final class CompatReportTest {
     a17.chipsetFamily = "qualcomm";
     CompatReport r17 = CompatReport.evaluate(a17);
     check(CompatReport.MODE_READY.equals(r17.mode), "API 37 full ready");
-    check(r17.items.size() == 7, "7 check items");
+    check(r17.items.size() == 8, "8 check items");
+
+    // 1b. Non-privileged install (untrusted_app) -> DEGRADED_COMPAT warning
+    CompatReport.Input unpriv = new CompatReport.Input();
+    unpriv.apiLevel = 37;
+    unpriv.rootAvailable = true;
+    unpriv.daemonActive = true;
+    unpriv.privilegedApp = false;
+    unpriv.moduleInstalled = true;
+    unpriv.engineBinaryReady = true;
+    unpriv.imsOverrideVariant = "api35_5arg";
+    unpriv.modemSlotVariant = "api35_3arg";
+    unpriv.voiceOverrideVariant = "api35_3arg";
+    unpriv.iccAuthAvailable = true;
+    CompatReport rUnpriv = CompatReport.evaluate(unpriv);
+    check(CompatReport.MODE_DEGRADED_COMPAT.equals(rUnpriv.mode), "Non-priv-app install warns degraded compat");
 
     // 2. Android 14 (API 34) MediaTek with 4-arg IMS + Binder AKA only
     CompatReport.Input a14 = new CompatReport.Input();
