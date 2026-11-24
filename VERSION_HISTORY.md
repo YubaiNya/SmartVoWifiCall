@@ -1,5 +1,18 @@
 # 版本记录
 
+## v0.5.0-dev — 2026-11-24
+
+应用与模块 versionCode=19。完成底层 VoWiFi 协议栈 **100% 纯 Go 自研**（彻底移除外部 SoftVoWiFi 预编译二进制依赖），并落地 P1–P5 全部架构升级及 Xiaomi 15 3HK 实网通话全套修复；精简更新摘要同步维护于 [UpLog.md](UpLog.md)。
+
+- **P0 纯自研零外部依赖 Go VoWiFi 协议栈（[engine/](engine/)）**：`CGO_ENABLED=0 GOOS=linux GOARCH=arm64` 静态编译（约 4.2 MB，待机 ~1.2 MB / 峰值 ~4.2 MB RSS）。完整实现配置严格校验、RFC 7296 IKEv2（多算法动态协商、`COOKIE`/`INVALID_KE` 重试、64B MSK AUTH、EAP-AKA/AKA' 含 `AKA-Identity`/`Notification`/`AUTS` 重同步）、纯用户态 IPsec ESP、3GPP TS 24.229 IMS SIP（`Expires: 600000` + `423` 自适应、`Service-Route`、`INVITE` Timer A 重传、`183`/`180` 早期媒体、规范 Dialog 路由、`MESSAGE` RP-DATA/TPDU SMS）及 RTP/DTMF 媒体引擎（自适应 `JitterBuffer` 支持 `SSRC`/`Marker`/大跳变即时重同步与 CN/RTCP 过滤）。
+- **P1 常驻 Root 守护进程（[RootDaemonMain.java](service/app/src/main/java/com/smartvowificall/ims/root/RootDaemonMain.java)）**：合并 Identity / Clash / Network 请求至独立目录 `/data/local/tmp/smartvowificall/root-daemon.sock`（独占 `FileLock` + 主线程 `ActivityThread.systemMain()` 预热 + `SO_PEERCRED` UID 鉴权），实测延迟 0–4 ms；避免与共存模块共享 `/data/local/tmp/vowifi` 导致权限冲突。
+- **P2 Android 14–17（API 34–37）适配与自检**：`customize.sh` 放开至 API 34–37，适配多版本 `ITelephony` / `ISub` Binder 签名，新增 `CompatReport` 自检面板与无 Root 只读模式。
+- **P3 跨基带 SIM AKA（[RootSimAuthMain.java](service/app/src/main/java/com/smartvowificall/ims/root/RootSimAuthMain.java)、[qrtr_linux.go](engine/internal/simauth/qrtr_linux.go)）**：高通平台经 root netns 桥接纯 Go `AF_QIPCRTR` QMI UIM（修正 `QRTR_TYPE_NEW_LOOKUP = 10` 与 `getsockname()` 本机节点号），同时支持 `IPhoneSubInfo` / `ITelephony` / APDU（`61xx` 分段与 ISIM→USIM 回退），支持天玑/Tensor/Exynos。
+- **P4 通话音频、通道断链即时下图标与交互增强**：`PcmAudio` 启用硬件 AEC/NS/AGC 与低延迟 `AudioTrack`；IKEv2 实现 RFC 3948 15s `0xFF` NAT-T 保活与 RFC 7296 §2.3/§2.4 合规 DPD（同 `msgID` 重传、活跃 ESP 不误杀）及对端 `DELETE` 检测，断链即推送 `imsState` 并按「清空 `MmTelCapabilities` → `onDeregistered` → 关闭语音覆盖」即时下掉状态栏 VoWiFi 图标；挂断后立即 +400ms 双次补刷 `VoiceServiceOverride` 消除连续拨号拒呼；新增快捷磁贴与紧急恢复工具。
+- **P5 运营商与 OEM 适配库（[carrier_profiles.json](service/app/src/main/assets/carrier_profiles.json)、[profiles.go](engine/internal/config/profiles.go)）**：内置 25 家海外运营商与 5 家 OEM 规则（修正 3HK `wlan.three.com.hk`、AT&T、Verizon ePDG，拒绝解析回环/全零 IP）。
+- **彻底绕开系统 `tun0` VPN 套娃（[ClashConfig.java](service/app/src/main/java/com/smartvowificall/ims/clash/ClashConfig.java)、[RootClashMain.java](service/app/src/main/java/com/smartvowificall/ims/root/RootClashMain.java)）**：自动通过 `ip -4 route get 1.1.1.1 mark 0x20000` 探测物理出口并写入/热更新 `interface-name`，内置 `mihomo` 上游 100% 直出物理网卡。
+- **验证**：8 个 Go 包单元测试 + 899 项 Java 断言 + `build.py` + `verify_artifacts.py` 全部通过；Xiaomi 15（Android 17，骁龙 8 Elite，3HK eSIM）实网冷启注册 **1.78 秒**、出口 100% 直出 `wlan0` 零 `tun0`、断链 1 秒内下掉图标、实网连续通话与音质稳定。
+
 ## v0.4.7-dev — 2026-11-24
 
 应用与模块 versionCode=18，遥测上传升级为默认走 Wi-Fi Calling 隔离代理链路（可手动切换系统路由），补齐非隐私设备与 SIM 排障信息，并完善 README 遥测说明。

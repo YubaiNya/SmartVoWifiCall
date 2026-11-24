@@ -13,8 +13,9 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.4.7--dev-0071E3?style=flat" alt="Release v0.4.7-dev"></a>
-  <img src="https://img.shields.io/badge/Android-13%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 13-17 Root">
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.5.0--dev-0071E3?style=flat" alt="Release v0.5.0-dev"></a>
+  <img src="https://img.shields.io/badge/Android-14%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 14-17 Root">
+  <img src="https://img.shields.io/badge/Engine-Pure%20Go%20Self--Owned-00ADD8?style=flat&logo=go&logoColor=white" alt="Pure Go Self-Owned Engine">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
   <br>
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPL--3.0-1D1D1F?style=flat" alt="License GPL-3.0"></a>
@@ -46,18 +47,18 @@
       大陆卡保留系统原厂蜂窝与 IMS；海外卡独立接管语音与短信，并通过单卡协议栈开关关闭海外卡蜂窝，普通通话绝不误回退漫游。
     </td>
     <td width="50%" valign="top">
-      <strong>零 VPN 占位，只代理通话</strong><br><br>
-      内置 <code>mihomo</code> 运行在独立 Linux 网络命名空间，只接管 VoWiFi 隧道流量，不改系统路由表，不代理手机里的其他任何应用，无 Wi-Fi 时也可借大陆卡数据直连。
+      <strong>零 VPN 占位，自动绕开系统代理</strong><br><br>
+      内置 <code>mihomo</code> 运行在独立 Linux 网络命名空间，自动识别物理网卡（<code>wlan0</code> / <code>rmnet_data*</code>）并绕开系统 <code>tun0</code> VPN，不套娃、不改系统路由表，不代理手机里的其他任何应用。
     </td>
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <strong>多 eSIM 切卡，节点自动跟随</strong><br><br>
-      按 SIM 身份记住每张海外卡对应的代理节点。香港卡、英国卡互相切换时，自动清理旧绑定、切换地区节点并立即重连，告别跨区拒连与漫长退避。
+      <strong>纯自研 Go 引擎，跨基带通用</strong><br><br>
+      底层 VoWiFi 协议栈（IKEv2 / IPsec ESP / IMS SIP / RTP）100% 源码自研零外部依赖，常驻内存低至 1.2 MB；高通走 QRTR、天玑 / Tensor / Exynos 走通用 Binder AKA，彻底摆脱外部预编译二进制依赖。
     </td>
     <td width="50%" valign="top">
-      <strong>安静省电，随开随停</strong><br><br>
-      开启通话服务自动拉起代理，关闭后待通话结束自动停内核、复原蜂窝。待机零常驻通知，仅通话录音期间持有必要的无声前台服务，挂断即释放。
+      <strong>安静省电，多 eSIM 自动跟节点</strong><br><br>
+      常驻 Root 守护进程毫秒级响应，按 SIM 自动记住并切换地区节点；内置 25 家海外运营商规则，断链即下状态栏 VoWiFi 图标，挂断即释录音前台服务。
     </td>
   </tr>
 </table>
@@ -83,7 +84,7 @@ flowchart LR
 
 ## 三步上手
 
-**适用设备**：已 Root（KernelSU / SukiSU / Magisk）的 arm64 Android 13–17 设备，重点在 Xiaomi 15 / Android 17 上持续验证。
+**适用设备**：已 Root（KernelSU / SukiSU / Magisk）的 arm64 Android 14–17（API 34–37）设备，支持高通骁龙与天玑 / Tensor / Exynos 跨基带 SIM AKA（内置「系统接口兼容性自检」），重点在 Xiaomi 15 / Android 17 上实网验证。
 
 1. **刷入模块并重启**
    前往 Releases 下载 `SmartVoWifiCall-module.zip`，在 KernelSU / Magisk 中刷入后重启。模块会自动安装或覆盖升级随包 APK，保留原有设置。
@@ -125,6 +126,41 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 
 <br>
 
+## 更新日志
+
+> 完整更新记录同步维护于 [UpLog.md](./UpLog.md)（详细技术验证见 [VERSION_HISTORY.md](./VERSION_HISTORY.md)）。
+
+### `v0.5.0-dev`（2026-11-24）— 纯自研 Go 引擎与实网通话里程碑
+
+- **纯自研零依赖 Go VoWiFi 协议栈**：彻底移除 SoftVoWiFi 预编译二进制，纯 Go 静态编译 `vowifi-engine-arm64`（约 4.2 MB，待机 ~1.2 MB RSS），完整实现 IKEv2 + EAP-AKA/AKA'、纯用户态 IPsec ESP、IMS SIP/SMS 与 RTP/DTMF。
+- **内置 `mihomo` 自动绕开系统 `tun0` VPN**：通过 `fwmark 0x20000` 动态探测并绑定真实物理网卡（`wlan0` / `rmnet_data*`），消除双层套娃，3HK 实网冷启动注册降至 **1.78 秒**。
+- **常驻 `RootDaemonMain` + 跨基带 SIM AKA + Android 14–17**：独立 `/data/local/tmp/smartvowificall/root-daemon.sock`（0–4 ms 响应）；高通走 root netns QRTR、天玑 / Tensor / Exynos 走通用 Binder/APDU；放开 API 34–37 并新增兼容性自检与无 Root 只读模式。
+- **通道稳定性与通话体验全面修复**：RFC 7296 合规 DPD + 15s `0xFF` NAT-T 保活；断链即刻清空能力并下掉状态栏 VoWiFi 图标；RTP `JitterBuffer` 支持 `SSRC`/`Marker`/大跳变即时重同步防中途无声；`INVITE` Timer A 重传 + `183`/`180` 早期媒体 + 挂断秒刷 `VoiceServiceOverride` 修复连续拨号；新增硬件 AEC/NS/AGC、快捷磁贴、紧急恢复工具与 25 家海外运营商 / 5 家 OEM 适配库。
+
+<details>
+<summary><strong>查看历史版本更新（v0.4.7-dev → v0.1.0-dev，同步自 UpLog.md）</strong></summary>
+
+<br>
+
+- **`v0.4.7-dev`（2026-11-24）**：遥测上传默认走 Wi-Fi Calling 隔离代理链路（支持一键切系统路由），升级 `[Hidden]` 双重脱敏、非隐私设备/SIM 排障信息与唯一日志 ID（`SVW-YYYYMMDD-XXXXXX`）。
+- **`v0.4.6-dev`（2026-11-23）**：新增可选脱敏遥测上传（默认关闭）+ Cloudflare Worker 中转服务，新增本地手动导出「脱敏日志 ZIP」与「原始全部日志 ZIP」。
+- **`v0.4.5-dev`（2026-11-23）**：按 SIM 记忆与自动切换代理节点，切节点/刷新立即破除退避，完善 eSIM 切卡租约迁移与恢复。
+- **`v0.4.4-dev`（2026-11-23）**：修复远端挂断后下一通卡死 DIALING 与 Android 17 录音静音（silenced），仅通话期间持有无声 `microphone` 前台服务。
+- **`v0.4.3-dev`（2026-11-23）**：开启网络通话联动启停内置代理，稳定态降频轮询与深度节能，精简中文状态文案。
+- **`v0.4.2-dev`（2026-11-23）**：修复挂断后 Telecom 清除语音覆盖导致的再次呼出失败，强引用持有 `ImsConfigImplBase`。
+- **`v0.4.0-dev`（2026-11-22）**：全新 Apple Design + Miuix + 液态玻璃四页面 UI，内置 Clash External Controller 与实时连接管理，新增 `FallbackPolicy` 自动回退并移除待机常驻通知。
+- **`v0.3.2-dev`（2026-11-22）**：新增 `setVoiceServiceStateOverride` 解决关闭海外卡蜂窝后的拨号拦截，修复小米升级后 `ImsService` 不重连。
+- **`v0.3.1-dev`（2026-11-22）**：内置 Clash 升级为独立 Linux Network Namespace 隔离（零 Android VPN、零根命名空间路由改动）。
+- **`v0.3.0-dev`（2026-11-22）**：内置官方 `mihomo` 内核与独立 `wfctun0` 接口，新增订阅拉取、YAML 导入与节点测速切换。
+- **`v0.2.5-dev`（2026-11-22）**：引入单卡蜂窝协议栈互斥（`enableModemForSlot`），仅关海外卡蜂窝防误漫游，大陆卡保持在网。
+- **`v0.1.0-dev` – `v0.2.4-dev`（2026-11-22）**：建立独立 Android `ImsService` 框架、内置 SIM 凭据与网络快照、单 ZIP 自动覆盖安装 APK、真实 `IFF_TUN` 校验与按需注册接管。
+
+完整说明请直接查看 **[UpLog.md](./UpLog.md)**。
+
+</details>
+
+<br>
+
 ## 开发与文档
 
 仓库包含完整的 Android 上层应用、**纯自研零外部依赖 Go VoWiFi 协议栈引擎（`engine/`）**、测试、模块脚本、文档与交付物校验哈希；已彻底移除外部预编译 SoftVoWiFi 二进制依赖，不包含签名私钥或个人订阅配置（内置 `mihomo` 来源与 SHA-256 见 `service/deps/`）。
@@ -137,6 +173,7 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 | `service/tests/` | 策略、单卡互斥、Clash 净化、通话/音频与生命周期回归测试 |
 | `service/tools/` | 一键构建（含自动交叉编译 Go 引擎）、源码打包与交付物完整性校验脚本 |
 | `telemetry-worker/` | 可选 Cloudflare Worker 脱敏遥测中转服务（写入私有 GitHub 仓库） |
+| `UpLog.md` | 各版本更新日志（已嵌入首页展示） |
 | `VERSION_HISTORY.md` | 完整版本迭代与真机实测记录 |
 | `service/dist/SHA256.json` | 交付物哈希校验清单 |
 

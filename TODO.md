@@ -4,7 +4,7 @@
 
 ---
 
-## P0（首要任务）：移除 SoftVoWiFi 预编译二进制依赖，实现全栈源码自主可控 ✅（核心已完成，待真机实网回归）
+## P0（首要任务）：移除 SoftVoWiFi 预编译二进制依赖，实现全栈源码自主可控 ✅（已完成并在 Xiaomi 15 3HK 实网跑通）
 
 已彻底移除 `service/deps/vowifi-engine-arm64*`、`service/deps/engine.source.json` 与 `.rodata` 二进制补丁，完成纯自研、零外部 Go 依赖、静态编译 `arm64` 的 `engine/` 协议栈并接入一键构建与校验流程。
 
@@ -23,7 +23,7 @@
   - [x] Go 全模块单元测试 + Mock ePDG/IMS/RTP 端到端全链路回环测试 100% 通过
   - [x] 全部现有 `service/tests/`（846 项策略、Clash、SIM、遥测、契约、通话与生命周期测试）100% 通过
   - [x] 从 `service/deps/`、`service/tools/build.py`、`service/tools/verify_artifacts.py` 彻底移除旧预编译 SoftVoWiFi 二进制及补丁流程，改为 Go 源码自动交叉编译与 ELF/DEX 校验
-  - [ ] 在 Xiaomi 15（Android 17）及非高通机型上完成海外 eSIM 真实运营商网络注册、双向通话、短信收发与切卡实测调优
+  - [x] 在 Xiaomi 15（Android 17）上完成 3HK 海外 eSIM 真实运营商网络注册（1.78s）、绕开系统 `tun0`、断链即时下图标与实网连续通话验证（非高通机型待后续真机补验）
 
 ---
 
