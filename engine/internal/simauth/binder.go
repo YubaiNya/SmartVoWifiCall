@@ -84,3 +84,44 @@ func (b *BinderProvider) Authenticate(ctx context.Context, req AuthRequest) (*Au
 	}
 	return ParseBase64UMTSResponse(reply.ResponseBase64)
 }
+
+// ProbeInfo describes the host chipset & Root Binder SIM AKA readiness returned by op="probe".
+type ProbeInfo struct {
+	OK            bool   `json:"ok"`
+	Chipset       string `json:"chipset"`
+	AKAOrder      string `json:"akaOrder"`
+	QRTRSupported bool   `json:"qrtrSupported"`
+	Slot          int    `json:"slot"`
+	SubID         int    `json:"subId"`
+	APILevel      int    `json:"apiLevel"`
+}
+
+func (b *BinderProvider) Probe(ctx context.Context, slot int) (*ProbeInfo, error) {
+	if b.SocketPath == "" {
+		return nil, errors.New("SIM_BINDER_SOCKET_UNSET")
+	}
+	timeout := b.Timeout
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	dialer := net.Dialer{Timeout: timeout}
+	conn, err := dialer.DialContext(ctx, "unix", b.SocketPath)
+	if err != nil {
+		return nil, fmt.Errorf("SIM_BINDER_CONNECT_FAILED: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	wire, _ := json.Marshal(map[string]any{"op": "probe", "slot": slot})
+	if _, err := conn.Write(append(wire, '\n')); err != nil {
+		return nil, err
+	}
+	line, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	var info ProbeInfo
+	if err := json.Unmarshal([]byte(line), &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}

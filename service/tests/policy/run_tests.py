@@ -66,13 +66,18 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                  str(HERE / "CompatReportTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "CompatReportTest"], check=True)
 
+subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
+                 str(SOURCE / "policy/ChipsetStrategy.java"),
+                 str(HERE / "ChipsetStrategyTest.java")], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "ChipsetStrategyTest"], check=True)
+
 # Compile the Android adapters, but execute only their pure validation functions on the host.
 SDK = Path(os.environ.get("VOWIFI_ANDROID_SDK", r"D:\Android\Sdk"))
 ANDROID = SDK / "platforms/android-36/android.jar"
 ANDROID_OUT = HERE / ".android-build"
 ANDROID_OUT.mkdir(exist_ok=True)
 android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java", SOURCE / "root/SimCredentials.java",
-                   SOURCE / "policy/ExclusiveRadio.java", SOURCE / "clash/ClashConfig.java", HERE / "RootIdentityValidationTest.java"]
+                   SOURCE / "policy/ExclusiveRadio.java", SOURCE / "policy/ChipsetStrategy.java", SOURCE / "clash/ClashConfig.java", HERE / "RootIdentityValidationTest.java"]
 classpath = os.pathsep.join([str(ANDROID), str(ROOT / "deps/android-system.jar")])
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8", "-target", "8",
                 "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),

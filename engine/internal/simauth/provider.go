@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 )
 
 // AppType matches Android TelephonyManager APPTYPE constants.
@@ -123,6 +124,27 @@ func ParseBase64UMTSResponse(b64 string) (*AuthResponse, error) {
 		return nil, fmt.Errorf("SIM_AKA_BASE64_INVALID: %w", err)
 	}
 	return ParseUMTSResponse(raw)
+}
+
+// NewChipsetAutoProvider orders QRTR vs universal Root Binder according to SoC platform:
+// - Qualcomm (qrtrPresent=true): QRTR first (survives enableModemForSlot=false), Binder fallback.
+// - MediaTek / Tensor / Exynos / Generic: Binder first, QRTR fallback.
+func NewChipsetAutoProvider(qrtrPresent bool, binder, qrtr Provider) *AutoProvider {
+	if qrtrPresent {
+		return &AutoProvider{Providers: []Provider{qrtr, binder}}
+	}
+	return &AutoProvider{Providers: []Provider{binder, qrtr}}
+}
+
+// DetectQRTRPresent checks whether the Linux kernel exposes a Qualcomm QRTR bus/device.
+func DetectQRTRPresent() bool {
+	if _, err := os.Stat("/dev/qrtr"); err == nil {
+		return true
+	}
+	if st, err := os.Stat("/sys/bus/qrtr"); err == nil && st.IsDir() {
+		return true
+	}
+	return false
 }
 
 // AutoProvider tries each provider in order until one succeeds (used to combine universal Binder + Qualcomm QRTR).

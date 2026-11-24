@@ -3,11 +3,13 @@ package com.smartvowificall.ims.root;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
+import android.os.Build;
 import android.os.IBinder;
 import android.os.Looper;
 import android.os.Process;
 import android.system.Os;
 import android.telephony.SubscriptionInfo;
+import com.smartvowificall.ims.policy.ChipsetStrategy;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
@@ -81,6 +83,11 @@ public final class RootSimAuthMain {
       if (line == null || line.trim().isEmpty()) return;
       JSONObject req = new JSONObject(line);
       String op = req.optString("op", "");
+      if ("probe".equals(op)) {
+        int slot = req.optInt("slot", 0);
+        writeReply(c.getOutputStream(), probe(slot));
+        return;
+      }
       if (!"authenticate".equals(op)) {
         writeReply(c.getOutputStream(), new JSONObject().put("ok", false).put("code", "UNSUPPORTED_OP"));
         return;
@@ -104,23 +111,53 @@ public final class RootSimAuthMain {
     }
   }
 
+  private static JSONObject probe(int slot) throws Exception {
+    ChipsetStrategy.Family family = ChipsetStrategy.detect(
+        Build.HARDWARE, Build.BOARD, sysProp("ro.board.platform"), sysProp("ro.soc.manufacturer"));
+    int subId = -1;
+    try { subId = activeSubIdForSlot(slot); } catch (Throwable ignored) {}
+    return new JSONObject()
+        .put("ok", true)
+        .put("chipset", family.id)
+        .put("akaOrder", family.akaOrder)
+        .put("qrtrSupported", family.qrtrSupported)
+        .put("slot", slot)
+        .put("subId", subId)
+        .put("apiLevel", Build.VERSION.SDK_INT);
+  }
+
+  private static String sysProp(String key) {
+    try {
+      Object v = Class.forName("android.os.SystemProperties")
+          .getMethod("get", String.class, String.class).invoke(null, key, "");
+      return v instanceof String ? (String) v : "";
+    } catch (Throwable ignored) {
+      return "";
+    }
+  }
+
   private static JSONObject authenticate(int slot, int appType, int authType, String challengeB64)
       throws Exception {
     int subId = activeSubIdForSlot(slot);
     if (subId < 0) {
       return new JSONObject().put("ok", false).put("code", "SUBSCRIPTION_NOT_FOUND");
     }
-    // Primary path: standard Android ITelephony.getIccAuthentication (works on MTK/Tensor/Exynos/QCOM)
-    String resp = callGetIccAuthentication(subId, appType, authType, challengeB64);
-    if (resp != null && !resp.isEmpty()) {
-      return new JSONObject().put("ok", true).put("method", "getIccAuthentication")
-          .put("responseBase64", resp);
-    }
-    // Fallback path: direct logical channel AUTHENTICATE APDU (00 88 00 81)
-    String apduResp = callAuthenticateViaApdu(subId, appType, challengeB64);
-    if (apduResp != null && !apduResp.isEmpty()) {
-      return new JSONObject().put("ok", true).put("method", "apduLogicalChannel")
-          .put("responseBase64", apduResp);
+    int[] appOrder = appType == 5 ? new int[] {5, 2} : new int[] {appType};
+    for (int candidateApp : appOrder) {
+      // Primary path: standard Android ITelephony.getIccAuthentication (MTK/Tensor/Exynos/QCOM)
+      String resp = callGetIccAuthentication(subId, candidateApp, authType, challengeB64);
+      if (resp != null && !resp.isEmpty()) {
+        return new JSONObject().put("ok", true).put("method", "getIccAuthentication")
+            .put("appType", candidateApp)
+            .put("responseBase64", resp);
+      }
+      // Fallback path: direct logical channel AUTHENTICATE APDU (00 88 00 81 + 61xx GET RESPONSE)
+      String apduResp = callAuthenticateViaApdu(subId, candidateApp, challengeB64);
+      if (apduResp != null && !apduResp.isEmpty()) {
+        return new JSONObject().put("ok", true).put("method", "apduLogicalChannel")
+            .put("appType", candidateApp)
+            .put("responseBase64", apduResp);
+      }
     }
     return new JSONObject().put("ok", false).put("code", "ICC_AUTH_UNAVAILABLE");
   }
@@ -156,21 +193,33 @@ public final class RootSimAuthMain {
     String aid = appType == 5 ? ISIM_AID : USIM_AID;
     int channel = -1;
     try {
-      Object openResp = binderCall("phone", "com.android.internal.telephony.ITelephony",
-          "iccOpenLogicalChannel",
-          new Class<?>[] {int.class, String.class, String.class, int.class},
-          new Object[] {subId, "root", aid, 0});
+      Object openResp;
+      try {
+        openResp = binderCall("phone", "com.android.internal.telephony.ITelephony",
+            "iccOpenLogicalChannel",
+            new Class<?>[] {int.class, String.class, String.class, int.class},
+            new Object[] {subId, "root", aid, 0});
+      } catch (NoSuchMethodException ignored) {
+        openResp = binderCall("phone", "com.android.internal.telephony.ITelephony",
+            "iccOpenLogicalChannel",
+            new Class<?>[] {int.class, String.class, int.class},
+            new Object[] {subId, aid, 0});
+      }
       if (openResp == null) return null;
       channel = (Integer) openResp.getClass().getMethod("getChannel").invoke(openResp);
       if (channel <= 0) return null;
       String hexData = toHex(challenge);
-      Object tx = binderCall("phone", "com.android.internal.telephony.ITelephony",
-          "iccTransmitApduLogicalChannel",
-          new Class<?>[] {int.class, int.class, int.class, int.class, int.class, int.class, int.class, String.class},
-          new Object[] {subId, channel, 0x00, 0x88, 0x00, 0x81, challenge.length, hexData});
-      if (!(tx instanceof String)) return null;
-      String hex = ((String) tx).trim();
-      if (hex.length() < 4 || !hex.toUpperCase().endsWith("9000")) return null;
+      String hex = transmitLogicalApdu(subId, channel, 0x00, 0x88, 0x00, 0x81, challenge.length, hexData);
+      if (hex == null || hex.length() < 4) return null;
+      // Handle ISO 7816-4 SW1=0x61 (more data available -> GET RESPONSE 00 C0 00 00 SW2)
+      String sw = hex.substring(hex.length() - 4).toUpperCase(java.util.Locale.ROOT);
+      if (sw.startsWith("61")) {
+        int le = Integer.parseInt(sw.substring(2), 16);
+        hex = transmitLogicalApdu(subId, channel, 0x00, 0xC0, 0x00, 0x00, le, "");
+        if (hex == null || hex.length() < 4) return null;
+        sw = hex.substring(hex.length() - 4).toUpperCase(java.util.Locale.ROOT);
+      }
+      if (!"9000".equals(sw)) return null;
       byte[] raw = fromHex(hex.substring(0, hex.length() - 4));
       return Base64.getEncoder().encodeToString(raw);
     } catch (Throwable ignored) {
@@ -183,17 +232,51 @@ public final class RootSimAuthMain {
               new Class<?>[] {int.class, String.class, int.class},
               new Object[] {subId, "root", channel});
         } catch (Throwable ignored) {
+          try {
+            binderCall("phone", "com.android.internal.telephony.ITelephony",
+                "iccCloseLogicalChannel",
+                new Class<?>[] {int.class, int.class},
+                new Object[] {subId, channel});
+          } catch (Throwable ignored2) {}
         }
       }
     }
   }
 
+  private static String transmitLogicalApdu(
+      int subId, int channel, int cla, int ins, int p1, int p2, int p3, String hexData) {
+    try {
+      Object tx = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "iccTransmitApduLogicalChannel",
+          new Class<?>[] {int.class, int.class, int.class, int.class, int.class, int.class, int.class, String.class},
+          new Object[] {subId, channel, cla, ins, p1, p2, p3, hexData});
+      if (tx instanceof String) return ((String) tx).trim();
+    } catch (NoSuchMethodException ignored) {
+      try {
+        Object tx = binderCall("phone", "com.android.internal.telephony.ITelephony",
+            "iccTransmitApduLogicalChannel",
+            new Class<?>[] {int.class, String.class, int.class, int.class, int.class, int.class, int.class, int.class, String.class},
+            new Object[] {subId, "root", channel, cla, ins, p1, p2, p3, hexData});
+        if (tx instanceof String) return ((String) tx).trim();
+      } catch (Throwable ignored2) {}
+    } catch (Throwable ignored) {}
+    return null;
+  }
+
   @SuppressWarnings("unchecked")
   private static int activeSubIdForSlot(int slot) throws Exception {
-    List<SubscriptionInfo> active = (List<SubscriptionInfo>) binderCall("isub",
-        "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
-        new Class<?>[] {String.class, String.class, boolean.class},
-        new Object[] {"root", null, true});
+    List<SubscriptionInfo> active;
+    try {
+      active = (List<SubscriptionInfo>) binderCall("isub",
+          "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
+          new Class<?>[] {String.class, String.class, boolean.class},
+          new Object[] {"root", null, true});
+    } catch (NoSuchMethodException ignored) {
+      active = (List<SubscriptionInfo>) binderCall("isub",
+          "com.android.internal.telephony.ISub", "getActiveSubscriptionInfoList",
+          new Class<?>[] {String.class, String.class},
+          new Object[] {"root", null});
+    }
     if (active != null) {
       for (SubscriptionInfo info : active) {
         if (info.getSimSlotIndex() == slot) return info.getSubscriptionId();

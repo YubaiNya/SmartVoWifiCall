@@ -1271,21 +1271,14 @@ public final class RootIdentityMain {
           || hasMethod(tel, "getIccAuthentication", int.class, String.class, int.class, int.class, String.class);
     } catch (Throwable ignored) {}
 
-    String soc = (emptyIfNull(android.os.Build.HARDWARE) + " "
-        + emptyIfNull(android.os.Build.BOARD) + " "
-        + perPhoneProp("ro.board.platform", 0) + " "
-        + perPhoneProp("ro.soc.manufacturer", 0)).toLowerCase(java.util.Locale.ROOT);
-    String chipset = "generic";
-    if (soc.contains("qcom") || soc.contains("qualcomm") || soc.contains("sm8") || soc.contains("kona") || soc.contains("kalama") || soc.contains("pineapple") || soc.contains("sun")) {
-      chipset = "qualcomm";
-    } else if (soc.contains("mt6") || soc.contains("mt8") || soc.contains("mediatek") || soc.contains("dimensity")) {
-      chipset = "mediatek";
-    } else if (soc.contains("tensor") || soc.contains("gs101") || soc.contains("gs201") || soc.contains("zuma") || soc.contains("google")) {
-      chipset = "tensor";
-    } else if (soc.contains("exynos") || soc.contains("s5e") || soc.contains("universal")) {
-      chipset = "exynos";
-    }
-    boolean qrtrAvailable = "qualcomm".equals(chipset)
+    com.smartvowificall.ims.policy.ChipsetStrategy.Family family =
+        com.smartvowificall.ims.policy.ChipsetStrategy.detect(
+            android.os.Build.HARDWARE,
+            android.os.Build.BOARD,
+            perPhoneProp("ro.board.platform", 0),
+            perPhoneProp("ro.soc.manufacturer", 0));
+    String chipset = family.id;
+    boolean qrtrAvailable = family.qrtrSupported
         || new File("/dev/qrtr").exists()
         || new File("/sys/bus/qrtr").isDirectory();
 
@@ -1300,7 +1293,9 @@ public final class RootIdentityMain {
         .put("voiceOverrideVariant", voiceVariant)
         .put("iccAuthAvailable", iccAuthAvailable)
         .put("qrtrAvailable", qrtrAvailable)
-        .put("chipsetFamily", chipset);
+        .put("chipsetFamily", chipset)
+        .put("akaOrder", family.akaOrder)
+        .put("radioStrategyNote", com.smartvowificall.ims.policy.ChipsetStrategy.radioStrategyNote(family));
   }
 
   private static boolean hasMethod(Class<?> cls, String name, Class<?>... params) {

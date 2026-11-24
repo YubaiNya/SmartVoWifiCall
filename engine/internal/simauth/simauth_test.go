@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestUMTSChallengeAndResponseParsing(t *testing.T) {
@@ -120,4 +122,46 @@ type failProvider struct{}
 func (f *failProvider) Name() string { return "failing" }
 func (f *failProvider) Authenticate(ctx context.Context, req AuthRequest) (*AuthResponse, error) {
 	return nil, errors.New("RADIO_NOT_AVAILABLE")
+}
+
+func TestChipsetAutoOrderingAndBinderProbe(t *testing.T) {
+	nonQcomOrder := NewChipsetAutoProvider(false, &BinderProvider{SocketPath: "/tmp/x"}, &QRTRProvider{})
+	if nonQcomOrder.Providers[0].Name() != "binder" || nonQcomOrder.Providers[1].Name() != "qrtr" {
+		t.Fatalf("expected binder-first on non-Qualcomm, got %s -> %s",
+			nonQcomOrder.Providers[0].Name(), nonQcomOrder.Providers[1].Name())
+	}
+	qcomOrder := NewChipsetAutoProvider(true, &BinderProvider{SocketPath: "/tmp/x"}, &QRTRProvider{})
+	if qcomOrder.Providers[0].Name() != "qrtr" || qcomOrder.Providers[1].Name() != "binder" {
+		t.Fatalf("expected qrtr-first on Qualcomm, got %s -> %s",
+			qcomOrder.Providers[0].Name(), qcomOrder.Providers[1].Name())
+	}
+
+	dir, err := os.MkdirTemp("", "svw-probe*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	sockPath := filepath.Join(dir, "aka.sock")
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		_, _ = bufio.NewReader(c).ReadString('\n')
+		_, _ = c.Write([]byte(`{"ok":true,"chipset":"mediatek","akaOrder":"binder-first","qrtrSupported":false,"slot":1,"subId":3,"apiLevel":35}` + "\n"))
+	}()
+	bp := &BinderProvider{SocketPath: sockPath, Timeout: 2 * time.Second}
+	info, err := bp.Probe(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("Probe failed: %v", err)
+	}
+	if !info.OK || info.Chipset != "mediatek" || info.AKAOrder != "binder-first" || info.SubID != 3 {
+		t.Fatalf("unexpected probe info: %+v", info)
+	}
 }

@@ -45,13 +45,12 @@
 
 ---
 
-## P3：通用 SIM AKA 鉴权通道（打破“仅支持高通骁龙”限制）
+## P3：通用 SIM AKA 鉴权通道（打破“仅支持高通骁龙”限制） ✅（全平台策略与测试已完成，待非高通真机验证）
 
-已在 P0 自研引擎中提前完成通用跨基带核心代码，待非高通真机实测验证：
-
-- [x] 新增通过 Android Root 通道（`RootSimAuthMain`：`ITelephony.getIccAuthentication` + `iccTransmitApduLogicalChannel` APDU 兜底）透传 EAP-AKA / IMS AKA 的通用后端
-- [x] 实现 `AutoProvider` 自动回退策略（`BinderProvider` ↔ 纯 Go 高通 `QRTRProvider`）
-- [ ] 在天玑（MediaTek）/ Google Tensor / 三星 Exynos 真机上验证单卡关闭蜂窝后 UICC AKA 可用性，并按芯片平台细化单卡互斥策略
+- [x] 新增通过 Android Root 通道（`RootSimAuthMain`：`ITelephony.getIccAuthentication` + `iccTransmitApduLogicalChannel` APDU 兜底 + `61xx GET RESPONSE` 续读 + `ISIM → USIM` 自动回退 + `probe` 能力探测）透传 EAP-AKA / IMS AKA 的通用后端，完整适配 API 34–37 反射签名
+- [x] 实现芯片平台感知的 `ChipsetStrategy` 与 Go 引擎 `NewChipsetAutoProvider` 自动回退策略：高通骁龙（检测到 QRTR）优先 QRTR → Binder，天玑（MediaTek）/ Google Tensor / 三星 Exynos 优先 Binder → APDU → QRTR
+- [x] 补全 Java 与 Go 跨基带芯片策略与 Binder `probe` 离线单元测试
+- [ ] *真机验证*：在天玑 / Tensor / Exynos 实体机上实测单卡关闭蜂窝后的 UICC AKA 可用性
 
 ---
 

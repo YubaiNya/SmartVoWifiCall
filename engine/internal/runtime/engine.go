@@ -138,9 +138,10 @@ func buildSimProvider(mode, simSocket string) simauth.Provider {
 	case "mock":
 		return &simauth.MockProvider{KeyMaterial: []byte("offline-mock")}
 	default:
-		// Auto: try universal Android Root Binder first, fallback to pure-Go Qualcomm QRTR
-		// (critical when enableModemForSlot=false causes RIL RADIO_NOT_AVAILABLE on Qualcomm DSDS).
-		return &simauth.AutoProvider{Providers: []simauth.Provider{binder, qrtr}}
+		// Chipset-aware AutoProvider:
+		// Qualcomm (QRTR present): QRTR first (works even when enableModemForSlot=false disables RIL), Binder fallback.
+		// MediaTek / Google Tensor / Samsung Exynos: Universal Root Binder first, QRTR fallback.
+		return simauth.NewChipsetAutoProvider(simauth.DetectQRTRPresent(), binder, qrtr)
 	}
 }
 
