@@ -26,7 +26,7 @@ SIP security parameters are included in sanitized authentication traces; bare IP
 - Final read-only engine RPC reported `ims=REGISTERED`, `tunnel=CONNECTED`, `uptimeSec=380`, confirming more than six minutes of continuous registration after the final packaged-engine restart.
 - The existing built-in proxy used cellular underlay `rmnet_data3` during this test. A Wi-Fi icon alone is not evidence of the physical transport used.
 
-The local APK/module version is 0.6.3-dev / 23. This change does not establish a fix for the separate POCO F3 / giffgaff case, and does not establish voice/SMS operation.
+The APK/module version is 0.6.3-dev / 23. This change does not establish a fix for the separate POCO F3 / giffgaff case, and does not establish voice/SMS operation.
 
 ## References
 

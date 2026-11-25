@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.2--dev-0071E3?style=flat" alt="Release v0.6.2-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.3--dev-0071E3?style=flat" alt="Release v0.6.3-dev"></a>
   <img src="https://img.shields.io/badge/Android-14%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 14-17 Root">
   <img src="https://img.shields.io/badge/Engine-Pure%20Go%20Self--Owned-00ADD8?style=flat&logo=go&logoColor=white" alt="Pure Go Self-Owned Engine">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
@@ -130,6 +130,12 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 ## 更新日志
 
 > 完整更新记录同步维护于 [UpLog.md](./UpLog.md)（详细技术验证见 [VERSION_HISTORY.md](./VERSION_HISTORY.md)）。
+
+### `v0.6.3-dev`（2026-11-26）— CTExcel 注册修复
+
+- 修复内置代理改写 UDP 回包来源导致的握手超时，保留 IKE SPI、完整性和最终 AUTH 校验。
+- 补齐 CTExcel 的 IPv6 IMS 通路与 `ipsec-3gpp` 安全协商；精简 REGISTER，避免双层 ESP 封装后超过代理 TUN MTU。
+- 小米 15 + CTExcel + 现有英国节点已实测注册成功并持续超过 6 分钟。新增安全协商日志与 IPv6 脱敏，详见[验证记录](service/docs/CTEXCEL_VALIDATION.md)。电话、短信及 POCO F3 / giffgaff 本轮未验证。
 
 ### `v0.6.2-dev`（2026-11-26）— 认证流程修复与认证包遥测
 
