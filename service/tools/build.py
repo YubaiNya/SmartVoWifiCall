@@ -45,7 +45,11 @@ if module.exists():
  go_env['CGO_ENABLED']='0'
  go_env['GOOS']='linux'
  go_env['GOARCH']='arm64'
- run([find_go(),'build','-trimpath','-ldflags=-s -w','-o',ENGINE_OUT,'./cmd/vowifi-engine'],env=go_env,cwd=ENGINE_DIR)
+ source_hash=hashlib.sha256()
+ for source_file in sorted(ENGINE_DIR.rglob('*.go')):
+  source_hash.update(source_file.relative_to(ENGINE_DIR).as_posix().encode());source_hash.update(source_file.read_bytes())
+ flags='-s -w -X github.com/YubaiNya/SmartVoWifiCall/engine/internal/diag.SourceDigest='+source_hash.hexdigest()
+ run([find_go(),'build','-trimpath','-ldflags='+flags,'-o',ENGINE_OUT,'./cmd/vowifi-engine'],env=go_env,cwd=ENGINE_DIR)
  if not ENGINE_OUT.exists():
   raise RuntimeError(f'Expected native Go engine binary at {ENGINE_OUT}')
  mihomo_meta=json.loads((ROOT/'deps/mihomo.source.json').read_text())
@@ -59,6 +63,7 @@ if module.exists():
   z.write(ENGINE_OUT,'bin/vowifi-engine-arm64')
   z.write(mihomo_path,'bin/mihomo-arm64')
 
-hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in OUT.iterdir() if p.is_file() and p.suffix in ['.apk','.zip']}
+# Hash only artifacts produced by this invocation; do not certify older files in dist.
+hashes={name:hashlib.sha256((OUT/name).read_bytes()).hexdigest() for name in ['SmartVoWifiCall.apk','SmartVoWifiCall-module.zip']}
 (OUT/'SHA256.json').write_text(json.dumps(hashes,indent=2)+'\n')
 print(json.dumps(hashes,indent=2))

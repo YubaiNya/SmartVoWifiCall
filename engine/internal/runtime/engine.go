@@ -118,6 +118,7 @@ func Start(opts Options) (*Engine, error) {
 
 	e.logger.Info("engine", "native SmartVoWifiCall engine started", map[string]any{
 		"simMode": simProvider.Name(),
+		"build": diag.BuildInfo(),
 		"epdg":    opts.Config.EffectiveEPDG(),
 	})
 

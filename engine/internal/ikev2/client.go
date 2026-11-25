@@ -37,16 +37,20 @@ type SessionConfig struct {
 // AuthRejectedError reports an ePDG IKE_AUTH rejection carrying RFC 7296 notify codes (e.g. 24).
 type AuthRejectedError struct {
 	Notifies []uint16
+	Stage    string
 }
 
 func (e *AuthRejectedError) Error() string {
+	if e.Stage == "final" {
+		return fmt.Sprintf("IKE_AUTH_FINAL_REJECTED_NOTIFIES_%v", e.Notifies)
+	}
 	return fmt.Sprintf("IKE_AUTH_MISSING_EAP_NOTIFIES_%v", e.Notifies)
 }
 
 // IsAuthFailed reports whether err is a pre-EAP IKE_AUTH rejection (Notify 24 AUTHENTICATION_FAILED).
 func IsAuthFailed(err error) bool {
 	var re *AuthRejectedError
-	if !errors.As(err, &re) {
+	if !errors.As(err, &re) || re.Stage == "final" {
 		return false
 	}
 	for _, n := range re.Notifies {
@@ -118,6 +122,9 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 	go c.readLoop(conn)
 
 	if err := c.handshake(ctx); err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "failed", "error": diag.Sanitize(err.Error()), "profile": cfg.ProfileTag})
+		}
 		_ = c.Close()
 		return nil, err
 	}
@@ -201,6 +208,7 @@ func (c *Client) exchange(ctx context.Context, msgID uint32, pkt []byte) ([]byte
 	}()
 
 	for attempt := 0; attempt < 3; attempt++ {
+		c.traceIKE("out", pkt, attempt+1)
 		if err := c.sendIKE(pkt); err != nil {
 			return nil, err
 		}
@@ -260,6 +268,7 @@ func (c *Client) readLoop(conn *net.UDPConn) {
 		if len(data) < 28 {
 			continue
 		}
+		c.traceIKE("in", data, 0)
 		msgID := binary.BigEndian.Uint32(data[20:24])
 		flags := data[19]
 		if (flags & FlagResponse) != 0 {
@@ -311,7 +320,7 @@ func (c *Client) handshake(ctx context.Context) error {
 	dhGroup := DHGroupMODP2048
 	var cookie []byte
 	var dh *DHKeyPair
-	var ni, nr, initReq []byte
+	var ni, nr, initReq, initResponse []byte
 	var respHdr Header
 	var respPayloads []Payload
 
@@ -348,6 +357,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("IKE_SA_INIT_FAILED: %w", err)
 		}
+		initResponse = append([]byte(nil), initRespRaw...)
 		respHdr, respPayloads, err = DecodePacket(initRespRaw)
 		if err != nil {
 			return fmt.Errorf("IKE_SA_INIT_DECODE: %w", err)
@@ -396,7 +406,9 @@ func (c *Client) handshake(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("IKE_DH_FAILED: %w", err)
 	}
+	c.mu.Lock()
 	c.keys = DeriveIKEKeysWithSuite(ni, nr, secret, c.spii, c.spir, ikeSuite)
+	c.mu.Unlock()
 	if c.cfg.Logger != nil {
 		c.cfg.Logger.Info("ikev2", fmt.Sprintf("IKE_SA_INIT established dh=%d encBytes=%d prf=%d auth=%d",
 			dhGroup, ikeSuite.EncKeyLen, ikeSuite.PRFID, ikeSuite.AuthID), nil)
@@ -430,6 +442,7 @@ func (c *Client) handshake(ctx context.Context) error {
 
 	auth1Payloads := []Payload{
 		{Type: PayloadIDi, Body: idiBody},
+		{Type: PayloadNotify, Body: buildNotify(16417, nil)},
 		{Type: PayloadNotify, Body: buildNotify(NotifyInitialContact, nil)},
 		{Type: PayloadIDr, Body: idrBody},
 		{Type: PayloadCP, Body: BuildCFGRequest()},
@@ -459,10 +472,13 @@ func (c *Client) handshake(ctx context.Context) error {
 	}
 
 	// 3. EAP-AKA / EAP-AKA' loop (supports AT_AUTS resync retries & 3GPP DEVICE_IDENTITY 41101)
-	var msk []byte
-	deviceIDSent := false
-	for round := 0; round < 6; round++ {
-		var deviceIDReqType byte
+	var msk, responderID []byte
+	deviceIDSent, eapSucceeded, serverAuthenticated := false, false, false
+	var deviceIDReqType byte
+	for round := 0; round < 16; round++ {
+		if id := FindPayload(respInner, PayloadIDr); id != nil {
+			responderID = append([]byte(nil), id.Body...)
+		}
 		for _, p := range respInner {
 			if p.Type == PayloadNotify {
 				if nt, ndata, ok := ParseNotify(p.Body); ok && nt == NotifyDeviceIdentity {
@@ -482,12 +498,19 @@ func (c *Client) handshake(ctx context.Context) error {
 			}
 			return &AuthRejectedError{Notifies: notifies}
 		}
-		if len(eapP.Body) < 4 {
+		if len(eapP.Body) < 4 || int(binary.BigEndian.Uint16(eapP.Body[2:4])) != len(eapP.Body) {
 			return errors.New("IKE_EAP_SHORT")
 		}
 		code := eapP.Body[0]
 		eapID := eapP.Body[1]
 		if code == EAPCodeSuccess {
+			if !serverAuthenticated || len(msk) != 64 || len(eapP.Body) != 4 {
+				return errors.New("IKE_EAP_SUCCESS_BEFORE_AUTHENTICATED_CHALLENGE")
+			}
+			eapSucceeded = true
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": c.cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "eap_success", "round": round + 1, "mskLength": len(msk)})
+			}
 			break
 		}
 		if code == EAPCodeFailure {
@@ -547,6 +570,7 @@ func (c *Client) handshake(ctx context.Context) error {
 				}
 				if len(derivedMSK) > 0 {
 					msk = derivedMSK
+					serverAuthenticated = true
 				}
 				if c.cfg.Logger != nil {
 					c.cfg.Logger.Info("ikev2", fmt.Sprintf("answered EAP-AKA Challenge (type=%d mskLen=%d)", eapType, len(msk)), nil)
@@ -571,7 +595,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		}
 
 		nextPayloads := []Payload{{Type: PayloadEAP, Body: eapReply}}
-		if deviceIDReqType != 0 && !deviceIDSent && c.cfg.IMEI != "" {
+		if deviceIDReqType != 0 && serverAuthenticated && !deviceIDSent && c.cfg.IMEI != "" {
 			if devNotify, ok := BuildDeviceIdentityNotify(c.cfg.IMEI, deviceIDReqType); ok {
 				nextPayloads = append(nextPayloads, Payload{Type: PayloadNotify, Body: devNotify})
 				deviceIDSent = true
@@ -601,8 +625,11 @@ func (c *Client) handshake(ctx context.Context) error {
 			return fmt.Errorf("IKE_AUTH_EAP_DECRYPT: %w", err)
 		}
 	}
-	if len(msk) == 0 {
-		return errors.New("IKE_EAP_NO_MSK")
+	if !eapSucceeded {
+		return errors.New("IKE_EAP_ROUND_LIMIT_WITHOUT_SUCCESS")
+	}
+	if len(msk) != 64 {
+		return errors.New("IKE_EAP_INVALID_MSK_LENGTH")
 	}
 
 	// 4. Final IKE_AUTH with AUTH signed by full 64-byte MSK (RFC 7296 §2.16)
@@ -639,7 +666,21 @@ func (c *Client) handshake(ctx context.Context) error {
 				}
 			}
 		}
-		return fmt.Errorf("IKE_AUTH_FINAL_MISSING_CP_OR_SA_NOTIFIES_%v", notifies)
+		return &AuthRejectedError{Notifies: notifies, Stage: "final"}
+	}
+	if id := FindPayload(finalInner, PayloadIDr); id != nil {
+		responderID = append([]byte(nil), id.Body...)
+	}
+	peerAuth := FindPayload(finalInner, PayloadAUTH)
+	if peerAuth == nil || len(peerAuth.Body) < 4 || peerAuth.Body[0] != 2 || len(responderID) < 4 {
+		return errors.New("IKE_AUTH_RESPONDER_PROOF_MISSING")
+	}
+	expectedAuth := ComputeAuthPayloadWithPRF(c.keys.Suite.PRFID, msk, initResponse, ni, responderID, c.keys.SKpr)
+	if subtle.ConstantTimeCompare(expectedAuth, peerAuth.Body[4:]) != 1 {
+		return errors.New("IKE_AUTH_RESPONDER_PROOF_INVALID")
+	}
+	if c.cfg.Logger != nil {
+		c.cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": c.cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "responder_authenticated"})
 	}
 	cfgRes, err := ParseCFGReply(cpP.Body)
 	if err != nil || cfgRes.LocalIP == nil {
@@ -665,9 +706,12 @@ func (c *Client) handshake(ctx context.Context) error {
 	// Derive Child SA KEYMAT: Enc_i || Auth_i || Enc_r || Auth_r using negotiated IKE PRF
 	km := c.keys.DeriveChildKeymat(ni, nr, 2*(childEncLen+childAuthLen))
 	off := 0
-	encI := km[off : off+childEncLen]; off += childEncLen
-	authI := km[off : off+childAuthLen]; off += childAuthLen
-	encR := km[off : off+childEncLen]; off += childEncLen
+	encI := km[off : off+childEncLen]
+	off += childEncLen
+	authI := km[off : off+childAuthLen]
+	off += childAuthLen
+	encR := km[off : off+childEncLen]
+	off += childEncLen
 	authR := km[off : off+childAuthLen]
 	outSA, err := ipsec.NewSA(remoteChildSPI, childSuite, encI, authI, nil)
 	if err != nil {
@@ -767,7 +811,10 @@ func (c *Client) handleEAPAKAChallenge(ctx context.Context, eapID, eapType byte,
 		akaKeys = DeriveEAPAKAKeys(c.cfg.EAPIdentity, authResp.IK, authResp.CK)
 	}
 
-	// Verify server AT_MAC if present
+	if macOffset < 0 || len(recvMAC) != 16 {
+		return nil, nil, errors.New("EAP_AKA_SERVER_MAC_MISSING")
+	}
+	// Verify the server before returning MSK.
 	if macOffset >= 0 && len(recvMAC) == 16 {
 		zeroed := append([]byte(nil), pkt...)
 		for i := 0; i < 16; i++ {

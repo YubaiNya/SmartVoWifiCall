@@ -198,7 +198,7 @@ func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim
 	_, _ = rand.Read(spirBuf[:])
 	spir := binary.BigEndian.Uint64(spirBuf[:])
 	var spii uint64
-	var ni []byte
+	var ni, initResponse, serverMSK []byte
 	var keys *ikev2.IKEKeys
 	var clientChildSPI uint32
 	serverChildSPI := uint32(0xCAFEBABE)
@@ -319,6 +319,7 @@ func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim
 				{Type: ikev2.PayloadKE, Body: ikev2.BuildKEPayload(ikev2.DHGroupMODP2048, dh.Public)},
 				{Type: ikev2.PayloadNonce, Body: nr},
 			})
+			initResponse = append([]byte(nil), resp...)
 			_, _ = pc.WriteToUDP(resp, peerAddr)
 		case ikev2.ExchangeIKEAuth:
 			_, inner, err := ikev2.DecodeEncryptedPacket(raw, keys, true)
@@ -341,6 +342,8 @@ func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim
 				resp, _ := ikev2.EncodeEncryptedPacket(ikev2.Header{
 					SPIi: spii, SPIr: spir, Exchange: ikev2.ExchangeIKEAuth, Flags: ikev2.FlagResponse, MessageID: h.MessageID,
 				}, []ikev2.Payload{
+					{Type: ikev2.PayloadIDr, Body: ikev2.BuildIDPayload(2, "ims")},
+					{Type: ikev2.PayloadAUTH, Body: append([]byte{2, 0, 0, 0}, ikev2.ComputeAuthPayloadWithPRF(keys.Suite.PRFID, serverMSK, initResponse, ni, ikev2.BuildIDPayload(2, "ims"), keys.SKpr)...)},
 					{Type: ikev2.PayloadCP, Body: cp.Bytes()},
 					{Type: ikev2.PayloadSA, Body: ikev2.BuildChildESPProposal(serverChildSPI, false)},
 					{Type: ikev2.PayloadTSi, Body: ikev2.BuildTSAllIPv4()},
@@ -360,6 +363,7 @@ func runMockNetwork(t *testing.T, pc *net.UDPConn, cfg *config.Config, serverSim
 			a16 := bytes.Repeat([]byte{0x22}, 16)
 			exp, _ := serverSim.Authenticate(context.Background(), simauth.AuthRequest{RAND: r16, AUTN: a16})
 			akaKeys := ikev2.DeriveEAPAKAKeys(cfg.EffectiveEAPIdentity(), exp.IK, exp.CK)
+			serverMSK = akaKeys.MSK
 			var eap bytes.Buffer
 			eap.Write([]byte{ikev2.EAPCodeRequest, 1, 0, 0, ikev2.EAPTypeAKA, ikev2.AKAChallenge, 0, 0})
 			eap.Write([]byte{ikev2.ATRand, 5, 0, 0})

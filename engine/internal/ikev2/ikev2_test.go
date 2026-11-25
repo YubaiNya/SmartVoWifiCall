@@ -42,7 +42,7 @@ func TestFullIKEv2EAPAKATunnelAndDPD(t *testing.T) {
 		_, _ = rand.Read(spirBuf[:])
 		spir := binary.BigEndian.Uint64(spirBuf[:])
 		var spii uint64
-		var ni []byte
+		var ni, initResponse, serverMSK []byte
 		var keys *IKEKeys
 		var clientChildSPI uint32
 		serverChildSPI := uint32(0xAABBCCDD)
@@ -90,6 +90,7 @@ func TestFullIKEv2EAPAKATunnelAndDPD(t *testing.T) {
 					{Type: PayloadKE, Body: BuildKEPayload(DHGroupMODP2048, dh.Public)},
 					{Type: PayloadNonce, Body: nr},
 				})
+				initResponse = append([]byte(nil), resp...)
 				_, _ = pc.WriteToUDP(resp, peerAddr)
 
 			case ExchangeIKEAuth:
@@ -118,6 +119,8 @@ func TestFullIKEv2EAPAKATunnelAndDPD(t *testing.T) {
 					resp, _ := EncodeEncryptedPacket(Header{
 						SPIi: spii, SPIr: spir, Exchange: ExchangeIKEAuth, Flags: FlagResponse, MessageID: h.MessageID,
 					}, []Payload{
+						{Type: PayloadIDr, Body: BuildIDPayload(2, "ims")},
+						{Type: PayloadAUTH, Body: append([]byte{2, 0, 0, 0}, ComputeAuthPayloadWithPRF(keys.Suite.PRFID, serverMSK, initResponse, ni, BuildIDPayload(2, "ims"), keys.SKpr)...)},
 						{Type: PayloadCP, Body: cp.Bytes()},
 						{Type: PayloadSA, Body: BuildChildESPProposal(serverChildSPI, false)},
 						{Type: PayloadTSi, Body: BuildTSAllIPv4()},
@@ -149,6 +152,7 @@ func TestFullIKEv2EAPAKATunnelAndDPD(t *testing.T) {
 					RAND: rand16, AUTN: autn16,
 				})
 				akaKeys := DeriveEAPAKAKeys(identity, expected.IK, expected.CK)
+				serverMSK = akaKeys.MSK
 				var eap bytes.Buffer
 				eap.Write([]byte{EAPCodeRequest, byte(challengeCount), 0, 0, EAPTypeAKA, AKAChallenge, 0, 0})
 				eap.Write([]byte{ATRand, 5, 0, 0})
@@ -298,11 +302,12 @@ func TestStrict3GPPEPDGNotify24AndDeviceIdentity(t *testing.T) {
 
 	go func() {
 		type sess struct {
-			spii, spir     uint64
-			ni, nr         []byte
-			keys           *IKEKeys
-			clientChildSPI uint32
-			identity       string
+			spii, spir        uint64
+			ni, nr            []byte
+			initResponse, msk []byte
+			keys              *IKEKeys
+			clientChildSPI    uint32
+			identity          string
 		}
 		sessions := map[uint64]*sess{}
 		buf := make([]byte, 4096)
@@ -344,6 +349,7 @@ func TestStrict3GPPEPDGNotify24AndDeviceIdentity(t *testing.T) {
 					{Type: PayloadKE, Body: BuildKEPayload(DHGroupMODP2048, dh.Public)},
 					{Type: PayloadNonce, Body: nr},
 				})
+				sessions[h.SPIi].initResponse = append([]byte(nil), resp...)
 				_, _ = pc.WriteToUDP(resp, addr)
 			case ExchangeIKEAuth:
 				s := sessions[h.SPIi]
@@ -391,6 +397,8 @@ func TestStrict3GPPEPDGNotify24AndDeviceIdentity(t *testing.T) {
 					resp, _ := EncodeEncryptedPacket(Header{
 						SPIi: s.spii, SPIr: s.spir, Exchange: ExchangeIKEAuth, Flags: FlagResponse, MessageID: h.MessageID,
 					}, []Payload{
+						{Type: PayloadIDr, Body: BuildIDPayload(2, "ims")},
+						{Type: PayloadAUTH, Body: append([]byte{2, 0, 0, 0}, ComputeAuthPayloadWithPRF(s.keys.Suite.PRFID, s.msk, s.initResponse, s.ni, BuildIDPayload(2, "ims"), s.keys.SKpr)...)},
 						{Type: PayloadCP, Body: cp.Bytes()},
 						{Type: PayloadSA, Body: BuildChildESPProposal(0x11223344, false)},
 						{Type: PayloadTSi, Body: BuildTSAllIPv4()},
@@ -411,6 +419,7 @@ func TestStrict3GPPEPDGNotify24AndDeviceIdentity(t *testing.T) {
 				autn16 := bytes.Repeat([]byte{0x44}, 16)
 				exp, _ := serverSim.Authenticate(context.Background(), simauth.AuthRequest{RAND: rand16, AUTN: autn16})
 				akaKeys := DeriveEAPAKAKeys(s.identity, exp.IK, exp.CK)
+				s.msk = akaKeys.MSK
 				var eap bytes.Buffer
 				eap.Write([]byte{EAPCodeRequest, 1, 0, 0, EAPTypeAKA, AKAChallenge, 0, 0})
 				eap.Write([]byte{ATRand, 5, 0, 0})

@@ -25,3 +25,19 @@
 
 - `GET /health`：返回 Worker 健康状态与配置就绪标志。
 - `POST /v1/telemetry`：接收 `smartvowificall.telemetry.v1` 脱敏 JSON，成功返回 `{"ok":true,"code":"TELEMETRY_STORED","path":"logs/..."}`。
+
+
+## Telemetry v3 (local candidate)
+
+The v3 client includes protocol-sanitized IKE/EAP and SIP registration payload records.
+Only private portions are masked; carrier realms, public protocol parameters and full
+nonprivate values remain visible. Authentication records are not silently truncated.
+A batch is split into requests below 480 KiB, grouped by `authBatch.id` and numbered
+by `authBatch.index` / `count`. The response echoes `schema`, `authBatchId`,
+`authPartIndex` and `authRecordCount`; the client requires matching receipts for every part.
+The original 512 KiB request limit remains in place. Invalid batches and oversized
+requests fail explicitly. v1/v2 uploads remain supported.
+
+Deploy this Worker version before installing the v3 uploader. An older Worker returns
+`INVALID_SCHEMA` for v3. Source changes alone do not update the running service.
+See `service/docs/AUTH_TELEMETRY_VALIDATION.md` for retention, privacy boundaries and tests.

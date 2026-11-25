@@ -1925,7 +1925,7 @@ fun NetworkPage(
         AppleMiuixCard(insideMargin = PaddingValues(bottom = 16.dp)) {
             SwitchPreference(
                 title = "上传脱敏遥测日志",
-                summary = "默认关闭。上传脱敏后的完整原始日志、网络请求包体与 SIM 国家/运营商，隐私字段统一显示为 [Hidden]",
+                summary = "默认关闭。开启后上传已保留的认证包与诊断日志；只遮住隐私片段，保留协议、运营商域名和错误详情。超限自动分包，可先预览内容",
                 checked = state.telemetryEnabled,
                 onCheckedChange = onToggleTelemetry
             )

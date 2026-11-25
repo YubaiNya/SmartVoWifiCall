@@ -11,6 +11,7 @@ import com.smartvowificall.ims.network.*;
 import com.smartvowificall.ims.policy.*;
 import com.smartvowificall.ims.telemetry.*;
 import java.io.OutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
@@ -451,9 +452,15 @@ final class RuntimeController {
         rootLogsText = "ROOT_LOG_COLLECTION_FAILED: " + safeCode(e);
       }
     }
-    return buildBoundedTelemetryPayload(
+    String basePayload = buildBoundedTelemetryPayload(
         logId, telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
         dev, svc, diagMap, ifaceList, events.snapshot(120), netLogs, clashConns, rootLogsText);
+    String authJournal = "";
+    if (includeRootLogs) {
+      try { authJournal=root.collectAuthTrace(); }
+      catch (Exception e) { throw new IllegalStateException("AUTH_TRACE_COLLECTION_FAILED",e); }
+    }
+    return TelemetryBatch.attach(basePayload, authJournal);
   }
   private static String tailChars(String text, int maxChars) {
     if (text == null || text.length() <= maxChars) return text == null ? "" : text;
@@ -504,27 +511,50 @@ final class RuntimeController {
         }
         String route = telemetryRoute();
         String routeLabel = TELEMETRY_ROUTE_WIFICALL.equals(route) ? "Wi-Fi Calling 链路" : "系统路由";
-        String payload = buildSanitizedTelemetryJson(logId, trigger, true);
-        TelemetryClient.UploadResult result;
-        if (TELEMETRY_ROUTE_WIFICALL.equals(route)) {
+        String fullPayload = buildSanitizedTelemetryJson(logId, trigger, true);
+        Map<?,?> authCapture=(Map<?,?>)JsonCodec.decodeObject(fullPayload).get("authCapture");
+        boolean captureIncomplete=Boolean.TRUE.equals(authCapture.get("incomplete"));
+        List<String> parts = TelemetryBatch.split(fullPayload);
+        TelemetryClient.UploadResult result = null;
+        int uploadedParts = 0;
+        int totalBytes = 0;
+        String batchRecordPath = "";
+        String payload = "";
+        for (String part : parts) {
+          payload = part;
+          String partId = String.valueOf(JsonCodec.decodeObject(part).get("logId"));
           try {
-            result = root.uploadTelemetryViaWifiCall(endpoint, logId, payload);
-          } catch (Exception wfcErr) {
-            String wfcCode = safeCode(wfcErr);
-            if ("WIFICALL_LINK_UNAVAILABLE".equals(wfcCode)) {
-              // Built-in Clash is stopped; fall back transparently to system route.
-              result = TelemetryClient.upload(endpoint, payload, "", logId);
-              routeLabel = "系统路由回退";
-            } else {
-              throw wfcErr;
-            }
+            if (TELEMETRY_ROUTE_WIFICALL.equals(route)) {
+              try { result = root.uploadTelemetryViaWifiCall(endpoint, partId, part); }
+              catch (Exception wfcErr) {
+                if (!"WIFICALL_LINK_UNAVAILABLE".equals(safeCode(wfcErr))) throw wfcErr;
+                result = TelemetryClient.upload(endpoint, part, "", partId);
+                routeLabel = "系统路由回退";
+              }
+            } else { result = TelemetryClient.upload(endpoint, part, "", partId); }
+          } catch (Exception uploadError) {
+            throw new IOException("TELEMETRY_BATCH_PARTIAL_" + uploadedParts + "_OF_" + parts.size() + "_" + safeCode(uploadError), uploadError);
           }
+          if (!result.ok) break;
+          if (!TelemetryBatch.receiptMatches(part,result.responseBody))
+            throw new IOException("TELEMETRY_RECEIPT_MISMATCH_PART_" + (uploadedParts+1));
+          if (uploadedParts == 0) batchRecordPath=result.recordPath;
+          uploadedParts++;
+          totalBytes += result.payloadBytes;
+        }
+        if (result == null) throw new IOException("TELEMETRY_EMPTY_BATCH");
+        if (!result.ok) {
+          result = new TelemetryClient.UploadResult(false,result.httpStatus,
+              "BATCH_" + uploadedParts + "_OF_" + parts.size() + "_" + result.code,
+              logId,result.recordPath,totalBytes,result.durationMs,result.responseHeaders,result.responseBody);
         } else {
-          result = TelemetryClient.upload(endpoint, payload, "", logId);
+          result = new TelemetryClient.UploadResult(true,result.httpStatus,
+              "TELEMETRY_STORED_" + uploadedParts + "_PARTS",logId,batchRecordPath,totalBytes,
+              result.durationMs,result.responseHeaders,result.responseBody);
         }
         String finalLogId = result.logId.isEmpty() ? logId : result.logId;
         String summary = result.ok
-            ? "上传成功（" + routeLabel + "）· ID: " + finalLogId
+            ? "上传成功（" + routeLabel + "，" + uploadedParts + " 个分包，认证记录 " + authCapture.get("recordCount") + (captureIncomplete ? "，采集存在缺口" : "") + "）· ID: " + finalLogId
             : "上传失败（" + result.code + " · " + routeLabel + "）· ID: " + finalLogId;
         prefs.edit()
             .putLong("telemetry_last_upload_ms", System.currentTimeMillis())

@@ -53,8 +53,11 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                  str(SOURCE / "telemetry/LogSanitizer.java"),
                  str(SOURCE / "telemetry/NetworkLogBuffer.java"),
                  str(SOURCE / "telemetry/TelemetryClient.java"),
+                 str(SOURCE / "telemetry/TelemetryBatch.java"),
+                 str(HERE / "TelemetryBatchTest.java"),
                  str(HERE / "TelemetrySanitizerTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetrySanitizerTest"], check=True)
+subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetryBatchTest", str(OUT / "telemetry-batch.json")], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                  str(SOURCE / "engine/JsonCodec.java"),

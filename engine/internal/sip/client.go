@@ -681,6 +681,7 @@ func (c *Client) rxLoop() {
 		if err != nil {
 			continue
 		}
+		c.traceRegistration("in", msg)
 		if msg.IsResponse {
 			branch := extractBranch(msg.GetHeader("Via"))
 			c.mu.Lock()
@@ -912,6 +913,7 @@ func (c *Client) unregisterTx(branch string) {
 }
 
 func (c *Client) sendSIP(msg *Message) error {
+	c.traceRegistration("out", msg)
 	return c.sock.WriteTo(c.pcscf, c.pcscfPrt, msg.Encode())
 }
 

@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  * and inline tokens uniformly with {@link #HIDDEN} ({@code [Hidden]}).
  */
 public final class LogSanitizer {
-  public static final String SCHEMA = "smartvowificall.telemetry.v2";
+  public static final String SCHEMA = "smartvowificall.telemetry.v3";
   public static final String HIDDEN = "[Hidden]";
 
   private static final SecureRandom RANDOM = new SecureRandom();
@@ -38,7 +38,7 @@ public final class LogSanitizer {
       "remote", "caller", "callee", "dialnumber", "destinationnumber", "simkey",
       "subscriptionurl", "controllersecret", "secret", "token", "password", "passwd",
       "authorization", "cookie", "set-cookie", "x-telemetry-key", "apikey", "api_key",
-      "nonce", "autn", "rand", "res", "ik", "ck", "privatekey", "private_key", "psk",
+      "nonce", "autn", "rand", "res", "ik", "ck", "msk", "emsk", "skd", "skpi", "skpr", "skei", "sker", "skai", "skar", "privatekey", "private_key", "psk",
       "impi", "impu", "sipimpu", "sipuri", "currentnode", "savednode", "preferredclashnode",
       "now", "lanipv4", "serial", "androidid", "ssid", "bssid", "wifissid", "wifibssid",
       "email", "username", "uuid", "server", "sni", "servername", "peerip", "localip"
@@ -54,6 +54,7 @@ public final class LogSanitizer {
       "chains", "all"
   ));
 
+  private static final Pattern NAI_RE = Pattern.compile("\\b([06])\\d{15}(@[A-Za-z0-9.-]+)");
   private static final Pattern ICCID_RE =
       Pattern.compile("\\b89\\d{13,20}[0-9A-Fa-f]{0,2}\\b");
   private static final Pattern BEARER_RE =
@@ -111,6 +112,7 @@ public final class LogSanitizer {
   public static String sanitizeText(String input) {
     if (input == null || input.isEmpty()) return "";
     String s = input;
+    s = NAI_RE.matcher(s).replaceAll("$1" + HIDDEN + "$2");
     s = BEARER_RE.matcher(s).replaceAll("$1 " + HIDDEN);
     s = KV_SECRET_RE.matcher(s).replaceAll("$1\"" + HIDDEN + "\"");
     s = sanitizeUrlsInText(s);
@@ -118,12 +120,18 @@ public final class LogSanitizer {
     s = ICCID_RE.matcher(s).replaceAll(HIDDEN);
     s = SIP_URI_RE.matcher(s).replaceAll("sip:" + HIDDEN + "@");
     s = TEL_URI_RE.matcher(s).replaceAll("tel:" + HIDDEN);
-    s = EMAIL_RE.matcher(s).replaceAll(HIDDEN);
+    s = maskMailUser(s);
     s = PHONE_PLUS_RE.matcher(s).replaceAll(HIDDEN);
     s = IPV4_RE.matcher(s).replaceAll(HIDDEN);
     s = IPV6_RE.matcher(s).replaceAll(HIDDEN);
     s = LONG_DIGITS_RE.matcher(s).replaceAll(HIDDEN);
     return s;
+  }
+
+  private static String maskMailUser(String input) {
+    Matcher m=EMAIL_RE.matcher(input); StringBuffer out=new StringBuffer();
+    while(m.find()) m.appendReplacement(out,Matcher.quoteReplacement(HIDDEN+m.group().substring(m.group().lastIndexOf('@'))));
+    m.appendTail(out); return out.toString();
   }
 
   private static String sanitizeUrlsInText(String input) {
@@ -203,23 +211,24 @@ public final class LogSanitizer {
   @SuppressWarnings("unchecked")
   private static Object sanitizeStructure(Object value, String parentKey, int depth) {
     if (value == null) return null;
-    if (depth > 12) return HIDDEN;
+    if (depth > 48) throw new IllegalArgumentException("TELEMETRY_STRUCTURE_TOO_DEEP");
     if (value instanceof Boolean || value instanceof Number) return value;
     if (value instanceof String) {
       String s = (String) value;
       if (s.isEmpty()) return "";
+      if ("profile".equals(parentKey) && s.matches("[06]@(nai\\.epc|wlan)/ims(-fqdn)?")) return s;
       if (s.contains("\"proxies\":{") || s.contains("\"WFC-PROXY\":{")
           || s.contains("\"VoWiFi\":{")) {
         return HIDDEN;
       }
-      if (s.length() > 4096) s = s.substring(0, 4096) + "...(truncated)";
+
       return sanitizeText(s);
     }
     if (value instanceof List<?>) {
       List<?> src = (List<?>) value;
       String pk = parentKey == null ? "" : parentKey.toLowerCase(Locale.US);
       boolean maskItems = NODE_LIST_KEYS.contains(pk);
-      int limit = Math.min(src.size(), 120);
+      int limit = src.size();
       List<Object> out = new ArrayList<>(limit);
       for (int i = 0; i < limit; i++) {
         Object item = src.get(i);
@@ -240,7 +249,7 @@ public final class LogSanitizer {
       Map<String, Object> out = new LinkedHashMap<>();
       int count = 0;
       for (Map.Entry<?, ?> e : src.entrySet()) {
-        if (count++ >= 120) break;
+        count++;
         String rawKey = String.valueOf(e.getKey());
         String keyLower = rawKey.toLowerCase(Locale.US);
         String outKey = rawKey;
@@ -250,7 +259,7 @@ public final class LogSanitizer {
         }
         Object rawVal = e.getValue();
         if (SENSITIVE_KEYS.contains(keyLower)) {
-          out.put(outKey, maskSensitiveValue(rawVal));
+          out.put(outKey, sanitizeSensitive(rawKey,rawVal,depth));
         } else if ("name".equals(keyLower) && ("nodes".equals(pk) || "proxies".equals(pk)
             || "requestbody".equals(pk) || "responsebody".equals(pk))) {
           String sv = rawVal == null ? "" : String.valueOf(rawVal);
@@ -265,6 +274,16 @@ public final class LogSanitizer {
     return sanitizeText(String.valueOf(value));
   }
 
+  private static Object sanitizeSensitive(String key,Object value,int depth) {
+    if (value instanceof Map<?, ?> && "authorization".equalsIgnoreCase(key)) return sanitizeStructure(value,key,depth+1);
+    String k=key.toLowerCase(Locale.US);
+    if (value instanceof String && Arrays.asList("username","impi","impu","sipimpu","sipuri","peer","remote","caller","callee","email").contains(k)) {
+      String s=(String)value;
+      if (s.contains("@")) return sanitizeText(s);
+    }
+    return maskSensitiveValue(value);
+  }
+
   private static Object maskSensitiveValue(Object rawVal) {
     if (rawVal == null) return null;
     if (rawVal instanceof String) {
@@ -272,8 +291,8 @@ public final class LogSanitizer {
     }
     if (rawVal instanceof List<?>) {
       List<?> src = (List<?>) rawVal;
-      List<Object> masked = new ArrayList<>(Math.min(src.size(), 60));
-      for (int i = 0; i < Math.min(src.size(), 60); i++) masked.add(HIDDEN);
+      List<Object> masked = new ArrayList<>(src.size());
+      for (int i = 0; i < src.size(); i++) masked.add(HIDDEN);
       return masked;
     }
     if (rawVal instanceof Map<?, ?>) {
@@ -281,7 +300,7 @@ public final class LogSanitizer {
       Map<String, Object> masked = new LinkedHashMap<>();
       int n = 0;
       for (Object k : src.keySet()) {
-        if (n++ >= 60) break;
+        n++;
         masked.put(String.valueOf(k), HIDDEN);
       }
       return masked;

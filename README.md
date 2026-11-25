@@ -13,7 +13,7 @@
 <br>
 
 <p>
-  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.1--dev-0071E3?style=flat" alt="Release v0.6.1-dev"></a>
+  <a href="https://github.com/YubaiNya/SmartVoWifiCall/releases"><img src="https://img.shields.io/badge/Release-v0.6.2--dev-0071E3?style=flat" alt="Release v0.6.2-dev"></a>
   <img src="https://img.shields.io/badge/Android-14%E2%80%9317%20Root-1D1D1F?style=flat" alt="Android 14-17 Root">
   <img src="https://img.shields.io/badge/Engine-Pure%20Go%20Self--Owned-00ADD8?style=flat&logo=go&logoColor=white" alt="Pure Go Self-Owned Engine">
   <a href="https://github.com/YubaiNya/SmartVoWifiCall/issues"><img src="https://img.shields.io/github/issues/YubaiNya/SmartVoWifiCall?label=Issues&color=6E6E73&style=flat" alt="Issues"></a>
@@ -108,6 +108,7 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 - **默认关闭，完全自愿**：遥测开关默认处于关闭状态，未经你手动开启或点击「立即上传一次脱敏日志」，App 不会向任何服务器发送日志。
 - **默认走 Wi-Fi Calling 链路，支持切系统路由**：上传默认复用内置 `mihomo` 的 Wi-Fi Calling 隔离代理链路（`wfctun0`），无需手机主网络挂系统代理即可直达中转接口；未开启内置代理时也可一键切换为「系统路由」。
 - **双重脱敏，隐私统一显示为 `[Hidden]`**：上传前在 App 端与 Cloudflare Worker 服务端执行双重脱敏，保留完整诊断结构、原始日志、网络请求与引擎 RPC 包体结构，仅将敏感值统一替换为 `[Hidden]`；同时支持上传前点击「预览脱敏内容」检查实际报文。
+- **认证包与分包上传（v3）**：开启遥测或手动上传时，默认附带留存的 IKE/EAP 与 SIP 注册认证记录；保留公开 Payload、协议前缀及运营商域，隐私部分打码。超过单包限制会分包，回执不一致、捕获缺口和部分失败明确提示。每个引擎留存当前及上一份 256 KiB 认证日志。
 - **日志 ID 快速排查**：每次上传都会生成唯一可读日志 ID（如 `SVW-20261124-19B351`）并保存在 App 的「日志上传记录」中，支持一键复制 ID 附在 Issue 里，方便开发者快速定位问题。
 - **本地完整导出**：下方随时可通过系统文件选择器手动导出「脱敏日志包（ZIP）」或「原始全部日志包（ZIP）」（原始日志仅存本地，绝不上传）。
 
@@ -129,6 +130,12 @@ SmartVoWifiCall 内置可选的脱敏日志上报与本地导出能力，全部�
 ## 更新日志
 
 > 完整更新记录同步维护于 [UpLog.md](./UpLog.md)（详细技术验证见 [VERSION_HISTORY.md](./VERSION_HISTORY.md)）。
+
+### `v0.6.2-dev`（2026-11-26）— 认证流程修复与认证包遥测
+
+- 修复 EAP 成功条件、最终 AUTH 校验和设备身份发送时机；记录 IKE/EAP 与 SIP 注册认证阶段、Payload 和引擎版本。
+- 遥测 v3 默认附带留存的认证记录，保留非隐私内容及混合字段中的公开部分，隐私部分打码；超限分包并校验回执，缺口和上传失败明确提示。
+- 小米 15 + 3HK 已实测注册成功，Worker v3 已完成真实入库及脱敏验证。**POCO F3 / giffgaff 仍需更新模块、重启后上传新遥测，尚不能确认已修复。**
 
 ### `v0.6.1-dev`（2026-11-25）— 应用内更新直链下载、扫码订阅与欧美 ePDG 兼容升级
 

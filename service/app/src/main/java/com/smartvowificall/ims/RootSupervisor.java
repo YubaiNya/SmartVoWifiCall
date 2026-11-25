@@ -385,7 +385,7 @@ final class RootSupervisor {
   void releaseRadio(int slot) throws Exception {
     if (slot < 0 || slot > 7) throw new IOException("INVALID_SLOT");
     JSONObject response = identityCall("radio-release", String.valueOf(slot));
-    if (!response.optBoolean("ok")) throw new IOException("RADIO_RELEASE_FAILED");
+    if (!response.optBoolean("ok")) throw new IOException(response.optString("code", "RADIO_RELEASE_FAILED"));
   }
   void restoreAll() throws Exception {
     JSONObject response = identityCall("ims-restore-all");
@@ -447,6 +447,12 @@ final class RootSupervisor {
         + "echo '=== LOGCAT (FILTERED TAIL 400) ===';"
         + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|RootDaemon|RootSimAuth|ImsResolver|ImsServiceController' | tail -n 400 || true";
     return run(script);
+  }
+  String collectAuthTrace() throws Exception {
+    // Read complete lines from both retained generations; never tail individual packets.
+    return run("for d in /data/adb/smartvowificall_ims/logs/*; do "
+        + "[ -d \"$d\" ] || continue; for f in \"$d/auth.jsonl.1\" \"$d/auth.jsonl\"; do "
+        + "if [ -f \"$f\" ]; then cat \"$f\" || exit 1; fi; done; done");
   }
   String collectClashHttpTrace() throws Exception {
     return run("for f in /data/adb/smartvowificall_ims/clash/http-trace.jsonl /data/adb/smartvowificall_ims/clash1/http-trace.jsonl; do [ -f \"$f\" ] && tail -n 25 \"$f\"; done || true");

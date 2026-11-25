@@ -1,7 +1,7 @@
 /**
  * SmartVoWifiCall Telemetry Relay (Cloudflare Worker)
  *
- * Receives sanitized telemetry JSON (v1 or v2) from the Android app and stores it as a dated JSON
+ * Receives sanitized telemetry JSON (v1, v2 or v3) from the Android app and stores it as a dated JSON
  * file indexed by Log ID (`logs/YYYY/MM/DD/<logId>.json`) in a private GitHub repository via the
  * GitHub Contents API. All private fields/values are enforced as `[Hidden]` while preserving full
  * diagnostic, network request/packet, and raw log structure.
@@ -14,6 +14,7 @@ const LOG_ID_RE = /^SVW-\d{8}-[0-9A-F]{6,8}$/i;
 const SUPPORTED_SCHEMAS = new Set([
   "smartvowificall.telemetry.v1",
   "smartvowificall.telemetry.v2",
+  "smartvowificall.telemetry.v3",
 ]);
 
 const SENSITIVE_KEYS = new Set([
@@ -21,7 +22,7 @@ const SENSITIVE_KEYS = new Set([
   "remote", "caller", "callee", "dialnumber", "destinationnumber", "simkey",
   "subscriptionurl", "controllersecret", "secret", "token", "password", "passwd",
   "authorization", "cookie", "set-cookie", "x-telemetry-key", "apikey", "api_key",
-  "nonce", "autn", "rand", "res", "ik", "ck", "privatekey", "private_key", "psk",
+  "nonce", "autn", "rand", "res", "ik", "ck", "msk", "emsk", "skd", "skpi", "skpr", "skei", "sker", "skai", "skar", "privatekey", "private_key", "psk",
   "impi", "impu", "sipimpu", "sipuri", "currentnode", "savednode", "preferredclashnode",
   "now", "lanipv4", "serial", "androidid", "ssid", "bssid", "wifissid", "wifibssid",
   "email", "username", "uuid", "server", "sni", "servername", "peerip", "localip"
@@ -77,12 +78,13 @@ function sanitizeUrl(url) {
 function sanitizeString(input, maxLen = 8192) {
   let s = String(input);
   if (s.length > maxLen) s = s.slice(s.length - maxLen);
+  s = s.replace(/\b([06])\d{15}(@[A-Za-z0-9.-]+)/g, `$1${HIDDEN}$2`);
   s = s.replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{6,}/gi, `$1 ${HIDDEN}`);
   s = s.replace(/\bhttps?:\/\/[^\s"'<>\]})]+/gi, (u) => sanitizeUrl(u));
   s = s.replace(/\b89\d{13,20}[0-9A-Fa-f]{0,2}\b/g, HIDDEN);
   s = s.replace(/\bsip:[^@\s"'<>]+@/gi, `sip:${HIDDEN}@`);
   s = s.replace(/\btel:\+?[0-9][0-9\-().\s]{4,18}/gi, `tel:${HIDDEN}`);
-  s = s.replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, HIDDEN);
+  s = s.replace(/\b[A-Za-z0-9._%+-]+(@[A-Za-z0-9.-]+\.[A-Za-z]{2,})\b/g, `${HIDDEN}$1`);
   s = s.replace(/(?<!\w)\+[1-9]\d{6,14}\b/g, HIDDEN);
   s = s.replace(/(?<![\w.])(?!127\.0\.0\.1(?![\w.]))(?!198\.19\.0\.\d+(?![\w.]))(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}(?![\w.])/g, HIDDEN);
   s = s.replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{0,4}\b/gi, HIDDEN);
@@ -93,12 +95,12 @@ function sanitizeString(input, maxLen = 8192) {
 function maskSensitiveValue(value) {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") return value === "" ? "" : HIDDEN;
-  if (Array.isArray(value)) return value.slice(0, 60).map(() => HIDDEN);
+  if (Array.isArray(value)) return value.map(() => HIDDEN);
   if (typeof value === "object") {
     const out = {};
     let n = 0;
     for (const k of Object.keys(value)) {
-      if (n++ >= 60) break;
+      n++;
       out[k] = HIDDEN;
     }
     return out;
@@ -106,22 +108,23 @@ function maskSensitiveValue(value) {
   return HIDDEN;
 }
 
-function deepSanitize(value, parentKey = "", depth = 0) {
+function deepSanitize(value, parentKey = "", depth = 0, complete = false) {
   if (value === null || value === undefined) return null;
-  if (depth > 12) return HIDDEN;
+  if (depth > (complete ? 48 : 12)) { if(complete) throw new Error("TELEMETRY_STRUCTURE_TOO_DEEP"); return HIDDEN; }
   if (typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") {
-    const maxLen = parentKey === "rawLogs" ? 260 * 1024 : 8192;
+    if (parentKey === "profile" && /^[06]@(nai\.epc|wlan)\/ims(-fqdn)?$/.test(value)) return value;
+    const maxLen = complete ? value.length : (parentKey === "rawLogs" ? 260 * 1024 : 8192);
     return sanitizeString(value, maxLen);
   }
   if (Array.isArray(value)) {
     const pk = parentKey.toLowerCase();
     const maskItems = NODE_LIST_KEYS.has(pk);
-    return value.slice(0, 140).map((item) => {
+    return value.slice(0, complete ? value.length : 140).map((item) => {
       if (maskItems && typeof item === "string") {
         return item === "DIRECT" || item === "REJECT" || item === "VoWiFi" ? item : HIDDEN;
       }
-      return deepSanitize(item, parentKey, depth + 1);
+      return deepSanitize(item, parentKey, depth + 1, complete);
     });
   }
   if (typeof value === "object") {
@@ -130,19 +133,23 @@ function deepSanitize(value, parentKey = "", depth = 0) {
     const out = {};
     let count = 0;
     for (const [k, v] of Object.entries(value)) {
-      if (count++ >= 140) break;
+      if (count++ >= 140 && !complete) break;
       const kl = k.toLowerCase();
       const outKey =
         maskChildKeys && k !== "VoWiFi" && k !== "DIRECT" && k !== "REJECT" && k !== "GLOBAL"
           ? `${HIDDEN}#${count}`
           : k;
       if (SENSITIVE_KEYS.has(kl)) {
-        out[outKey] = maskSensitiveValue(v);
+        if (typeof v === "string" && ["username","impi","impu","sipimpu","sipuri","peer","remote","caller","callee","email"].includes(kl) && v.includes("@")) {
+          out[outKey] = sanitizeString(v, complete ? v.length : 8192);
+        } else if (kl === "authorization" && v && typeof v === "object" && !Array.isArray(v)) {
+          out[outKey] = deepSanitize(v,k,depth+1,complete);
+        } else { out[outKey] = maskSensitiveValue(v); }
       } else if (kl === "name" && (pk === "nodes" || pk === "proxies" || pk === "requestbody" || pk === "responsebody")) {
         const sv = v ? String(v) : "";
         out[outKey] = (!sv || sv === "VoWiFi" || sv === "DIRECT" || sv === "REJECT" || sv === "GLOBAL") ? sv : HIDDEN;
       } else {
-        out[outKey] = deepSanitize(v, k, depth + 1);
+        out[outKey] = deepSanitize(v, k, depth + 1, complete);
       }
     }
     return out;
@@ -174,7 +181,8 @@ export default {
       return jsonResponse({
         ok: true,
         service: "smartvowificall-telemetry-relay",
-        schema: "smartvowificall.telemetry.v2",
+        schema: "smartvowificall.telemetry.v3",
+        supportedSchemas: Array.from(SUPPORTED_SCHEMAS),
         maxBytes: MAX_BYTES,
         configured: Boolean(env.GITHUB_TOKEN && env.GITHUB_REPO),
       });
@@ -236,7 +244,19 @@ export default {
       ? candidateId
       : `SVW-${yyyy}${mm}${dd}-${randomHex(6)}`;
 
-    const sanitized = deepSanitize(parsed);
+    const complete = parsed.schema === "smartvowificall.telemetry.v3";
+    if (complete) {
+      const b = parsed.authBatch;
+      if (!b || !LOG_ID_RE.test(b.id) || !Number.isInteger(b.index) || !Number.isInteger(b.count)
+          || b.index < 1 || b.index > b.count || b.count > 256
+          || !Array.isArray(parsed.authPackets) || b.recordCount !== parsed.authPackets.length
+          || !Number.isInteger(b.totalRecordCount) || b.totalRecordCount < b.recordCount) {
+        return jsonResponse({ok:false,code:"INVALID_AUTH_BATCH"},400);
+      }
+    }
+    let sanitized;
+    try { sanitized = deepSanitize(parsed,"",0,complete); }
+    catch { return jsonResponse({ok:false,code:"TELEMETRY_STRUCTURE_TOO_DEEP"},400); }
     sanitized.logId = logId;
 
     const recordPath = `logs/${yyyy}/${mm}/${dd}/${logId}.json`;
@@ -255,7 +275,7 @@ export default {
       headers: {
         Authorization: `Bearer ${ghToken}`,
         Accept: "application/vnd.github+json",
-        "User-Agent": "SmartVoWifiCall-Telemetry-Relay/2.0",
+        "User-Agent": "SmartVoWifiCall-Telemetry-Relay/3.0",
         "Content-Type": "application/json",
         "X-GitHub-Api-Version": "2022-11-28",
       },
@@ -281,6 +301,9 @@ export default {
     return jsonResponse({
       ok: true,
       code: "TELEMETRY_STORED",
+      schema: parsed.schema,
+      ...(complete ? {authBatchId: sanitized.authBatch.id, authPartIndex: sanitized.authBatch.index,
+          authRecordCount: sanitized.authPackets.length} : {}),
       logId,
       path: recordPath,
     });

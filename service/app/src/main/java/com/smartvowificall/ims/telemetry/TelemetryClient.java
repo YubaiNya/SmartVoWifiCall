@@ -119,7 +119,7 @@ public final class TelemetryClient {
     conn.setDoOutput(true);
     conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
     conn.setRequestProperty("Accept", "application/json");
-    conn.setRequestProperty("User-Agent", "SmartVoWifiCall-Telemetry/2.0");
+    conn.setRequestProperty("User-Agent", "SmartVoWifiCall-Telemetry/3.0");
     conn.setRequestProperty("X-SmartVoWifiCall-Schema", LogSanitizer.SCHEMA);
     if (logIdHint != null && !logIdHint.trim().isEmpty()) {
       conn.setRequestProperty("X-SmartVoWifiCall-Log-Id", logIdHint.trim());
@@ -216,7 +216,7 @@ public final class TelemetryClient {
       req.append("Content-Type: application/json; charset=utf-8\r\n");
       req.append("Content-Length: ").append(body.length).append("\r\n");
       req.append("Accept: application/json\r\n");
-      req.append("User-Agent: SmartVoWifiCall-Telemetry/2.0\r\n");
+      req.append("User-Agent: SmartVoWifiCall-Telemetry/3.0\r\n");
       req.append("X-SmartVoWifiCall-Schema: ").append(LogSanitizer.SCHEMA).append("\r\n");
       if (logIdHint != null && !logIdHint.trim().isEmpty()) {
         req.append("X-SmartVoWifiCall-Log-Id: ").append(logIdHint.trim()).append("\r\n");
