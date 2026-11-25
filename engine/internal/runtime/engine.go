@@ -14,20 +14,20 @@ import (
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/ikev2"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/media"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/rpc"
-	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/sip"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/simauth"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/sip"
 )
 
 type Options struct {
-	Config     *config.Config
-	SimMode    string // auto | binder | qrtr | mock
-	SimSocket  string
-	SocketDir  string
-	LogDir     string
-	SimAuth    simauth.Provider // optional override for tests
-	EPDGPort   int              // default 500
-	NattPort   int              // default 4500
-	PCSCFPort  uint16           // default 5060
+	Config    *config.Config
+	SimMode   string // auto | binder | qrtr | mock
+	SimSocket string
+	SocketDir string
+	LogDir    string
+	SimAuth   simauth.Provider // optional override for tests
+	EPDGPort  int              // default 500
+	NattPort  int              // default 4500
+	PCSCFPort uint16           // default 5060
 }
 
 // Engine orchestrates the full self-owned VoWiFi stack:
@@ -49,15 +49,15 @@ type Engine struct {
 	pcscfIP              string
 	preferredAuthProfile int
 	ikeClient            *ikev2.Client
-	sipClient  *sip.Client
-	mediaSess  *media.Session
-	mediaCall  string
-	audioOn    bool
-	epoch      string
-	stopOnce    sync.Once
-	stopCh      chan struct{}
-	reconnectCh chan struct{}
-	wg          sync.WaitGroup
+	sipClient            *sip.Client
+	mediaSess            *media.Session
+	mediaCall            string
+	audioOn              bool
+	epoch                string
+	stopOnce             sync.Once
+	stopCh               chan struct{}
+	reconnectCh          chan struct{}
+	wg                   sync.WaitGroup
 }
 
 func Start(opts Options) (*Engine, error) {
@@ -87,12 +87,12 @@ func Start(opts Options) (*Engine, error) {
 	}
 
 	e := &Engine{
-		opts:      opts,
-		logger:    logger,
-		simAuth:   simProvider,
-		startedAt: time.Now(),
-		imsState:  "CONNECTING",
-		tunState:  "CONNECTING",
+		opts:        opts,
+		logger:      logger,
+		simAuth:     simProvider,
+		startedAt:   time.Now(),
+		imsState:    "CONNECTING",
+		tunState:    "CONNECTING",
 		epoch:       fmt.Sprintf("ep-%d", time.Now().UnixNano()),
 		stopCh:      make(chan struct{}),
 		reconnectCh: make(chan struct{}, 1),
@@ -118,7 +118,7 @@ func Start(opts Options) (*Engine, error) {
 
 	e.logger.Info("engine", "native SmartVoWifiCall engine started", map[string]any{
 		"simMode": simProvider.Name(),
-		"build": diag.BuildInfo(),
+		"build":   diag.BuildInfo(),
 		"epdg":    opts.Config.EffectiveEPDG(),
 	})
 
@@ -223,19 +223,22 @@ func (e *Engine) connectOnce() error {
 
 	var ikeCli *ikev2.Client
 	var lastErr error
+	hint, _ := config.LookupCarrierHint(e.opts.Config.MCC, e.opts.Config.MNC)
 	for step, idx := range order {
 		cand := candidates[idx]
 		cli, err := ikev2.Connect(ctx, ikev2.SessionConfig{
-			EPDGAddr:    epdgAddr,
-			NATTAddr:    nattAddr,
-			EAPIdentity: cand.Identity,
-			APN:         cand.APN,
-			IMEI:        e.opts.Config.IMEI,
-			ProfileTag:  cand.Tag,
-			Slot:        e.opts.Config.Slot,
-			ICCID:       e.opts.Config.ICCID,
-			SimAuth:     e.simAuth,
-			Logger:      e.logger,
+			EPDGAddr:       epdgAddr,
+			NATTAddr:       nattAddr,
+			EAPIdentity:    cand.Identity,
+			APN:            cand.APN,
+			IMEI:           e.opts.Config.IMEI,
+			ProfileTag:     cand.Tag,
+			Slot:           e.opts.Config.Slot,
+			ICCID:          e.opts.Config.ICCID,
+			SimAuth:        e.simAuth,
+			Logger:         e.logger,
+			PreferIPv6:     hint.PreferIPv6,
+			ProxyTransport: e.opts.Config.Transport == "iface:wfctun0" || e.opts.Config.Transport == "iface:wfctun1",
 		})
 		if err == nil {
 			ikeCli = cli
@@ -284,6 +287,7 @@ func (e *Engine) connectOnce() error {
 		SMSC:         e.opts.Config.SMSC,
 		SimAuth:      e.simAuth,
 		IncludeAMR:   media.HasAMRSupport(),
+		RequireIPSec: hint.RequireIMSIPSec,
 		Logger:       e.logger,
 		OnEvent:      e.onSIPEvent,
 		OnMediaStart: e.onMediaStart,

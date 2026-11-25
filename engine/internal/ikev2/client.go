@@ -21,17 +21,19 @@ import (
 
 // SessionConfig holds parameters for establishing an RFC 7296 + EAP-AKA ePDG tunnel.
 type SessionConfig struct {
-	EPDGAddr    string // host:port (default port 500 or 4500 for NAT-T)
-	NATTAddr    string // optional explicit NAT-T port (default same host port 4500)
-	EAPIdentity string // 0<IMSI>@nai.epc.mnc<MNC3>.mcc<MCC>.3gppnetwork.org or @wlan...
-	APN         string // usually "ims"
-	IMEI        string // 15-digit IMEI for 3GPP TS 24.302 DEVICE_IDENTITY (41101)
-	ProfileTag  string // non-PII diagnostic tag for NAI/APN profile logging
-	Slot        int
-	ICCID       string
-	SimAuth     simauth.Provider
-	DPDInterval time.Duration
-	Logger      *diag.Logger
+	EPDGAddr       string // host:port (default port 500 or 4500 for NAT-T)
+	NATTAddr       string // optional explicit NAT-T port (default same host port 4500)
+	EAPIdentity    string // 0<IMSI>@nai.epc.mnc<MNC3>.mcc<MCC>.3gppnetwork.org or @wlan...
+	APN            string // usually "ims"
+	IMEI           string // 15-digit IMEI for 3GPP TS 24.302 DEVICE_IDENTITY (41101)
+	ProfileTag     string // non-PII diagnostic tag for NAI/APN profile logging
+	Slot           int
+	ICCID          string
+	SimAuth        simauth.Provider
+	DPDInterval    time.Duration
+	Logger         *diag.Logger
+	PreferIPv6     bool
+	ProxyTransport bool // Isolated proxy TUN may rewrite UDP reply source addresses.
 }
 
 // AuthRejectedError reports an ePDG IKE_AUTH rejection carrying RFC 7296 notify codes (e.g. 24).
@@ -63,9 +65,10 @@ func IsAuthFailed(err error) bool {
 
 // Client manages an active IKEv2 SA + userspace IPsec ESP Tunnel over NAT-T UDP.
 type Client struct {
-	cfg      SessionConfig
-	conn     *net.UDPConn
-	nattMode bool
+	cfg        SessionConfig
+	conn       *net.UDPConn
+	remoteAddr *net.UDPAddr
+	nattMode   bool
 
 	mu        sync.Mutex
 	spii      uint64
@@ -81,6 +84,7 @@ type Client struct {
 	deadOnce  sync.Once
 	lastRecv  atomic.Int64
 	lastSend  atomic.Int64
+	espErrors atomic.Uint32
 	wg        sync.WaitGroup
 }
 
@@ -98,7 +102,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("IKE_RESOLVE_EPDG: %w", err)
 	}
-	conn, err := net.DialUDP("udp4", nil, raddr)
+	conn, err := openUDP(raddr, cfg.ProxyTransport)
 	if err != nil {
 		return nil, fmt.Errorf("IKE_DIAL_UDP: %w", err)
 	}
@@ -107,13 +111,14 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 	_, _ = rand.Read(spib[:])
 	now := time.Now().UnixNano()
 	c := &Client{
-		cfg:      cfg,
-		conn:     conn,
-		nattMode: raddr.Port == 4500,
-		spii:     binary.BigEndian.Uint64(spib[:]),
-		pending:  make(map[uint32]chan []byte),
-		stopCh:   make(chan struct{}),
-		deadCh:   make(chan struct{}),
+		cfg:        cfg,
+		conn:       conn,
+		remoteAddr: raddr,
+		nattMode:   raddr.Port == 4500,
+		spii:       binary.BigEndian.Uint64(spib[:]),
+		pending:    make(map[uint32]chan []byte),
+		stopCh:     make(chan struct{}),
+		deadCh:     make(chan struct{}),
 	}
 	c.lastRecv.Store(now)
 	c.lastSend.Store(now)
@@ -134,6 +139,28 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 	return c, nil
 }
 
+func openUDP(remote *net.UDPAddr, proxy bool) (*net.UDPConn, error) {
+	if !proxy {
+		return net.DialUDP("udp4", nil, remote)
+	}
+	// Select the route's local address, but leave the receiving socket unconnected.
+	// Some UDP proxy relays return their own endpoint as the packet source.
+	route, err := net.DialUDP("udp4", nil, remote)
+	if err != nil {
+		return nil, err
+	}
+	ip := append(net.IP(nil), route.LocalAddr().(*net.UDPAddr).IP...)
+	_ = route.Close()
+	return net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+}
+
+func writeUDP(conn *net.UDPConn, remote *net.UDPAddr, packet []byte) (int, error) {
+	if conn.RemoteAddr() != nil {
+		return conn.Write(packet)
+	}
+	return conn.WriteToUDP(packet, remote)
+}
+
 func (c *Client) Tunnel() *ipsec.Tunnel { return c.tunnel }
 func (c *Client) Config() *CFGResult    { return c.cfgResult }
 func (c *Client) Dead() <-chan struct{} { return c.deadCh }
@@ -151,11 +178,12 @@ func (c *Client) SendESP(esp []byte) error {
 	c.mu.Lock()
 	closed := c.closed
 	conn := c.conn
+	remote := c.remoteAddr
 	c.mu.Unlock()
 	if closed || conn == nil {
 		return net.ErrClosed
 	}
-	_, err := conn.Write(esp)
+	_, err := writeUDP(conn, remote, esp)
 	if err == nil {
 		c.lastSend.Store(time.Now().UnixNano())
 	}
@@ -167,12 +195,13 @@ func (c *Client) sendNATKeepalive() {
 	closed := c.closed
 	natt := c.nattMode
 	conn := c.conn
+	remote := c.remoteAddr
 	c.mu.Unlock()
 	if closed || !natt || conn == nil {
 		return
 	}
 	// RFC 3948 §4: single 0xFF byte keeps NAT/proxy UDP mapping alive without touching IKE msgID.
-	if _, err := conn.Write([]byte{0xFF}); err == nil {
+	if _, err := writeUDP(conn, remote, []byte{0xFF}); err == nil {
 		c.lastSend.Store(time.Now().UnixNano())
 	}
 }
@@ -181,14 +210,15 @@ func (c *Client) sendIKE(pkt []byte) error {
 	c.mu.Lock()
 	natt := c.nattMode
 	conn := c.conn
+	remote := c.remoteAddr
 	c.mu.Unlock()
 	var err error
 	if natt {
 		framed := make([]byte, 4+len(pkt))
 		copy(framed[4:], pkt)
-		_, err = conn.Write(framed)
+		_, err = writeUDP(conn, remote, framed)
 	} else {
-		_, err = conn.Write(pkt)
+		_, err = writeUDP(conn, remote, pkt)
 	}
 	if err == nil {
 		c.lastSend.Store(time.Now().UnixNano())
@@ -246,19 +276,23 @@ func (c *Client) readLoop(conn *net.UDPConn) {
 		if n < 4 {
 			continue
 		}
-		c.lastRecv.Store(time.Now().UnixNano())
 		data := make([]byte, n)
 		copy(data, buf[:n])
 
 		c.mu.Lock()
 		natt := c.nattMode
 		tun := c.tunnel
+		spir := c.spir
 		c.mu.Unlock()
 
 		// NAT-T demux (RFC 3948): 4 zero bytes = IKE packet; non-zero SPI = ESP packet.
 		if natt && binary.BigEndian.Uint32(data[0:4]) != 0 {
 			if tun != nil {
-				_ = tun.HandleESP(data)
+				if err := tun.HandleESP(data); err == nil {
+					c.lastRecv.Store(time.Now().UnixNano())
+				} else if c.cfg.Logger != nil && c.espErrors.Add(1) <= 8 {
+					c.cfg.Logger.Warn("ipsec", "ESP receive rejected: "+err.Error(), nil)
+				}
 			}
 			continue
 		}
@@ -268,6 +302,15 @@ func (c *Client) readLoop(conn *net.UDPConn) {
 		if len(data) < 28 {
 			continue
 		}
+		// A proxy source address is not an IKE identity. Correlate both SPIs before
+		// accepting a packet; encrypted exchanges still require integrity and AUTH.
+		if binary.BigEndian.Uint64(data[:8]) != c.spii || (spir != 0 && binary.BigEndian.Uint64(data[8:16]) != spir) {
+			continue
+		}
+		if data[17] != Version20 || int(binary.BigEndian.Uint32(data[24:28])) != len(data) {
+			continue
+		}
+		c.lastRecv.Store(time.Now().UnixNano())
 		c.traceIKE("in", data, 0)
 		msgID := binary.BigEndian.Uint32(data[20:24])
 		flags := data[19]
@@ -334,7 +377,7 @@ func (c *Client) handshake(ctx context.Context) error {
 		_, _ = rand.Read(ni)
 
 		natSrc := natHash(c.spii, 0, c.conn.LocalAddr().(*net.UDPAddr))
-		natDst := natHash(c.spii, 0, c.conn.RemoteAddr().(*net.UDPAddr))
+		natDst := natHash(c.spii, 0, c.remoteAddr)
 		initPayloads := make([]Payload, 0, 6)
 		if len(cookie) > 0 {
 			initPayloads = append(initPayloads, Payload{Type: PayloadNotify, Body: buildNotify(16390, cookie)})
@@ -390,7 +433,9 @@ func (c *Client) handshake(ctx context.Context) error {
 		return fmt.Errorf("IKE_SA_INIT_REJECTED_NOTIFIES_%v", notifies)
 	}
 
+	c.mu.Lock()
 	c.spir = respHdr.SPIr
+	c.mu.Unlock()
 	saRespP := FindPayload(respPayloads, PayloadSA)
 	keP := FindPayload(respPayloads, PayloadKE)
 	nrP := FindPayload(respPayloads, PayloadNonce)
@@ -417,10 +462,11 @@ func (c *Client) handshake(ctx context.Context) error {
 	// Switch to UDP 4500 NAT-T if configured or responder sent NAT notifications while on port 500.
 	if !c.nattMode && c.cfg.NATTAddr != "" {
 		if nattAddr, err := net.ResolveUDPAddr("udp4", c.cfg.NATTAddr); err == nil {
-			if nattConn, err := net.DialUDP("udp4", nil, nattAddr); err == nil {
+			if nattConn, err := openUDP(nattAddr, c.cfg.ProxyTransport); err == nil {
 				c.mu.Lock()
 				old := c.conn
 				c.conn = nattConn
+				c.remoteAddr = nattAddr
 				c.nattMode = true
 				c.mu.Unlock()
 				_ = old.Close()
@@ -445,10 +491,10 @@ func (c *Client) handshake(ctx context.Context) error {
 		{Type: PayloadNotify, Body: buildNotify(16417, nil)},
 		{Type: PayloadNotify, Body: buildNotify(NotifyInitialContact, nil)},
 		{Type: PayloadIDr, Body: idrBody},
-		{Type: PayloadCP, Body: BuildCFGRequest()},
+		{Type: PayloadCP, Body: BuildCFGRequestForFamily(c.cfg.PreferIPv6)},
 		{Type: PayloadSA, Body: BuildMultiChildESPProposal(localChildSPI)},
-		{Type: PayloadTSi, Body: BuildTSAllIPv4()},
-		{Type: PayloadTSr, Body: BuildTSAllIPv4()},
+		{Type: PayloadTSi, Body: BuildTSAll(c.cfg.PreferIPv6)},
+		{Type: PayloadTSr, Body: BuildTSAll(c.cfg.PreferIPv6)},
 		{Type: PayloadNotify, Body: buildNotify(NotifyMOBIKESupported, nil)},
 	}
 	c.msgID = 1

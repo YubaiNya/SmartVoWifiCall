@@ -19,13 +19,14 @@ type HeaderKV struct {
 
 // Message represents a parsed RFC 3261 SIP request or response.
 type Message struct {
-	IsResponse bool
-	Method     string
-	RequestURI string
-	StatusCode int
-	Reason     string
-	Headers    []HeaderKV
-	Body       []byte
+	IsResponse     bool
+	Method         string
+	RequestURI     string
+	StatusCode     int
+	Reason         string
+	Headers        []HeaderKV
+	Body           []byte
+	CompactHeaders bool
 }
 
 func (m *Message) AddHeader(name, value string) {
@@ -84,6 +85,8 @@ func compactName(lower string) string {
 		return "c"
 	case "content-length":
 		return "l"
+	case "supported":
+		return "k"
 	default:
 		return ""
 	}
@@ -101,10 +104,20 @@ func (m *Message) Encode() []byte {
 		if strings.EqualFold(h.Name, "Content-Length") || strings.EqualFold(h.Name, "l") {
 			hasCL = true
 		}
-		fmt.Fprintf(&buf, "%s: %s\r\n", h.Name, h.Value)
+		name := h.Name
+		if m.CompactHeaders {
+			if short := compactName(strings.ToLower(name)); short != "" {
+				name = short
+			}
+		}
+		fmt.Fprintf(&buf, "%s: %s\r\n", name, h.Value)
 	}
 	if !hasCL {
-		fmt.Fprintf(&buf, "Content-Length: %d\r\n", len(m.Body))
+		name := "Content-Length"
+		if m.CompactHeaders {
+			name = "l"
+		}
+		fmt.Fprintf(&buf, "%s: %d\r\n", name, len(m.Body))
 	}
 	buf.WriteString("\r\n")
 	buf.Write(m.Body)

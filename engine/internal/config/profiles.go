@@ -8,9 +8,12 @@ type CarrierHint struct {
 	StrictHomeIP    bool
 	EPDGFQDN        string
 	PreferWLANRealm bool
+	PreferIPv6      bool // IMS PDN family, independent of the outer ePDG transport.
+	RequireIMSIPSec bool
 }
 
 var builtInCarrierHints = map[string]CarrierHint{
+	"23433":  {PLMN: "23433", Name: "CTExcel/EE UK", Region: "UK", StrictHomeIP: true, PreferIPv6: true, RequireIMSIPSec: true},
 	"45403":  {PLMN: "45403", Name: "3HK", Region: "HK", StrictHomeIP: true, EPDGFQDN: "wlan.three.com.hk", PreferWLANRealm: true},
 	"45400":  {PLMN: "45400", Name: "CSL/ClubSIM", Region: "HK", StrictHomeIP: true, EPDGFQDN: "epdg.epc.mnc000.mcc454.pub.3gppnetwork.org"},
 	"45419":  {PLMN: "45419", Name: "CSL/ClubSIM", Region: "HK", StrictHomeIP: true, EPDGFQDN: "epdg.epc.mnc019.mcc454.pub.3gppnetwork.org"},

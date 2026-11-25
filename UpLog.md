@@ -4,6 +4,14 @@
 
 ---
 
+## v0.6.3-dev — 2026-11-26（本地验证版，尚未发布）
+
+- 修复内置代理改写 UDP 回包来源后被连接式 socket 丢弃的问题；保留 SPI、完整性和对端 AUTH 校验。
+- 补齐 CTExcel 的 IPv6 IMS 隧道、SIP 地址处理和 `ipsec-3gpp` 安全协商。
+- 用 SIP 标准短头和精简的 REGISTER 避免双层 ESP 封装后超过代理 TUN MTU；补充安全协商日志及 IPv6 脱敏。
+- 小米 15 + CTExcel + 现有英国节点已实测 EAP、最终 AUTH 和 IMS REGISTER 200，应用显示已注册。未测试真实电话和短信，不能据此认定 POCO F3 / giffgaff 已修复。
+- [根因、修复与验证记录](service/docs/CTEXCEL_VALIDATION.md)。应用和模块 versionCode=23。
+
 ## v0.6.2-dev — 2026-11-26
 
 应用与模块 versionCode=22。本版修复已复现的 IKE/EAP 认证流程问题，并加入认证包诊断与遥测 v3。

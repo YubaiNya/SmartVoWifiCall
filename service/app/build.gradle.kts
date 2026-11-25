@@ -15,8 +15,8 @@ android {
         applicationId = "com.smartvowificall.ims"
         minSdk = 33
         targetSdk = 37
-        versionCode = 22
-        versionName = "0.6.2-dev"
+        versionCode = 23
+        versionName = "0.6.3-dev"
     }
 
     signingConfigs {

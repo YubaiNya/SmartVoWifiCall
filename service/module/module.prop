@@ -1,6 +1,6 @@
 id=smartvowificall
 name=SmartVoWifiCall Independent IMS
-version=0.6.2-dev
-versionCode=22
+version=0.6.3-dev
+versionCode=23
 author=YubaiNya
 description=Standalone dual-SIM IMS service with self-owned pure-Go VoWiFi engine, per-slot toggles (all SIMs unlocked), dual isolated built-in Clash cores (wfctun0/wfctun1), cross-baseband SIM AKA, resident Root daemon, and Android 14-17 support.

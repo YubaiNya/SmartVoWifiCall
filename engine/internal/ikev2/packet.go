@@ -15,10 +15,10 @@ import (
 const (
 	Version20 = 0x20
 
-	ExchangeIKESAInit      = 34
-	ExchangeIKEAuth        = 35
-	ExchangeCreateChildSA  = 36
-	ExchangeInformational  = 37
+	ExchangeIKESAInit     = 34
+	ExchangeIKEAuth       = 35
+	ExchangeCreateChildSA = 36
+	ExchangeInformational = 37
 
 	FlagInitiator = 0x08
 	FlagResponse  = 0x20
@@ -51,11 +51,12 @@ const (
 	CFGRequest byte = 1
 	CFGReply   byte = 2
 
-	AttrInternalIP4Addr  uint16 = 1
-	AttrInternalIP4DNS   uint16 = 3
-	AttrInternalIP6Addr  uint16 = 8
-	AttrPCSCFIP4Addr     uint16 = 20 // 3GPP TS 24.302
-	AttrPCSCFIP6Addr     uint16 = 21
+	AttrInternalIP4Addr uint16 = 1
+	AttrInternalIP4DNS  uint16 = 3
+	AttrInternalIP6Addr uint16 = 8
+	AttrInternalIP6DNS  uint16 = 10
+	AttrPCSCFIP4Addr    uint16 = 20 // 3GPP TS 24.302
+	AttrPCSCFIP6Addr    uint16 = 21
 
 	EAPCodeRequest  byte = 1
 	EAPCodeResponse byte = 2
@@ -65,18 +66,18 @@ const (
 	EAPTypeAKA      byte = 23
 	EAPTypeAKAPrime byte = 50
 
-	AKAChallenge       byte = 1
-	AKASyncFailure     byte = 4
-	AKAAuthReject      byte = 2
-	AKAClientError     byte = 14
-	ATANotification    byte = 12
-	ATRand             byte = 1
-	ATAutn             byte = 2
-	ATRes              byte = 3
-	ATAuts             byte = 4
-	ATMac              byte = 11
-	ATKdfInput         byte = 23
-	ATKdf              byte = 24
+	AKAChallenge    byte = 1
+	AKASyncFailure  byte = 4
+	AKAAuthReject   byte = 2
+	AKAClientError  byte = 14
+	ATANotification byte = 12
+	ATRand          byte = 1
+	ATAutn          byte = 2
+	ATRes           byte = 3
+	ATAuts          byte = 4
+	ATMac           byte = 11
+	ATKdfInput      byte = 23
+	ATKdf           byte = 24
 )
 
 type Header struct {
@@ -544,10 +545,32 @@ func BuildTSAllIPv4() []byte {
 	return out
 }
 
+func BuildTSAll(ipv6 bool) []byte {
+	if !ipv6 {
+		return BuildTSAllIPv4()
+	}
+	out := make([]byte, 44)
+	out[0], out[4] = 1, 8
+	binary.BigEndian.PutUint16(out[6:8], 40)
+	binary.BigEndian.PutUint16(out[10:12], 65535)
+	for i := 28; i < 44; i++ {
+		out[i] = 255
+	}
+	return out
+}
+
 func BuildCFGRequest() []byte {
+	return BuildCFGRequestForFamily(false)
+}
+
+func BuildCFGRequestForFamily(ipv6 bool) []byte {
 	var buf bytes.Buffer
 	buf.Write([]byte{CFGRequest, 0, 0, 0})
-	for _, attr := range []uint16{AttrInternalIP4Addr, AttrInternalIP4DNS, AttrPCSCFIP4Addr} {
+	attrs := []uint16{AttrInternalIP4Addr, AttrInternalIP4DNS, AttrPCSCFIP4Addr}
+	if ipv6 {
+		attrs = []uint16{AttrInternalIP6Addr, AttrInternalIP6DNS, AttrPCSCFIP6Addr}
+	}
+	for _, attr := range attrs {
 		var a [4]byte
 		binary.BigEndian.PutUint16(a[0:2], attr)
 		binary.BigEndian.PutUint16(a[2:4], 0)
@@ -573,7 +596,7 @@ func ParseCFGReply(body []byte) (*CFGResult, error) {
 		alen := int(binary.BigEndian.Uint16(body[off+2 : off+4]))
 		off += 4
 		if off+alen > len(body) {
-			break
+			return nil, errors.New("IKE_CFG_ATTRIBUTE_TRUNCATED")
 		}
 		val := body[off : off+alen]
 		off += alen
@@ -588,6 +611,35 @@ func ParseCFGReply(body []byte) (*CFGResult, error) {
 				res.PCSCF = append(res.PCSCF, ip)
 			}
 		}
+		if atype == AttrInternalIP6Addr {
+			if alen != 17 || val[16] > 128 {
+				return nil, errors.New("IKE_CFG_IPV6_ADDRESS_INVALID")
+			}
+			res.LocalIP = append(net.IP(nil), val[:16]...)
+		}
+		if atype == AttrInternalIP6DNS || atype == AttrPCSCFIP6Addr {
+			if alen != 16 {
+				return nil, errors.New("IKE_CFG_IPV6_SERVER_INVALID")
+			}
+			ip := append(net.IP(nil), val...)
+			if atype == AttrInternalIP6DNS {
+				res.DNS = append(res.DNS, ip)
+			} else {
+				res.PCSCF = append(res.PCSCF, ip)
+			}
+		}
+	}
+	if off != len(body) {
+		return nil, errors.New("IKE_CFG_ATTRIBUTE_TRUNCATED")
+	}
+	if res.LocalIP != nil {
+		matched := res.PCSCF[:0]
+		for _, ip := range res.PCSCF {
+			if (ip.To4() == nil) == (res.LocalIP.To4() == nil) {
+				matched = append(matched, ip)
+			}
+		}
+		res.PCSCF = matched
 	}
 	return res, nil
 }

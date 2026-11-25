@@ -216,7 +216,7 @@ func StartSession(tunnel *ipsec.Tunnel, localPort uint16, remoteIP net.IP, remot
 	_, _ = rand.Read(sb[:])
 	s := &Session{
 		sock:       sock,
-		remoteIP:   remoteIP.To4(),
+		remoteIP:   append(net.IP(nil), remoteIP...),
 		remotePort: remotePort,
 		codec:      codec,
 		dtmfPT:     dtmfPT,

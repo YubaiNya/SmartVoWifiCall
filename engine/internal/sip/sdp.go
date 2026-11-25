@@ -28,9 +28,13 @@ func BuildSDP(o MediaOffer) []byte {
 	ip := o.LocalIP.String()
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "v=0\r\n")
-	fmt.Fprintf(&sb, "o=- %d %d IN IP4 %s\r\n", o.SessionID, o.SessionID, ip)
+	family := "IP4"
+	if o.LocalIP.To4() == nil {
+		family = "IP6"
+	}
+	fmt.Fprintf(&sb, "o=- %d %d IN %s %s\r\n", o.SessionID, o.SessionID, family, ip)
 	fmt.Fprintf(&sb, "s=SmartVoWifiCall\r\n")
-	fmt.Fprintf(&sb, "c=IN IP4 %s\r\n", ip)
+	fmt.Fprintf(&sb, "c=IN %s %s\r\n", family, ip)
 	fmt.Fprintf(&sb, "t=0 0\r\n")
 	if o.IncludeAMR {
 		fmt.Fprintf(&sb, "m=audio %d RTP/AVP 104 97 0 8 101\r\n", o.LocalPort)
@@ -66,13 +70,13 @@ func ParseSDP(raw []byte) (*MediaAnswer, error) {
 	text := strings.ReplaceAll(string(raw), "\r\n", "\n")
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "c=IN IP4 ") {
-			ipStr := strings.TrimSpace(strings.TrimPrefix(line, "c=IN IP4 "))
+		if strings.HasPrefix(line, "c=IN IP4 ") || strings.HasPrefix(line, "c=IN IP6 ") {
+			ipStr := strings.TrimSpace(line[len("c=IN IP4 "):])
 			if slash := strings.IndexByte(ipStr, '/'); slash > 0 {
 				ipStr = ipStr[:slash]
 			}
 			if ip := net.ParseIP(ipStr); ip != nil {
-				ans.RemoteIP = ip.To4()
+				ans.RemoteIP = ip
 			}
 		} else if strings.HasPrefix(line, "m=audio ") {
 			inAudio = true

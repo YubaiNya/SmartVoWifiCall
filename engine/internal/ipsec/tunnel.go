@@ -86,39 +86,46 @@ func (osTimeoutErr) Error() string   { return "i/o timeout" }
 func (osTimeoutErr) Timeout() bool   { return true }
 func (osTimeoutErr) Temporary() bool { return true }
 
-// Tunnel is a pure-userspace IPsec ESP data plane carrying inner IPv4 UDP & TCP streams with zero kernel XFRM.
+// Tunnel carries inner IPv4 or IPv6 UDP/TCP over userspace ESP.
 type Tunnel struct {
-	mu         sync.RWMutex
-	localIP    net.IP
-	outSA      *SA
-	inSA       *SA
-	transport  PacketTransport
-	udpPorts   map[uint16]*UDPSocket
-	tcpConns   map[tcpKey]*VirtualTCPConn
-	nextPort   uint16
-	ipID       atomic.Uint32
-	closed     atomic.Bool
+	mu          sync.RWMutex
+	localIP     net.IP
+	outSA       *SA
+	inSA        *SA
+	transport   PacketTransport
+	udpPorts    map[uint16]*UDPSocket
+	udpSecurity map[uint16]*UDPProtection
+	inSecurity  map[uint32]*UDPProtection
+	tcpConns    map[tcpKey]*VirtualTCPConn
+	nextPort    uint16
+	ipID        atomic.Uint32
+	closed      atomic.Bool
 }
 
 type tcpKey struct {
 	localPort  uint16
 	remotePort uint16
-	remoteIP   [4]byte
+	remoteIP   [16]byte
 }
 
 func NewTunnel(localIP net.IP, outSA, inSA *SA, transport PacketTransport) (*Tunnel, error) {
-	v4 := localIP.To4()
-	if v4 == nil {
-		return nil, errors.New("TUNNEL_IPV4_REQUIRED")
+	ip := localIP.To16()
+	if v4 := localIP.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip == nil {
+		return nil, errors.New("TUNNEL_IP_REQUIRED")
 	}
 	return &Tunnel{
-		localIP:   append(net.IP(nil), v4...),
-		outSA:     outSA,
-		inSA:      inSA,
-		transport: transport,
-		udpPorts:  make(map[uint16]*UDPSocket),
-		tcpConns:  make(map[tcpKey]*VirtualTCPConn),
-		nextPort:  32000,
+		localIP:     append(net.IP(nil), ip...),
+		outSA:       outSA,
+		inSA:        inSA,
+		transport:   transport,
+		udpPorts:    make(map[uint16]*UDPSocket),
+		udpSecurity: make(map[uint16]*UDPProtection),
+		inSecurity:  make(map[uint32]*UDPProtection),
+		tcpConns:    make(map[tcpKey]*VirtualTCPConn),
+		nextPort:    32000,
 	}, nil
 }
 
@@ -173,9 +180,8 @@ func (t *Tunnel) unbindUDP(port uint16) {
 }
 
 func (t *Tunnel) SendUDP(srcPort uint16, dstIP net.IP, dstPort uint16, payload []byte) error {
-	v4 := dstIP.To4()
-	if v4 == nil {
-		return errors.New("TUNNEL_DST_IPV4_REQUIRED")
+	if dstIP.To16() == nil || (dstIP.To4() == nil) != (t.localIP.To4() == nil) {
+		return errors.New("TUNNEL_ADDRESS_FAMILY_MISMATCH")
 	}
 	udpLen := 8 + len(payload)
 	udp := make([]byte, udpLen)
@@ -188,11 +194,28 @@ func (t *Tunnel) SendUDP(srcPort uint16, dstIP net.IP, dstPort uint16, payload [
 	srcIP := t.localIP
 	outSA := t.outSA
 	tr := t.transport
+	security := t.udpSecurity[srcPort]
 	t.mu.RUnlock()
 
-	binary.BigEndian.PutUint16(udp[6:8], transportChecksum(srcIP, v4, ProtoUDP, udp))
-	ipPkt := buildIPv4(srcIP, v4, ProtoUDP, uint16(t.ipID.Add(1)), udp)
-	esp, err := outSA.Encrypt(4, ipPkt)
+	checksum := transportChecksum(srcIP, dstIP, ProtoUDP, udp)
+	if checksum == 0 {
+		checksum = 0xffff
+	}
+	binary.BigEndian.PutUint16(udp[6:8], checksum)
+	proto := byte(ProtoUDP)
+	if security != nil {
+		if !security.PeerIP.Equal(dstIP) || security.RemotePort != dstPort {
+			return errors.New("IMS_ESP_SELECTOR_MISMATCH")
+		}
+		var err error
+		udp, err = security.Out.Encrypt(ProtoUDP, udp)
+		if err != nil {
+			return err
+		}
+		proto = 50
+	}
+	ipPkt, nextHeader := buildIP(srcIP, dstIP, proto, uint16(t.ipID.Add(1)), udp)
+	esp, err := outSA.Encrypt(nextHeader, ipPkt)
 	if err != nil {
 		return err
 	}
@@ -200,9 +223,8 @@ func (t *Tunnel) SendUDP(srcPort uint16, dstIP net.IP, dstPort uint16, payload [
 }
 
 func (t *Tunnel) sendTCP(srcPort uint16, dstIP net.IP, dstPort uint16, seq, ack uint32, flags byte, window uint16, payload []byte) error {
-	v4 := dstIP.To4()
-	if v4 == nil {
-		return errors.New("TUNNEL_DST_IPV4_REQUIRED")
+	if dstIP.To16() == nil || (dstIP.To4() == nil) != (t.localIP.To4() == nil) {
+		return errors.New("TUNNEL_ADDRESS_FAMILY_MISMATCH")
 	}
 	seg := make([]byte, 20+len(payload))
 	binary.BigEndian.PutUint16(seg[0:2], srcPort)
@@ -220,16 +242,16 @@ func (t *Tunnel) sendTCP(srcPort uint16, dstIP net.IP, dstPort uint16, seq, ack 
 	tr := t.transport
 	t.mu.RUnlock()
 
-	binary.BigEndian.PutUint16(seg[16:18], transportChecksum(srcIP, v4, ProtoTCP, seg))
-	ipPkt := buildIPv4(srcIP, v4, ProtoTCP, uint16(t.ipID.Add(1)), seg)
-	esp, err := outSA.Encrypt(4, ipPkt)
+	binary.BigEndian.PutUint16(seg[16:18], transportChecksum(srcIP, dstIP, ProtoTCP, seg))
+	ipPkt, nextHeader := buildIP(srcIP, dstIP, ProtoTCP, uint16(t.ipID.Add(1)), seg)
+	esp, err := outSA.Encrypt(nextHeader, ipPkt)
 	if err != nil {
 		return err
 	}
 	return tr.SendESP(esp)
 }
 
-// HandleESP decrypts an incoming ESP packet and demultiplexes its inner IPv4 UDP/TCP payload.
+// HandleESP decrypts an incoming ESP packet and demultiplexes its inner UDP/TCP payload.
 func (t *Tunnel) HandleESP(esp []byte) error {
 	t.mu.RLock()
 	inSA := t.inSA
@@ -241,17 +263,47 @@ func (t *Tunnel) HandleESP(esp []byte) error {
 	if err != nil {
 		return err
 	}
-	if nextHdr != 4 || len(inner) < 20 {
-		return nil // ignore non-IPv4 for now
-	}
-	ihl := int(inner[0]&0x0F) * 4
-	if ihl < 20 || len(inner) < ihl {
+	var proto byte
+	var srcIP, dstIP net.IP
+	var body []byte
+	if nextHdr == 4 && len(inner) >= 20 && inner[0]>>4 == 4 {
+		ihl := int(inner[0]&15) * 4
+		total := int(binary.BigEndian.Uint16(inner[2:4]))
+		if ihl < 20 || total < ihl || total > len(inner) {
+			return nil
+		}
+		proto, srcIP, dstIP, body = inner[9], net.IP(inner[12:16]), net.IP(inner[16:20]), inner[ihl:total]
+	} else if nextHdr == 41 && len(inner) >= 40 && inner[0]>>4 == 6 {
+		total := 40 + int(binary.BigEndian.Uint16(inner[4:6]))
+		if total > len(inner) {
+			return nil
+		}
+		proto, srcIP, dstIP, body = inner[6], net.IP(inner[8:24]), net.IP(inner[24:40]), inner[40:total]
+	} else {
 		return nil
 	}
-	proto := inner[9]
-	srcIP := make(net.IP, 4)
-	copy(srcIP, inner[12:16])
-	body := inner[ihl:]
+	if !dstIP.Equal(t.localIP) {
+		return nil
+	}
+	var protection *UDPProtection
+	if proto == 50 {
+		if len(body) < 8 {
+			return errors.New("IMS_ESP_SHORT")
+		}
+		t.mu.RLock()
+		protection = t.inSecurity[binary.BigEndian.Uint32(body[:4])]
+		t.mu.RUnlock()
+		if protection == nil || !protection.PeerIP.Equal(srcIP) {
+			return errors.New("IMS_ESP_UNKNOWN_SA")
+		}
+		proto, body, err = protection.In.Decrypt(body)
+		if err != nil {
+			return err
+		}
+		if proto != ProtoUDP {
+			return errors.New("IMS_ESP_PROTOCOL_INVALID")
+		}
+	}
 
 	switch proto {
 	case ProtoUDP:
@@ -260,13 +312,24 @@ func (t *Tunnel) HandleESP(esp []byte) error {
 		}
 		srcPort := binary.BigEndian.Uint16(body[0:2])
 		dstPort := binary.BigEndian.Uint16(body[2:4])
+		if protection != nil && (dstPort != protection.LocalPort || srcPort != protection.RemotePort) {
+			return errors.New("IMS_ESP_SELECTOR_MISMATCH")
+		}
+		t.mu.RLock()
+		required := t.udpSecurity[dstPort]
+		t.mu.RUnlock()
+		if required != nil && (protection != required || srcPort != required.RemotePort) {
+			return errors.New("IMS_ESP_REQUIRED")
+		}
 		ulen := int(binary.BigEndian.Uint16(body[4:6]))
 		if ulen < 8 || ulen > len(body) {
 			return nil
 		}
+		if nextHdr == 41 && (binary.BigEndian.Uint16(body[6:8]) == 0 || transportChecksum(srcIP, dstIP, ProtoUDP, body[:ulen]) != 0) {
+			return errors.New("TUNNEL_UDP6_CHECKSUM_INVALID")
+		}
 		t.mu.RLock()
 		sock := t.udpPorts[dstPort]
-		t.mu.RUnlock()
 		if sock != nil && !sock.closed.Load() {
 			cp := make([]byte, ulen-8)
 			copy(cp, body[8:ulen])
@@ -275,14 +338,15 @@ func (t *Tunnel) HandleESP(esp []byte) error {
 			default:
 			}
 		}
+		t.mu.RUnlock()
 	case ProtoTCP:
 		if len(body) < 20 {
 			return nil
 		}
 		srcPort := binary.BigEndian.Uint16(body[0:2])
 		dstPort := binary.BigEndian.Uint16(body[2:4])
-		var rip [4]byte
-		copy(rip[:], srcIP)
+		var rip [16]byte
+		copy(rip[:], srcIP.To16())
 		key := tcpKey{localPort: dstPort, remotePort: srcPort, remoteIP: rip}
 		t.mu.RLock()
 		conn := t.tcpConns[key]
@@ -320,12 +384,12 @@ const (
 )
 
 func (t *Tunnel) DialTCP(remoteIP net.IP, remotePort uint16, timeout time.Duration) (*VirtualTCPConn, error) {
-	v4 := remoteIP.To4()
-	if v4 == nil {
-		return nil, errors.New("TCP_IPV4_REQUIRED")
+	ip := remoteIP.To16()
+	if ip == nil || (remoteIP.To4() == nil) != (t.localIP.To4() == nil) {
+		return nil, errors.New("TCP_ADDRESS_FAMILY_MISMATCH")
 	}
-	var rip [4]byte
-	copy(rip[:], v4)
+	var rip [16]byte
+	copy(rip[:], ip)
 	var isnb [4]byte
 	_, _ = rand.Read(isnb[:])
 	isn := binary.BigEndian.Uint32(isnb[:])
@@ -340,7 +404,7 @@ func (t *Tunnel) DialTCP(remoteIP net.IP, remotePort uint16, timeout time.Durati
 	c := &VirtualTCPConn{
 		tunnel:     t,
 		key:        key,
-		remoteIP:   append(net.IP(nil), v4...),
+		remoteIP:   append(net.IP(nil), ip...),
 		localPort:  localPort,
 		remotePort: remotePort,
 		sndNxt:     isn,
@@ -350,7 +414,7 @@ func (t *Tunnel) DialTCP(remoteIP net.IP, remotePort uint16, timeout time.Durati
 	t.tcpConns[key] = c
 	t.mu.Unlock()
 
-	if err := t.sendTCP(localPort, v4, remotePort, isn, 0, tcpSYN, 65535, nil); err != nil {
+	if err := t.sendTCP(localPort, ip, remotePort, isn, 0, tcpSYN, 65535, nil); err != nil {
 		_ = c.Close()
 		return nil, err
 	}
@@ -507,6 +571,19 @@ func buildIPv4(src, dst net.IP, proto byte, id uint16, payload []byte) []byte {
 	return pkt
 }
 
+func buildIP(src, dst net.IP, proto byte, id uint16, payload []byte) ([]byte, byte) {
+	if src.To4() != nil {
+		return buildIPv4(src, dst, proto, id, payload), 4
+	}
+	pkt := make([]byte, 40+len(payload))
+	pkt[0], pkt[6], pkt[7] = 0x60, proto, 64
+	binary.BigEndian.PutUint16(pkt[4:6], uint16(len(payload)))
+	copy(pkt[8:24], src.To16())
+	copy(pkt[24:40], dst.To16())
+	copy(pkt[40:], payload)
+	return pkt, 41
+}
+
 func ipChecksum(data []byte) uint16 {
 	var sum uint32
 	for i := 0; i+1 < len(data); i += 2 {
@@ -523,9 +600,13 @@ func ipChecksum(data []byte) uint16 {
 
 func transportChecksum(src, dst net.IP, proto byte, seg []byte) uint16 {
 	var sum uint32
-	s4, d4 := src.To4(), dst.To4()
-	sum += uint32(binary.BigEndian.Uint16(s4[0:2])) + uint32(binary.BigEndian.Uint16(s4[2:4]))
-	sum += uint32(binary.BigEndian.Uint16(d4[0:2])) + uint32(binary.BigEndian.Uint16(d4[2:4]))
+	saddr, daddr := src.To4(), dst.To4()
+	if saddr == nil {
+		saddr, daddr = src.To16(), dst.To16()
+	}
+	for i := 0; i < len(saddr); i += 2 {
+		sum += uint32(binary.BigEndian.Uint16(saddr[i:i+2])) + uint32(binary.BigEndian.Uint16(daddr[i:i+2]))
+	}
 	sum += uint32(proto) + uint32(len(seg))
 	for i := 0; i+1 < len(seg); i += 2 {
 		sum += uint32(binary.BigEndian.Uint16(seg[i : i+2]))

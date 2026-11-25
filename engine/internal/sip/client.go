@@ -32,6 +32,7 @@ type ClientConfig struct {
 	SMSC         string
 	SimAuth      simauth.Provider
 	IncludeAMR   bool
+	RequireIPSec bool
 	Logger       *diag.Logger
 	OnEvent      func(name string, data map[string]any)
 	OnMediaStart func(callID string, localRTPPort uint16, remote *MediaAnswer)
@@ -63,11 +64,13 @@ type callDialog struct {
 // Client implements IMS SIP REGISTER (with AKA Digest + AUTS resync), INVITE/PRACK/BYE/CANCEL calls,
 // and 3GPP SIP MESSAGE SMS-over-IP over the userspace IPsec ESP tunnel.
 type Client struct {
-	cfg      ClientConfig
-	sock     *ipsec.UDPSocket
-	localIP  net.IP
-	pcscf    net.IP
-	pcscfPrt uint16
+	cfg           ClientConfig
+	sock          *ipsec.UDPSocket
+	localIP       net.IP
+	pcscf         net.IP
+	pcscfPrt      uint16
+	security      *imsSecurity
+	protectedPort atomic.Uint32
 
 	mu            sync.Mutex
 	registered    bool
@@ -105,15 +108,24 @@ func NewClient(cfg ClientConfig) (*Client, error) {
 		cfg:       cfg,
 		sock:      sock,
 		localIP:   cfg.Tunnel.LocalIP(),
-		pcscf:     cfg.PCSCF.To4(),
+		pcscf:     append(net.IP(nil), cfg.PCSCF...),
 		pcscfPrt:  cfg.PCSCFPort,
 		regState:  "IDLE",
-		regCallID: randHex(12) + "@" + cfg.Tunnel.LocalIP().String(),
+		regCallID: randHex(16),
 		epoch:     "ep-" + randHex(6),
 		pendingTx: make(map[string]chan *Message),
 		stopCh:    make(chan struct{}),
 	}
 	c.cseq.Store(1)
+	if cfg.RequireIPSec {
+		if err := c.prepareSecurity(); err != nil {
+			sock.Close()
+			return nil, err
+		}
+		c.wg.Add(2)
+		go c.rxLoopSocket(c.security.client)
+		go c.rxLoopSocket(c.security.server)
+	}
 	c.wg.Add(1)
 	go c.rxLoop()
 	return c, nil
@@ -159,16 +171,22 @@ func (c *Client) contactURI() string {
 	if at := strings.IndexByte(user, '@'); at > 0 {
 		user = user[:at]
 	}
-	return fmt.Sprintf("<sip:%s@%s:%d;transport=udp>", user, c.localIP.String(), c.sock.LocalPort())
+	return fmt.Sprintf("<sip:%s@%s;transport=udp>", user, net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.contactPort()))))
 }
 
 // Register performs IMS SIP REGISTER with 401 AKA Digest authentication (including AUTS resync).
-func (c *Client) Register(ctx context.Context) error {
+func (c *Client) Register(ctx context.Context) (result error) {
+	defer func() {
+		if result != nil {
+			c.setRegState("DISCONNECTED", false)
+		}
+	}()
 	c.mu.Lock()
 	c.regState = "REGISTERING"
 	c.mu.Unlock()
 
 	authHeader := ""
+	fromTag := randHex(6)
 	expires := 600000 // 3GPP TS 24.229 §5.1.1.2.1 standard initial IMS registration interval
 	for attempt := 0; attempt < 5; attempt++ {
 		c.mu.Lock()
@@ -178,11 +196,10 @@ func (c *Client) Register(ctx context.Context) error {
 		c.mu.Unlock()
 
 		branch := "z9hG4bK" + randHex(8)
-		fromTag := randHex(6)
 		reqURI := "sip:" + c.cfg.IMSRealm
 
-		msg := &Message{Method: "REGISTER", RequestURI: reqURI}
-		msg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+		msg := &Message{Method: "REGISTER", RequestURI: reqURI, CompactHeaders: true}
+		msg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 		msg.AddHeader("Max-Forwards", "70")
 		msg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, fromTag))
 		msg.AddHeader("To", fmt.Sprintf("<%s>", c.cfg.IMPU))
@@ -190,13 +207,18 @@ func (c *Client) Register(ctx context.Context) error {
 		msg.AddHeader("CSeq", fmt.Sprintf("%d REGISTER", cseq))
 		msg.AddHeader("Contact", c.contactURI()+";+g.3gpp.icsi-ref=\"urn%3Aurn-7%3A3gpp-service.ims.icsi.mmtel\";+g.3gpp.smsip")
 		msg.AddHeader("Expires", strconv.Itoa(expires))
-		msg.AddHeader("Allow", "INVITE, ACK, CANCEL, BYE, UPDATE, PRACK, MESSAGE, NOTIFY, REFER, OPTIONS")
-		msg.AddHeader("Supported", "path, gruu, sec-agree, 100rel")
-		msg.AddHeader("User-Agent", "SmartVoWifiCall-IMS/1.0")
+		// Keep UDP registration below the proxy TUN MTU after both ESP layers.
+		// RFC 3261 compact names preserve semantics; Allow/User-Agent are optional.
+		msg.AddHeader("Supported", "path, sec-agree")
+		if c.security != nil {
+			msg.AddHeader("Security-Client", c.securityOffer())
+			msg.AddHeader("Require", "sec-agree")
+			msg.AddHeader("Proxy-Require", "sec-agree")
+		}
 		if authHeader != "" {
 			msg.AddHeader("Authorization", authHeader)
 		} else {
-			msg.AddHeader("Authorization", fmt.Sprintf("Digest username=\"%s\", realm=\"%s\", nonce=\"\", uri=\"%s\", response=\"\"",
+			msg.AddHeader("Authorization", fmt.Sprintf("Digest username=\"%s\", realm=\"%s\", nonce=\"\", uri=\"%s\", response=\"\", algorithm=AKAv1-MD5",
 				c.cfg.IMPI, c.cfg.IMSRealm, reqURI))
 		}
 
@@ -206,6 +228,12 @@ func (c *Client) Register(ctx context.Context) error {
 			return fmt.Errorf("SIP_REGISTER_TX: %w", err)
 		}
 		if resp.StatusCode == 200 {
+			c.mu.Lock()
+			protected := c.security == nil || c.security.active
+			c.mu.Unlock()
+			if !protected {
+				return errors.New("SIP_SECURITY_NOT_ESTABLISHED")
+			}
 			c.mu.Lock()
 			c.registered = true
 			c.regState = "REGISTERED"
@@ -235,6 +263,9 @@ func (c *Client) Register(ctx context.Context) error {
 		if resp.StatusCode == 401 {
 			www := resp.GetHeader("WWW-Authenticate")
 			params := ParseDigestParams(www)
+			if algorithm := params["algorithm"]; algorithm != "" && !strings.EqualFold(algorithm, "AKAv1-MD5") && !strings.EqualFold(algorithm, "AKAv2-MD5") {
+				return errors.New("SIP_AUTH_ALGORITHM_UNSUPPORTED")
+			}
 			rand16, autn16, err := DecodeAKANonce(params["nonce"])
 			if err != nil {
 				c.setRegState("DISCONNECTED", false)
@@ -274,6 +305,9 @@ func (c *Client) Register(ctx context.Context) error {
 				authHeader = fmt.Sprintf("Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"%s\", response=\"\", algorithm=%s, auts=\"%s\"",
 					c.cfg.IMPI, realm, params["nonce"], reqURI, alg, autsB64)
 				continue
+			}
+			if err := c.acceptSecurity(resp, authResp.IK); err != nil {
+				return err
 			}
 			qop := ""
 			if strings.Contains(params["qop"], "auth") {
@@ -367,7 +401,7 @@ func (c *Client) Dial(ctx context.Context, recipient string) (map[string]any, er
 	})
 	fromURI := c.effectiveFromURI()
 	inv := &Message{Method: "INVITE", RequestURI: reqURI, Body: sdp}
-	inv.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	inv.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	inv.AddHeader("Max-Forwards", "70")
 	inv.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", fromURI, localTag))
 	inv.AddHeader("To", fmt.Sprintf("<%s>", reqURI))
@@ -614,7 +648,7 @@ func (c *Client) Hangup(ctx context.Context, callID string) (map[string]any, err
 	branch := "z9hG4bK" + randHex(8)
 	cseq := int(c.cseq.Add(1))
 	bye := &Message{Method: "BYE", RequestURI: target}
-	bye.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	bye.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	bye.AddHeader("Max-Forwards", "70")
 	bye.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", fromURI, dlg.localTag))
 	toHdr := fmt.Sprintf("<%s>", dlg.remoteURI)
@@ -649,7 +683,7 @@ func (c *Client) SendSMS(ctx context.Context, number, text string) (map[string]a
 	smsID := "sms-" + randHex(6)
 	reqURI := "sip:" + c.cfg.IMSRealm
 	msg := &Message{Method: "MESSAGE", RequestURI: reqURI, Body: body}
-	msg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	msg.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	msg.AddHeader("Max-Forwards", "70")
 	msg.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), randHex(6)))
 	msg.AddHeader("To", fmt.Sprintf("<%s>", reqURI))
@@ -671,11 +705,21 @@ func (c *Client) SendSMS(ctx context.Context, number, text string) (map[string]a
 }
 
 func (c *Client) rxLoop() {
+	c.rxLoopSocket(c.sock)
+}
+
+func (c *Client) rxLoopSocket(socket *ipsec.UDPSocket) {
 	defer c.wg.Done()
 	for {
-		pkt, err := c.sock.ReadFrom(time.Time{})
+		pkt, err := socket.ReadFrom(time.Time{})
 		if err != nil {
 			return
+		}
+		c.mu.Lock()
+		rejectPlain := c.security != nil && c.security.active && socket == c.sock
+		c.mu.Unlock()
+		if rejectPlain || !pkt.SrcIP.Equal(c.pcscf) {
+			continue
 		}
 		msg, err := ParseMessage(pkt.Payload)
 		if err != nil {
@@ -773,7 +817,7 @@ func (c *Client) sendRPAck(rpRef byte) {
 	cseq := int(c.cseq.Add(1))
 	reqURI := "sip:" + c.cfg.IMSRealm
 	ack := &Message{Method: "MESSAGE", RequestURI: reqURI, Body: EncodeRPAck(rpRef)}
-	ack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	ack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	ack.AddHeader("Max-Forwards", "70")
 	ack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.cfg.IMPU, randHex(6)))
 	ack.AddHeader("To", fmt.Sprintf("<%s>", reqURI))
@@ -795,7 +839,7 @@ func (c *Client) sendPRACK(dlg *callDialog, prov *Message) {
 	branch := "z9hG4bK" + randHex(8)
 	cseq := int(c.cseq.Add(1))
 	prack := &Message{Method: "PRACK", RequestURI: target}
-	prack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	prack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	prack.AddHeader("Max-Forwards", "70")
 	prack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), dlg.localTag))
 	prack.AddHeader("To", prov.GetHeader("To"))
@@ -815,7 +859,7 @@ func (c *Client) sendACK(dlg *callDialog, resp *Message) {
 	}
 	branch := "z9hG4bK" + randHex(8)
 	ack := &Message{Method: "ACK", RequestURI: target}
-	ack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s:%d;branch=%s;rport", c.localIP.String(), c.sock.LocalPort(), branch))
+	ack.AddHeader("Via", fmt.Sprintf("SIP/2.0/UDP %s;branch=%s;rport", net.JoinHostPort(c.localIP.String(), strconv.Itoa(int(c.localPort()))), branch))
 	ack.AddHeader("Max-Forwards", "70")
 	ack.AddHeader("From", fmt.Sprintf("<%s>;tag=%s", c.effectiveFromURI(), dlg.localTag))
 	ack.AddHeader("To", resp.GetHeader("To"))
@@ -913,8 +957,22 @@ func (c *Client) unregisterTx(branch string) {
 }
 
 func (c *Client) sendSIP(msg *Message) error {
+	c.mu.Lock()
+	socket, port := c.sock, c.pcscfPrt
+	verify := ""
+	if c.security != nil && c.security.active {
+		socket, port = c.security.client, c.security.peerServer
+		if msg.IsResponse {
+			socket, port = c.security.server, c.security.peerClient
+		}
+		verify = c.security.verify
+	}
+	c.mu.Unlock()
+	if verify != "" && !msg.IsResponse && msg.GetHeader("Security-Verify") == "" {
+		msg.AddHeader("Security-Verify", verify)
+	}
 	c.traceRegistration("out", msg)
-	return c.sock.WriteTo(c.pcscf, c.pcscfPrt, msg.Encode())
+	return socket.WriteTo(c.pcscf, port, msg.Encode())
 }
 
 func (c *Client) sendRequestWaitFinal(ctx context.Context, branch string, msg *Message) (*Message, error) {
@@ -958,6 +1016,12 @@ func (c *Client) Close() error {
 	close(c.stopCh)
 	c.mu.Unlock()
 	err := c.sock.Close()
+	if c.security != nil {
+		c.security.client.Close()
+		c.security.server.Close()
+		c.cfg.Tunnel.RemoveUDPProtection(c.security.client.LocalPort())
+		c.cfg.Tunnel.RemoveUDPProtection(c.security.server.LocalPort())
+	}
 	c.wg.Wait()
 	return err
 }

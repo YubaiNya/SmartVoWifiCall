@@ -24,6 +24,7 @@ const (
 	SuiteAESCBC256HMACSHA256
 	SuiteAESCBC128HMACSHA1
 	SuiteAESCBC256HMACSHA1
+	SuiteNullHMACSHA1 // IMS transport ESP inside the encrypted ePDG tunnel.
 )
 
 // ReplayWindow implements RFC 4303 64-bit sliding anti-replay window.
@@ -81,6 +82,12 @@ func NewSA(spi uint32, suite CipherSuite, encKey, authKey, salt []byte) (*SA, er
 		AuthKey: append([]byte(nil), authKey...),
 		Salt:    append([]byte(nil), salt...),
 	}
+	if suite == SuiteNullHMACSHA1 {
+		if len(authKey) != 16 && len(authKey) != 20 {
+			return nil, errors.New("ESP_IMS_IK_LENGTH_INVALID")
+		}
+		return sa, nil
+	}
 	blk, err := aes.NewCipher(sa.EncKey)
 	if err != nil {
 		return nil, fmt.Errorf("ESP_CIPHER_INIT: %w", err)
@@ -111,7 +118,7 @@ func (sa *SA) Encrypt(nextHeader byte, innerPacket []byte) ([]byte, error) {
 
 	// Build padded payload: inner || padding(1..padLen) || padLen || nextHeader
 	align := 4
-	if sa.aead == nil {
+	if sa.aead == nil && sa.Suite != SuiteNullHMACSHA1 {
 		align = aes.BlockSize
 	}
 	rawLen := len(innerPacket) + 2
@@ -127,6 +134,12 @@ func (sa *SA) Encrypt(nextHeader byte, innerPacket []byte) ([]byte, error) {
 	var hdr [8]byte
 	binary.BigEndian.PutUint32(hdr[0:4], sa.SPI)
 	binary.BigEndian.PutUint32(hdr[4:8], seq)
+	if sa.Suite == SuiteNullHMACSHA1 {
+		out := append(append([]byte(nil), hdr[:]...), plain...)
+		mac := hmac.New(sha1.New, sa.AuthKey)
+		mac.Write(out)
+		return append(out, mac.Sum(nil)[:12]...), nil
+	}
 
 	if sa.aead != nil {
 		// RFC 4106 AES-GCM: 8-byte explicit IV, 12-byte nonce = Salt(4) || IV(8), AAD = SPI||Seq
@@ -176,7 +189,17 @@ func (sa *SA) Decrypt(esp []byte) (byte, []byte, error) {
 	seq := binary.BigEndian.Uint32(esp[4:8])
 
 	var plain []byte
-	if sa.aead != nil {
+	if sa.Suite == SuiteNullHMACSHA1 {
+		if len(esp) < 24 || (len(esp)-20)%4 != 0 {
+			return 0, nil, errors.New("ESP_NULL_LENGTH_INVALID")
+		}
+		mac := hmac.New(sha1.New, sa.AuthKey)
+		mac.Write(esp[:len(esp)-12])
+		if !hmac.Equal(mac.Sum(nil)[:12], esp[len(esp)-12:]) {
+			return 0, nil, errors.New("ESP_HMAC_FAILED")
+		}
+		plain = append([]byte(nil), esp[8:len(esp)-12]...)
+	} else if sa.aead != nil {
 		if len(esp) < 8+8+sa.aead.Overhead()+2 {
 			return 0, nil, errors.New("ESP_GCM_SHORT")
 		}

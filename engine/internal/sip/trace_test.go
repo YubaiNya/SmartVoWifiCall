@@ -23,6 +23,22 @@ func TestDigestAKANoncePreservesPublicParts(t *testing.T) {
 	}
 }
 
+func TestIPv6HeaderPrivacyPreservesParameters(t *testing.T) {
+	for _, sample := range []struct{ name, value string }{
+		{"Via", "SIP/2.0/UDP [2001:db8:1::2]:5060;received=2001:db8:2::3;rport=5060;branch=test"},
+		{"Call-ID", "test@2001:db8:1:2:3:4:5:6"},
+		{"Contact", "<sip:subscriber@[2001:db8::2]:5060;transport=udp>"},
+	} {
+		b, _ := json.Marshal(traceHeader(sample.name, sample.value))
+		if strings.Contains(string(b), "2001:db8") {
+			t.Fatalf("IPv6 address leaked in %s", sample.name)
+		}
+		if sample.name == "Via" && (!strings.Contains(string(b), "rport=5060") || !strings.Contains(string(b), "branch=test")) {
+			t.Fatal("public parameters lost")
+		}
+	}
+}
+
 func TestRegistrationJournalPreservesDigestContext(t *testing.T) {
 	dir := t.TempDir()
 	logger, err := diag.NewLogger(dir)
