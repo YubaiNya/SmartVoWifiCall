@@ -5,9 +5,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
-/** Select an actual Linux TUN device, never a name prefix or a physical NIC fallback. */
+/** Explicit transport selectors plus TUN checks for isolated built-in proxy networks. */
 public final class TunEgress {
+  public static final String SYSTEM_ROUTE = "@system";
   private TunEgress() { }
+  public static boolean isSystemRoute(String name) { return SYSTEM_ROUTE.equals(name); }
+  public static boolean validSelection(String name) { return isSystemRoute(name) || validName(name); }
   public static boolean isTunFlags(String value) {
     if (value == null || value.trim().isEmpty()) return false;
     try {
@@ -20,15 +23,25 @@ public final class TunEgress {
         && !name.equals(".") && !name.equals("..");
   }
   public static String selector(String name) {
+    if (isSystemRoute(name)) return "system";
     if (!validName(name)) throw new IllegalArgumentException("INVALID_TUN_INTERFACE");
     return "iface:" + name;
   }
   public static String interfaceFromSelector(String transport) {
+    if ("system".equals(transport)) return SYSTEM_ROUTE;
     if (transport == null || !transport.startsWith("iface:"))
-      throw new IllegalArgumentException("EXPLICIT_TUN_REQUIRED");
+      throw new IllegalArgumentException("TRANSPORT_INVALID");
     String name = transport.substring(6);
     selector(name);
     return name;
+  }
+  /** Interface type does not decide whether a carrier can be reached. Never changes link state. */
+  public static void requireInterface(String name) throws IOException {
+    if (isSystemRoute(name)) return; // The actual attempt resolves and uses the current system route.
+    if (!validName(name)) throw new IOException("INVALID_INTERFACE");
+    java.net.NetworkInterface iface = java.net.NetworkInterface.getByName(name);
+    if (iface == null || !iface.isUp() || iface.isLoopback() || !iface.getInetAddresses().hasMoreElements())
+      throw new IOException("INTERFACE_UNAVAILABLE");
   }
   /** Root-side recheck immediately before config commit / engine startup. */
   public static void requireDevice(String name) throws IOException {

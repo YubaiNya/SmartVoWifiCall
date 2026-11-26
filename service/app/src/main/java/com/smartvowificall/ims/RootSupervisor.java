@@ -403,7 +403,7 @@ final class RootSupervisor {
       throw new IOException("IMS_RESTORE_FAILED");
   }
   void start(Sim sim, String iface) throws Exception {
-    if (!com.smartvowificall.ims.network.InterfaceSnapshot.validName(iface))
+    if (!com.smartvowificall.ims.network.TunEgress.validSelection(iface))
       throw new IOException("INVALID_INTERFACE");
     run("[ ! -e " + MODULE + "/disable ] && [ ! -e " + MODULE
         + "/remove ] && [ ! -e /data/adb/smartvowificall_ims/rollback-pending ]");

@@ -1687,6 +1687,13 @@ final class RuntimeController {
         if (!b.engine.isConnected())
           b.engine.connect();
         Map<String, Object> state = b.engine.getStatus();
+        Object transport = state.get("transport");
+        if (transport instanceof String) {
+          try {
+            TunEgress.interfaceFromSelector((String) transport);
+            b.engineTransport = (String) transport;
+          } catch (IllegalArgumentException invalid) { b.engineTransport = "UNKNOWN"; }
+        }
         Long enginePid = EngineState.integer(state.get("processId"));
         Long uptimeSec = EngineState.integer(state.get("uptimeSec"));
         if (enginePid != null) b.enginePid = enginePid;
@@ -1854,6 +1861,7 @@ final class RuntimeController {
         if (b != null) row.put("engineCallStage", b.engine.getState().callSnapshot.get("stage"));
         if (b != null) row.put("ims", b.ims).put("registered", b.registered)
             .put("engineProcessId", b.enginePid).put("engineUptimeSec", b.engineUptimeSec)
+            .put("engineTransport", b.engineTransport)
             .put("behavior", new JSONObject(b.behavior))
             .put("tunnel", b.tunnel).put("callActive", b.callActive)
             .put("callSnapshotError", b.callSnapshotError)
@@ -1900,6 +1908,7 @@ final class RuntimeController {
     volatile String tunnel = "UNKNOWN";
     volatile long callSnapshotError;
     volatile long enginePid, engineUptimeSec;
+    volatile String engineTransport = "UNKNOWN";
     volatile Map<String, Object> behavior = Collections.emptyMap();
     Binding(RootSupervisor.Sim sim, String iface, String clashNetnsId) {
       this.sim = sim;

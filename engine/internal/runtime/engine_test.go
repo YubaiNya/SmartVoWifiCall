@@ -46,7 +46,7 @@ func TestEndToEndNativeEngineStack(t *testing.T) {
 
 	cfg := &config.Config{
 		Enabled:   true,
-		Transport: "iface:wfctun0",
+		Transport: "system",
 		Slot:      1,
 		ICCID:     "8985203000000000001",
 		MCC:       "454",

@@ -202,7 +202,7 @@ stop_owned() {
  cleanup_recorded_sockets || return 1
  rm -f "$pidfile" "$ownerfile" "$socketfile" "$uidfile"
 }
-check_tun_egress() {
+check_egress() {
  egress=$(CLASSPATH="$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" "$APP_PROCESS" /system/bin com.smartvowificall.ims.root.RootIdentityMain check-egress "$BASE/config/$iccid.json" 2>/dev/null) || return 1
  case "$egress" in *'"ok":true'*) return 0;; *) return 1;; esac
 }
@@ -255,7 +255,7 @@ case "$action" in
  start)
   [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] && [ ! -e "$BASE/rollback-pending" ] || fail MODULE_DISABLED
   uid=${3:-};case "$uid" in ''|*[!0-9]*) fail INVALID_UID 64;; esac
-  check_tun_egress || fail TUN_EGRESS_UNAVAILABLE
+  check_egress || fail EGRESS_UNAVAILABLE
   trace_control START_REQUEST
   if ! owned_pid; then
    cleanup_recorded_sockets || fail SOCKET_OWNERSHIP_UNKNOWN
@@ -268,7 +268,7 @@ case "$action" in
    ensure_sim_auth || :
    if btun=$(builtin_clash_tun 2>/dev/null); then
     ns=$(clash_netns_path_for "$btun" 2>/dev/null || :)
-    [ -n "$ns" ] || fail TUN_EGRESS_UNAVAILABLE
+    [ -n "$ns" ] || fail EGRESS_UNAVAILABLE
     setsid nsenter --net="$ns" -- unshare -m -- sh -c '
      mount -o private none / || exit 1
      mount -o private none /sys || exit 1

@@ -85,7 +85,8 @@ public final class FallbackPolicy {
     if (!hasSelection) return NO_EGRESS_SELECTED;
     switch (egress) {
       case AVAILABLE_NOT_TUN:
-        return EGRESS_NOT_TUN;
+        unavailableSince.remove(slot);
+        break;
       case UNAVAILABLE:
         if (!radioHeld) {
           // Never cut the cellular radio for a path that does not exist right now.

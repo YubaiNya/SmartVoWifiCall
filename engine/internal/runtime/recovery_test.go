@@ -27,7 +27,7 @@ func TestStopCancelsPendingHandshake(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(dir)
-	eng, err := Start(Options{Config: &config.Config{ICCID: "8999999999999999991", MCC: "999", MNC: "99", EPDGAddr: pc.LocalAddr().String()},
+	eng, err := Start(Options{Config: &config.Config{Transport: "system", ICCID: "8999999999999999991", MCC: "999", MNC: "99", EPDGAddr: pc.LocalAddr().String()},
 		SocketDir: dir, SimAuth: &simauth.MockProvider{KeyMaterial: []byte("fixture")}})
 	if err != nil {
 		t.Fatal(err)

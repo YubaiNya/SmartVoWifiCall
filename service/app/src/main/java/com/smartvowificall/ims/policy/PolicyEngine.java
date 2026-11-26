@@ -123,8 +123,6 @@ public final class PolicyEngine {
         reason = Reason.INVALID_SUBSCRIPTION;
       if (reason == Reason.ELIGIBLE && !selection.available())
         reason = Reason.INTERFACE_UNAVAILABLE;
-      if (reason == Reason.ELIGIBLE && !selection.entry.voWifiTun())
-        reason = Reason.TUN_REQUIRED;
       decisions.add(new Decision(sim, reason, selection));
       if (reason == Reason.ELIGIBLE)
         desired.put(sim.slotId,

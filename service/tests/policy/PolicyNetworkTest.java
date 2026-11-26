@@ -147,18 +147,31 @@ public final class PolicyNetworkTest {
             InterfaceSnapshot.MutableEntry e = exits.entry(name);
             e.up = true; e.address("192.0.2.7");
             Plan blocked = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", name), exits.build(), Collections.emptyMap(), false);
-            check(blocked.actions.isEmpty() && blocked.decisions.get(0).reason == Reason.TUN_REQUIRED, "physical interface cannot become VoWiFi egress: " + name);
+            check(blocked.actions.size() == 1 && blocked.actions.get(0).kind == Kind.TAKEOVER, "available interface can be attempted: " + name);
         }
         InterfaceSnapshot.MutableEntry tunnel = exits.entry("proxy42");
         tunnel.up = true; tunnel.address("198.18.0.1"); tunnel.tunDevice = true;
         Plan tun = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "proxy42"), exits.build(), Collections.emptyMap(), false);
         check(tun.actions.size() == 1 && tun.actions.get(0).kind == Kind.TAKEOVER, "real TUN accepted without tun name prefix or physical Wi-Fi");
         Plan wrong = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "rmnet_data0"), exits.build(), applied(old), false);
-        check(wrong.actions.size() == 1 && wrong.actions.get(0).kind == Kind.CLEAR, "non-TUN choice restores ordinary system service rather than using that NIC for VoWiFi");
-        check(wrong.decisions.get(0).selection.interfaceName.equals("rmnet_data0"), "invalid selection retained, not silently replaced");
+        check(wrong.actions.size() == 2 && wrong.actions.get(0).kind == Kind.CLEAR && wrong.actions.get(1).kind == Kind.TAKEOVER, "explicit change replaces old selection and attempts selected physical NIC");
+        check(wrong.decisions.get(0).selection.interfaceName.equals("rmnet_data0"), "explicit selection retained, not silently replaced");
         for (String raw : Arrays.asList("1", "0x1001", "0x5001\n")) check(TunEgress.isTunFlags(raw), "IFF_TUN accepted");
         for (String raw : Arrays.asList(null, "", "2", "0x1002", "3", "0", "-1", "garbage", "0x100000001"))
             check(!TunEgress.isTunFlags(raw), "TAP or unknown flags rejected");
+        check(!new InterfaceSnapshot.Builder().build().selection("@system").available(), "no system route cannot cut the radio for a nonexistent path");
+        exits.entry("wlan0").defaultRoute = true;
+        check(!exits.build().selection("@system").available(), "an unused routing-table default is not the active system network");
+        exits.entry("wlan0").defaultNetwork = true;
+        Plan system = PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "@system"), exits.build(), Collections.emptyMap(), false);
+        check(system.actions.size() == 1 && system.actions.get(0).interfaceName.equals("@system"), "system routing is explicit and does not select a proxy");
+        check(PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "@system"), exits.build(), applied(system.actions.get(0).asAppliedOverride()), false).actions.isEmpty(), "system route remains selected across policy ticks");
+        check(TunEgress.selector("@system").equals("system") && TunEgress.interfaceFromSelector("system").equals("@system"), "system selector round trip");
+        try { TunEgress.requireInterface("@system"); }
+        catch (java.io.IOException e) { throw new AssertionError("system mode looked for a fake interface", e); }
+        try { TunEgress.requireInterface("svwmissing9"); throw new AssertionError("missing explicit interface accepted"); }
+        catch (java.io.IOException expected) { }
+        check(PolicyEngine.evaluate(Arrays.asList(foreign), selections("card-a", "@system"), exits.build(), applied(old), true).actions.isEmpty(), "system selection respects call protection");
         check(TunEgress.selector("proxy42").equals("iface:proxy42"), "explicit selector retained");
         check(TunEgress.interfaceFromSelector("iface:proxy42").equals("proxy42"), "selector round trip");
         for (String selector : Arrays.asList("sim1", "sim2", "auto", "wifi", "route:system", "iface:", "iface:../tun0", "iface:tun0\n")) {

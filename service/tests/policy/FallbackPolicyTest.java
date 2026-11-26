@@ -17,10 +17,10 @@ public final class FallbackPolicyTest {
     eq(null, p.evaluate(1, false, true, true, Egress.AVAILABLE_TUN, true, true, s(0)), "healthy");
     eq(null, p.evaluate(1, false, false, true, Egress.AVAILABLE_TUN, false, false, s(0)), "healthy start");
 
-    // The reported bug: switching to a non-TUN interface (dummy0) must hand cellular back at once.
-    eq(FallbackPolicy.EGRESS_NOT_TUN,
+    // An available physical interface is a valid attempt, not an automatic fallback trigger.
+    eq(null,
         p.evaluate(1, false, true, true, Egress.AVAILABLE_NOT_TUN, true, true, s(1)), "non-tun while held");
-    eq(FallbackPolicy.EGRESS_NOT_TUN,
+    eq(null,
         p.evaluate(1, false, false, true, Egress.AVAILABLE_NOT_TUN, false, false, s(2)), "non-tun not held");
     // No selection at all.
     eq(FallbackPolicy.NO_EGRESS_SELECTED,

@@ -480,11 +480,13 @@ private fun SimCardView(
         sim.selectedInterface.isEmpty() -> "点击选择出口"
         sim.selectedInterface == ClashConfig.TUN_DEVICE -> "内核 1 · ${ClashConfig.TUN_DEVICE}"
         sim.selectedInterface == ClashConfig.TUN_DEVICE_1 -> "内核 2 · ${ClashConfig.TUN_DEVICE_1}"
-        else -> "外部 TUN · ${sim.selectedInterface}"
+        sim.selectedInterface == com.smartvowificall.ims.network.TunEgress.SYSTEM_ROUTE -> "跟随系统路由"
+        else -> "接口 · ${sim.selectedInterface}"
     }
     val nodeDisplay = when {
         sim.activeProxyNode.isNotEmpty() -> sim.activeProxyNode
         ClashConfig.isBuiltinTun(sim.selectedInterface) -> "内核未运行"
+        sim.selectedInterface == com.smartvowificall.ims.network.TunEgress.SYSTEM_ROUTE -> "使用系统路由，不使用内置节点"
         sim.selectedInterface.isNotEmpty() -> "直走 ${sim.selectedInterface}"
         else -> "未选择"
     }
@@ -683,6 +685,11 @@ private fun InterfacePickerDialog(
     val p = LocalApplePalette.current
     val combined = remember(interfaces, clashCores) {
         val byName = LinkedHashMap<String, InterfaceRowUi>()
+        val systemRoute = com.smartvowificall.ims.network.TunEgress.SYSTEM_ROUTE
+        byName[systemRoute] = InterfaceRowUi(
+            name = systemRoute, type = "系统路由", up = true, available = true,
+            voWifiTun = false, addresses = "不使用内置节点", label = "跟随系统路由"
+        )
         for (core in clashCores) {
             val existing = interfaces.firstOrNull { it.name == core.tunDevice }
             if (existing != null) {
@@ -705,7 +712,8 @@ private fun InterfacePickerDialog(
             }
         }
         byName.values.sortedWith(
-            compareByDescending<InterfaceRowUi> { it.name == ClashConfig.TUN_DEVICE }
+            compareByDescending<InterfaceRowUi> { it.name == systemRoute }
+                .thenByDescending { it.name == ClashConfig.TUN_DEVICE }
                 .thenByDescending { it.name == ClashConfig.TUN_DEVICE_1 }
                 .thenByDescending { it.voWifiTun }
                 .thenByDescending { it.available }
@@ -750,7 +758,7 @@ private fun InterfacePickerDialog(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                text = "支持内置双内核 wfctun0 / wfctun1 或外部 TUN 接口；双卡可分别选择不同内核。",
+                text = "可选择内置节点、其他网络接口，或跟随系统路由。接口是否支持连接以实际尝试为准。",
                 color = p.textSecondary,
                 fontSize = 12.sp
             )
@@ -787,7 +795,7 @@ private fun InterfacePickerDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    text = item.name,
+                                    text = if (item.name == com.smartvowificall.ims.network.TunEgress.SYSTEM_ROUTE) "跟随系统路由" else item.name,
                                     color = p.textPrimary,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.SemiBold
@@ -796,13 +804,13 @@ private fun InterfacePickerDialog(
                                 StatusPill(
                                     label = when {
                                         builtinCid >= 0 -> "内置内核 ${builtinCid + 1}"
-                                        item.voWifiTun -> "${item.type} · 可作出口"
+                                        item.available -> "${item.type} · 可尝试连接"
                                         else -> "${item.type} · 不可用"
                                     },
                                     color = when {
                                         builtinCid == 0 -> p.accentBlue
                                         builtinCid == 1 -> p.accentPurple
-                                        item.voWifiTun -> p.accentGreen
+                                        item.available -> p.accentGreen
                                         else -> p.textTertiary
                                     },
                                     showDot = false
@@ -810,7 +818,8 @@ private fun InterfacePickerDialog(
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                text = "${if (item.up == true) "已启用" else "未启用"} · ${item.addresses.ifEmpty { "无 IP 地址" }}",
+                                text = if (item.name == com.smartvowificall.ims.network.TunEgress.SYSTEM_ROUTE) "按系统当前路由尝试连接，不使用内置节点"
+                                else "${if (item.up == true) "已启用" else "未启用"} · ${item.addresses.ifEmpty { "无 IP 地址" }}",
                                 color = p.textSecondary,
                                 fontSize = 12.sp
                             )
@@ -2210,9 +2219,9 @@ fun NetworkPage(
                                 )
                             }
                             StatusPill(
-                                label = if (iface.voWifiTun) "可作通话出口" else "不可作通话出口",
-                                color = if (iface.voWifiTun) p.accentGreen else p.textTertiary,
-                                showDot = iface.voWifiTun
+                                label = if (iface.available) "可尝试连接" else "当前不可用",
+                                color = if (iface.available) p.accentGreen else p.textTertiary,
+                                showDot = iface.available
                             )
                         }
                     }

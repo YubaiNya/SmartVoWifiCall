@@ -1,8 +1,8 @@
-SmartVoWifiCall 0.6.5-dev: supplemental source and attribution notice
+SmartVoWifiCall 0.6.6-dev: supplemental source and attribution notice
 
 SmartVoWifiCall application and independent engine: GPL-3.0.
 Exact product sources for the released APK/module are provided in the attached
-SmartVoWifiCall-v0.6.5-dev-source.zip. Build scripts, engine source, tests and license files
+SmartVoWifiCall-v0.6.6-dev-source.zip. Build scripts, engine source, tests and license files
 are included; private signing keys, device configuration and logs are excluded.
 
 LiquidGlassBottomBar adapts the AndroidLiquidGlass LiquidBottomTabs, drag and
@@ -28,7 +28,7 @@ AndroidX, Kotlin, ZXing, Miuix and Backdrop are actual application dependencies.
 See the included dependency declarations, license files and README references.
 Go toolchain/standard-library license and PATENTS accompany the module.
 SoftVoWiFi, VoWiFiX and AOSP protocol implementations are research references,
-not newly bundled runtime dependencies of the radio-state/lifecycle fix.
+not newly bundled runtime dependencies of the radio-state, lifecycle and interface-routing changes.
 
 The following is the upstream AndroidLiquidGlass license and copyright notice.
 

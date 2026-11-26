@@ -187,7 +187,8 @@ class MainActivity : ComponentActivity() {
                     onRequestSlotBillableToggle = { slot, on -> handleSlotBillableToggle(slot, on) },
                     onSelectSimInterface = { simKey, iface ->
                         rt.select(simKey, iface)
-                        overviewFeedback = "已将出口切换为 $iface"
+                        overviewFeedback = if (com.smartvowificall.ims.network.TunEgress.isSystemRoute(iface))
+                            "已切换为跟随系统路由" else "已将出口切换为 $iface"
                         syncStateFromController()
                     },
                     onUseBuiltinTunForSlot = { slot, cid ->

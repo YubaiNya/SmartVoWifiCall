@@ -15,12 +15,14 @@ import (
 	"time"
 
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/diag"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/egress"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/ipsec"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/simauth"
 )
 
 // SessionConfig holds parameters for establishing an RFC 7296 + EAP-AKA ePDG tunnel.
 type SessionConfig struct {
+	Interface      string // Empty follows system routes; explicit names never fall back.
 	EPDGAddr       string // host:port (default port 500 or 4500 for NAT-T)
 	NATTAddr       string // optional explicit NAT-T port (default same host port 4500)
 	EAPIdentity    string // 0<IMSI>@nai.epc.mnc<MNC3>.mcc<MCC>.3gppnetwork.org or @wlan...
@@ -109,7 +111,7 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("IKE_RESOLVE_EPDG: %w", err)
 	}
-	conn, err := openUDP(raddr, cfg.ProxyTransport)
+	conn, err := openUDPOnInterface(ctx, raddr, cfg.ProxyTransport, cfg.Interface)
 	if err != nil {
 		return nil, fmt.Errorf("IKE_DIAL_UDP: %w", err)
 	}
@@ -148,18 +150,29 @@ func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
 }
 
 func openUDP(remote *net.UDPAddr, proxy bool) (*net.UDPConn, error) {
-	if !proxy {
-		return net.DialUDP("udp4", nil, remote)
-	}
-	// Select the route's local address, but leave the receiving socket unconnected.
-	// Some UDP proxy relays return their own endpoint as the packet source.
-	route, err := net.DialUDP("udp4", nil, remote)
+	return openUDPOnInterface(context.Background(), remote, proxy, "")
+}
+
+func openUDPOnInterface(ctx context.Context, remote *net.UDPAddr, proxy bool, iface string) (*net.UDPConn, error) {
+	dialer := net.Dialer{Control: egress.Control(iface)}
+	connection, err := dialer.DialContext(ctx, "udp4", remote.String())
 	if err != nil {
 		return nil, err
 	}
+	route := connection.(*net.UDPConn)
+	if !proxy {
+		return route, nil
+	}
+	// Select the route's local address, but leave the receiving socket unconnected.
+	// Some UDP proxy relays return their own endpoint as the packet source.
 	ip := append(net.IP(nil), route.LocalAddr().(*net.UDPAddr).IP...)
 	_ = route.Close()
-	return net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+	listener := net.ListenConfig{Control: egress.Control(iface)}
+	packet, err := listener.ListenPacket(ctx, "udp4", (&net.UDPAddr{IP: ip}).String())
+	if err != nil {
+		return nil, err
+	}
+	return packet.(*net.UDPConn), nil
 }
 
 func writeUDP(conn *net.UDPConn, remote *net.UDPAddr, packet []byte) (int, error) {
@@ -556,19 +569,23 @@ func (c *Client) handshake(ctx context.Context) error {
 
 	// Switch to UDP 4500 NAT-T if configured or responder sent NAT notifications while on port 500.
 	if !c.nattMode && c.cfg.NATTAddr != "" {
-		if nattAddr, err := net.ResolveUDPAddr("udp4", c.cfg.NATTAddr); err == nil {
-			if nattConn, err := openUDP(nattAddr, c.cfg.ProxyTransport); err == nil {
-				c.mu.Lock()
-				old := c.conn
-				c.conn = nattConn
-				c.remoteAddr = nattAddr
-				c.nattMode = true
-				c.mu.Unlock()
-				_ = old.Close()
-				c.wg.Add(1)
-				go c.readLoop(nattConn)
-			}
+		nattAddr, err := net.ResolveUDPAddr("udp4", c.cfg.NATTAddr)
+		if err != nil {
+			return fmt.Errorf("IKE_NATT_ADDRESS_INVALID: %w", err)
 		}
+		nattConn, err := openUDPOnInterface(ctx, nattAddr, c.cfg.ProxyTransport, c.cfg.Interface)
+		if err != nil {
+			return fmt.Errorf("IKE_NATT_DIAL_FAILED: %w", err)
+		}
+		c.mu.Lock()
+		old := c.conn
+		c.conn = nattConn
+		c.remoteAddr = nattAddr
+		c.nattMode = true
+		c.mu.Unlock()
+		_ = old.Close()
+		c.wg.Add(1)
+		go c.readLoop(nattConn)
 	}
 
 	// 2. IKE_AUTH #1 (no AUTH -> triggers EAP-AKA / EAP-AKA' per RFC 7296 §2.16)

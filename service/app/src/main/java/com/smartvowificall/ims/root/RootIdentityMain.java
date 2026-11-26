@@ -103,13 +103,13 @@ public final class RootIdentityMain {
         if (!validOutputPath(args[1])) throw new Failure("INVALID_OUTPUT_PATH");
         JSONObject config = new JSONObject(new String(Files.readAllBytes(new File(args[1]).toPath()), StandardCharsets.UTF_8));
         String iface = TunEgress.interfaceFromSelector(config.optString("transport", ""));
-        requireTun(iface);
+        requireEgress(iface);
         Context context = rootContext();
         int slot = config.getInt("slot");
         Identity identity = requireCurrentIdentity(context, currentSubForSlot(context, slot), slot);
         if (!identity.iccid.equals(config.optString("iccid"))) throw new Failure("SUBSCRIPTION_CHANGED");
         requireRadioOff(identity);
-        output = new JSONObject().put("ok", true).put("code", "TUN_EGRESS_CONFIRMED");
+        output = new JSONObject().put("ok", true).put("code", "EGRESS_CONFIRMED");
       } else if (mode.equals("ims-bind") && args.length == 5) {
         try (ImsLock lock = new ImsLock()) {
           output = bindIms(
@@ -1085,7 +1085,7 @@ public final class RootIdentityMain {
 
   private static JSONObject prepare(
       Context context, int subId, int slotId, String iface, String outputPath) throws Exception {
-    requireTun(iface);
+    requireEgress(iface);
     Identity before = requireCurrentIdentity(context, subId, slotId);
     requireRadioOff(before);
     if (!before.callStateKnown || before.callState != TelephonyManager.CALL_STATE_IDLE)
@@ -1128,7 +1128,7 @@ public final class RootIdentityMain {
             config.optString("iccid", ""), config.optString("mcc", ""), config.optString("mnc", ""),
             config.optInt("slot", -1), config.optString("imsi", ""), config.optString("imei", ""))
         || !config.optBoolean("enabled", false)
-        || !("iface:" + iface).equals(config.optString("transport", ""))
+        || !TunEgress.selector(iface).equals(config.optString("transport", ""))
         || config.optInt("mncLen", -1) != current.homePlmn.length() - 3
         || !homeImsRealm(current.homePlmn).equals(config.optString("imsRealm", ""))
         || !config.has("epdgFqdn") || !config.optString("epdgFqdn").isEmpty()
@@ -1145,7 +1145,7 @@ public final class RootIdentityMain {
         + ".mcc" + homePlmn.substring(0, 3) + ".3gppnetwork.org";
   }
 
-  private static void requireTun(String iface) throws Failure {
+  private static void requireEgress(String iface) throws Failure {
     try {
       int clashId = ClashConfig.instanceForTun(iface);
       if (clashId >= 0) {
@@ -1174,11 +1174,11 @@ public final class RootIdentityMain {
         if (!TunEgress.isTunFlags(flags)) throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
         return;
       }
-      TunEgress.requireDevice(iface);
+      TunEgress.requireInterface(iface);
     } catch (Failure f) {
       throw f;
     } catch (Exception error) {
-      throw new Failure("TUN_REQUIRED_OR_UNAVAILABLE");
+      throw new Failure("EGRESS_UNAVAILABLE");
     }
   }
 
@@ -1217,7 +1217,7 @@ public final class RootIdentityMain {
         throw new Failure("SUBSCRIPTION_CHANGED");
       if (!current.callStateKnown || current.callState != TelephonyManager.CALL_STATE_IDLE)
         throw new Failure("CALL_ACTIVE_OR_UNKNOWN");
-      requireTun(TunEgress.interfaceFromSelector(config.optString("transport", "")));
+      requireEgress(TunEgress.interfaceFromSelector(config.optString("transport", "")));
       requireRadioOff(current);
       Os.rename(candidate.getAbsolutePath(), destination.getAbsolutePath());
     } finally {

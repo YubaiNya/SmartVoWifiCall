@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/behavior"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/egress"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/ikev2"
 	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/sip"
 )
@@ -14,6 +15,9 @@ import (
 // never exported: DNS addresses, identities and vendor error strings stay out.
 func diagnose(stage behavior.State, err error) behavior.Failure {
 	f := behavior.Failure{State: behavior.Unknown, Cause: "UNCLASSIFIED_FAILURE"}
+	if errors.Is(err, egress.ErrBind) {
+		return behavior.Failure{State: behavior.Unknown, Cause: "EGRESS_BIND_FAILED"}
+	}
 	var rejected *ikev2.AuthRejectedError
 	if errors.As(err, &rejected) {
 		if rejected.BackoffTrusted {

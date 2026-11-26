@@ -228,11 +228,15 @@ func (e *Engine) connectOnce() error {
 	defer cancel()
 
 	e.setStates("CONNECTING", "CONNECTING")
+	iface, err := e.opts.Config.InterfaceName()
+	if err != nil {
+		return err
+	}
 	epdgAddr := e.opts.Config.EPDGAddr
 	nattAddr := ""
 	if epdgAddr == "" {
 		e.observe(behavior.Discovery, "DNS_QUERY_STARTED")
-		ip, err := config.ResolveHostIPv4(ctx, e.opts.Config.EffectiveEPDG(), e.opts.Config.DNS)
+		ip, err := config.ResolveHostIPv4OnInterface(ctx, e.opts.Config.EffectiveEPDG(), e.opts.Config.DNS, iface)
 		if err != nil {
 			return fmt.Errorf("EPDG_DNS_FAILED: %w", err)
 		}
@@ -267,6 +271,7 @@ func (e *Engine) connectOnce() error {
 	for step, idx := range order {
 		cand := candidates[idx]
 		cli, err := ikev2.Connect(ctx, ikev2.SessionConfig{
+			Interface:      iface,
 			EPDGAddr:       epdgAddr,
 			NATTAddr:       nattAddr,
 			EAPIdentity:    cand.Identity,
@@ -575,6 +580,7 @@ func (e *Engine) GetStatus() map[string]any {
 		"simMode":                 e.simAuth.Name(),
 		"epdg":                    e.opts.Config.EffectiveEPDG(),
 		"uptimeSec":               int64(time.Since(e.startedAt).Seconds()),
+		"transport":               e.opts.Config.Transport,
 		"processId":               os.Getpid(),
 		"processStartedAtMs":      e.startedAt.UnixMilli(),
 		"behavior":                state,

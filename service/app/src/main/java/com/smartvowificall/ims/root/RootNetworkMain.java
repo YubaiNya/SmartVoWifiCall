@@ -11,6 +11,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.system.Os;
 import com.smartvowificall.ims.network.EngineNetworkSnapshot;
+import com.smartvowificall.ims.network.TunEgress;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.net.InetAddress;
@@ -72,6 +73,7 @@ public final class RootNetworkMain {
     try {
       if (Process.myUid() != 0) throw new Failure("ROOT_REQUIRED");
       String mode = args == null || args.length == 0 ? "snapshot" : args[0];
+      if ("resolve".equals(mode) && args.length == 3) return resolve(args[1], args[2]);
       if (args != null && args.length > 1) throw new Failure("INVALID_ARGUMENT");
       if (mode.equals("diagnostics")) {
         result = new JSONObject().put("ok", true).put("code", "NETWORK_API_DIAGNOSTICS")
@@ -198,6 +200,38 @@ public final class RootNetworkMain {
         .put("networks", new JSONArray(rows)).put("skippedNetworks", skipped)
         .put("complete", skipped == 0).put("issues", new JSONArray(issues))
         .put("registryPublished", publish).put("registryNetworkCount", registry.size());
+  }
+
+  /** Uses Android's resolver policy, not an unconfigured Linux /etc/resolv.conf. */
+  private static JSONObject resolve(String iface, String host) throws Exception {
+    if (!TunEgress.validSelection(iface) || host == null || host.length() > 253
+        || !host.matches("[A-Za-z0-9][A-Za-z0-9.-]*")) throw new Failure("INVALID_ARGUMENT");
+    TunEgress.requireInterface(iface);
+    BoundService service = new BoundService("connectivity", CONNECTIVITY);
+    Network active = (Network) service.type.getMethod("getActiveNetwork").invoke(service.proxy);
+    Network selected = active;
+    boolean matched = TunEgress.isSystemRoute(iface);
+    if (!matched) {
+      Method links = service.type.getMethod("getLinkProperties", Network.class);
+      Network[] networks = (Network[]) service.type.getMethod("getAllNetworks").invoke(service.proxy);
+      for (Network network : networks) {
+        LinkProperties link = (LinkProperties) links.invoke(service.proxy, network);
+        if (link != null && iface.equals(link.getInterfaceName())) {
+          selected = network; matched = true;
+          if (network.equals(active)) break;
+        }
+      }
+    }
+    // An externally created interface need not have an Android Network object.
+    // Its socket is still bound explicitly; DNS then uses the system resolver policy.
+    if (selected == null) throw new Failure("NETWORK_UNAVAILABLE");
+    JSONArray addresses = new JSONArray();
+    for (InetAddress address : selected.getAllByName(host)) {
+      if (!address.isAnyLocalAddress() && !address.isLoopbackAddress() && !address.isMulticastAddress())
+        addresses.put(address.getHostAddress());
+    }
+    return new JSONObject().put("ok", true).put("code", "NETWORK_RESOLVED")
+        .put("addresses", addresses).put("dnsRoute", matched ? "SELECTED_NETWORK" : "SYSTEM_NETWORK");
   }
 
   private static Boolean airplaneMode() {

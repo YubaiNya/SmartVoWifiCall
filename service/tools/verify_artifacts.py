@@ -55,7 +55,7 @@ with zipfile.ZipFile(dist/'SmartVoWifiCall-module.zip') as z:
  assert b'radio-release-all' in z.read('uninstall.sh')
  assert b'clash-control.sh" stop' in z.read('service.sh')
  assert b'clash-control.sh" stop' in z.read('uninstall.sh')
- assert b'check_tun_egress || fail TUN_EGRESS_UNAVAILABLE' in z.read('control.sh')
+ assert b'check_egress || fail EGRESS_UNAVAILABLE' in z.read('control.sh')
  assert b'/data/adb/vowifi/' not in engine_bin
  assert b'/data/adb/nvwims/' not in engine_bin
  for name in ['control.sh','clash-control.sh','customize.sh','service.sh','uninstall.sh','app-install.sh']:

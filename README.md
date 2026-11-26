@@ -249,7 +249,8 @@ python service/tools/verify_artifacts.py
 | [KernelSU](https://github.com/tiann/KernelSU)、[SukiSU Nova（原 Ultra）](https://github.com/SukiSU-Nova/SukiSU-Nova)、[Magisk](https://github.com/topjohnwu/Magisk) | Root 授权、模块生命周期和环境差异研究；源码研究不等于各 Root 管理器真机兼容验证。 |
 | [mihomo v1.19.34](https://github.com/MetaCubeX/mihomo/tree/v1.19.34) | 实际打包的网络代理组件，GPL-3.0；版本与散列固定于构建元数据。分发时须提供适用的对应源码及许可证。 |
 | [AndroidX](https://developer.android.com/jetpack/androidx)、[Kotlin](https://github.com/JetBrains/kotlin)、[Miuix](https://github.com/compose-miuix-ui/miuix)、[AndroidLiquidGlass / Backdrop](https://github.com/Kyant0/AndroidLiquidGlass)、[ZXing](https://github.com/zxing/zxing) | 实际 Android 界面、玻璃效果和离线扫码依赖，Apache-2.0。现有底栏包含基于 Kyant/SukiSU 实现的移植逻辑；这与本次独立编写的恢复逻辑不同。 |
-| [Go](https://go.dev/) | 实际引擎工具链与标准库，相关 BSD 许可证及 PATENTS 随模块保留。 |
+| [Go](https://go.dev/)、[net](https://pkg.go.dev/net) | 实际引擎工具链与标准库；参考 Dialer/ListenConfig 的 socket 控制接口实现显式出口，相关 BSD 许可证及 PATENTS 随模块保留。 |
+| [Android Network](https://developer.android.com/reference/android/net/Network)、[Linux socket(7)](https://man7.org/linux/man-pages/man7/socket.7.html) | 系统网络 DNS、指定接口绑定与默认路由行为的接口参考；路由选择、连接和测试代码独立实现，未复制文档或上游实现。 |
 
 协议行为参考：3GPP [TS 23.402](https://www.3gpp.org/DynaReport/23402.htm)、[TS 24.302](https://www.3gpp.org/DynaReport/24302.htm)、[TS 33.402](https://www.3gpp.org/DynaReport/33402.htm)、[TS 23.228](https://www.3gpp.org/DynaReport/23228.htm)、[TS 24.229](https://www.3gpp.org/DynaReport/24229.htm)、[TS 33.203](https://www.3gpp.org/DynaReport/33203.htm)；IETF [RFC 7296](https://www.rfc-editor.org/info/rfc7296/)（IKEv2）、[RFC 4187](https://www.rfc-editor.org/info/rfc4187/)（EAP-AKA）、[RFC 9048](https://www.rfc-editor.org/info/rfc9048/)（EAP-AKA′，更新 RFC 4187 与 RFC 5448）、[RFC 4555](https://www.rfc-editor.org/info/rfc4555/)（MOBIKE）、[RFC 4301](https://www.rfc-editor.org/info/rfc4301/)（IPsec）、[RFC 3261](https://www.rfc-editor.org/info/rfc3261/)（SIP 注册有效期与 Retry-After）。参考 MOBIKE 规范不表示本引擎已实现地址迁移；当前不声明该能力。
 

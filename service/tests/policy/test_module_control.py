@@ -106,6 +106,17 @@ with tempfile.TemporaryDirectory(prefix="module-mock-", dir=HERE) as directory:
     assert unknown.returncode != 0 and json.loads(unknown.stdout)["code"] == "ENGINE_OWNERSHIP_UNKNOWN"
     assert not list((base / "run").iterdir())
     print("PASS status proves recorded process death; unknown ownership is an error; status creates no files or locks.")
+    # Only explicit built-in selectors may enter the proxy namespace.
+    (fixture / "config").mkdir()
+    selector = fixture / "selector.sh"
+    selector.write_text("BASE=$1\niccid=8900000000000000019\n" + function("builtin_clash_tun")
+                        + "\nbuiltin_clash_tun\n", encoding="utf-8", newline="\n")
+    for transport, expected in [("iface:wfctun0", "wfctun0"), ("iface:wfctun1", "wfctun1"),
+                                ("system", ""), ("iface:wlan0", ""), ("iface:eth0", ""), ("iface:tun0", "")]:
+        (fixture / "config/8900000000000000019.json").write_text(json.dumps({"transport": transport}))
+        selected = subprocess.run([str(BASH), selector.as_posix(), fixture.as_posix()], capture_output=True, text=True)
+        assert selected.stdout.strip() == expected and (selected.returncode == 0) == bool(expected)
+    print("PASS system and external interfaces never select a built-in proxy namespace.")
     # Execute the actual root-helper gate. The helper is a shell function; no
     # Android entry point, native engine, network or live configuration is used.
     gate = fixture / "egress.sh"
@@ -114,7 +125,7 @@ MODDIR=$1
 BASE=$1
 iccid=8900000000000000019
 APP_PROCESS=mock_app_process
-response='{"ok":true,"code":"TUN_EGRESS_CONFIRMED"}'
+response='{"ok":true,"code":"EGRESS_CONFIRMED"}'
 helper_exit=0
 mock_app_process() {
  [ "$CLASSPATH" = "$MODDIR/system/priv-app/SmartVoWifiCall/SmartVoWifiCall.apk" ] || return 20
@@ -124,18 +135,18 @@ mock_app_process() {
  printf '%s\n' "$response"
  return "$helper_exit"
 }
-''' + function("check_tun_egress") + r'''
-check_tun_egress
+''' + function("check_egress") + r'''
+check_egress
 response='{"ok":false,"code":"TUN_REQUIRED_OR_UNAVAILABLE"}'
-if check_tun_egress;then exit 31;fi
+if check_egress;then exit 31;fi
 response=''
-if check_tun_egress;then exit 32;fi
-response='{"ok":true,"code":"TUN_EGRESS_CONFIRMED"}'
+if check_egress;then exit 32;fi
+response='{"ok":true,"code":"EGRESS_CONFIRMED"}'
 helper_exit=1
-if check_tun_egress;then exit 33;fi
+if check_egress;then exit 33;fi
 APP_PROCESS="$BASE/helper-does-not-exist"
-if check_tun_egress;then exit 34;fi
-printf 'PASS TUN startup gate accepts verified helper result; absent TUN, empty result and helper failures block.\n'
+if check_egress;then exit 34;fi
+printf 'PASS egress startup gate accepts verified helper result; unavailable egress, empty result and helper failures block.\n'
 ''', encoding="utf-8", newline="\n")
     subprocess.run([str(BASH), gate.as_posix(), fixture.as_posix()], check=True)
     # Verify placement in the real start branch: rejection must happen before
@@ -149,11 +160,11 @@ BASE=$1
 uid=12345
 set -- start 8900000000000000019 12345
 fail() { printf '{"ok":false,"code":"%s"}\n' "$1";exit 1; }
-check_tun_egress() { return 1; }
+check_egress() { return 1; }
 owned_pid() { printf 'UNEXPECTED_PROCESS_ACCESS\n';exit 41; }
 ''' + start.group(1), encoding="utf-8", newline="\n")
     result = subprocess.run([str(BASH), blocked.as_posix(), fixture.as_posix()], capture_output=True, text=True)
-    assert result.returncode == 1 and json.loads(result.stdout)["code"] == "TUN_EGRESS_UNAVAILABLE", (result.stdout, result.stderr)
-    print("PASS rejected TUN blocks actual start branch before engine/socket operations.")
+    assert result.returncode == 1 and json.loads(result.stdout)["code"] == "EGRESS_UNAVAILABLE", (result.stdout, result.stderr)
+    print("PASS rejected egress blocks actual start branch before engine/socket operations.")
 for name in ("control.sh", "service.sh", "uninstall.sh"):
     subprocess.run([str(BASH), "-n", str(ROOT / "module" / name)], check=True)

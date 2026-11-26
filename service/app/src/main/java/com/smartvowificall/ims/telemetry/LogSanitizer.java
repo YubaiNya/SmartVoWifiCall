@@ -310,6 +310,7 @@ public final class LogSanitizer {
 
   public static String classifyEgress(String selectedInterface, boolean isVoWifiTun) {
     if (selectedInterface == null || selectedInterface.isEmpty()) return "none";
+    if ("@system".equals(selectedInterface)) return "system_route";
     if ("wfctun0".equals(selectedInterface) || "wfctun1".equals(selectedInterface)) return "builtin_clash";
     return isVoWifiTun ? "external_tun" : "non_tun";
   }

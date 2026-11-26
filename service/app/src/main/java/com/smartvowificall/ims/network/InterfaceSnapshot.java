@@ -100,6 +100,11 @@ public final class InterfaceSnapshot {
   }
 
   public Selection selection(String name) {
+    if (TunEgress.isSystemRoute(name)) {
+      boolean route = entries.values().stream().anyMatch(e -> e.available()
+          && !isBuiltinClashTun(e.name) && e.defaultNetwork);
+      return new Selection(name, route ? SelectionState.AVAILABLE : SelectionState.MISSING, null);
+    }
     if (name == null || name.isEmpty())
       return new Selection(name, SelectionState.NOT_SELECTED, null);
     if (!validName(name))

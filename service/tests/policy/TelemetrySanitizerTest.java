@@ -106,6 +106,7 @@ public final class TelemetrySanitizerTest {
     check(!dumped.contains("sub.example.com"), "ring buffer url redacted");
     check(dumped.contains(LogSanitizer.HIDDEN), "ring buffer uses [Hidden]");
     check(dumped.contains("registered"), "non-sensitive message kept");
+    eq("system_route", LogSanitizer.classifyEgress("@system", false), "system route telemetry is distinct from a physical NIC");
 
     // Lifecycle attribution survives the actual sanitizer without needing SIM identifiers.
     Map<String, Object> lifecycle = new LinkedHashMap<>();

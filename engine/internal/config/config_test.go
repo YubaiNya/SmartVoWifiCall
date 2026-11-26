@@ -24,6 +24,30 @@ func validSample() *Config {
 	}
 }
 
+func TestExplicitAndSystemRouteSelectors(t *testing.T) {
+	for transport, want := range map[string]string{"system": "", "iface:wlan0": "wlan0", "iface:eth0": "eth0", "iface:rmnet_data0": "rmnet_data0", "iface:wfctun0": "wfctun0"} {
+		c := validSample()
+		c.Transport = transport
+		if err := c.Validate(true); err != nil {
+			t.Fatalf("valid route rejected: %s: %v", transport, err)
+		}
+		got, err := c.InterfaceName()
+		if err != nil || got != want {
+			t.Fatal("route selector changed")
+		}
+		if c.SanitizedMap()["transport"] != transport {
+			t.Fatal("diagnostics lost routing mode")
+		}
+	}
+	for _, transport := range []string{"", "auto", "iface:", "iface:..", "iface:../lo", "system:wlan0"} {
+		c := validSample()
+		c.Transport = transport
+		if c.Validate(true) == nil {
+			t.Fatal("ambiguous/invalid route accepted")
+		}
+	}
+}
+
 func TestValidateStrictAndDerivations(t *testing.T) {
 	c := validSample()
 	if err := c.Validate(true); err != nil {
@@ -98,9 +122,9 @@ func TestResolveHostIPv4OverUDP(t *testing.T) {
 			return
 		}
 		var ans bytes.Buffer
-		ans.Write(buf[0:2])                                         // TXID
+		ans.Write(buf[0:2])                                               // TXID
 		ans.Write([]byte{0x81, 0x80, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0}) // 1 answer
-		ans.Write(buf[12:n])                                        // Echo question
+		ans.Write(buf[12:n])                                              // Echo question
 		ans.Write([]byte{0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 60, 0, 4, 203, 0, 113, 9})
 		_, _ = pc.WriteTo(ans.Bytes(), addr)
 	}()
