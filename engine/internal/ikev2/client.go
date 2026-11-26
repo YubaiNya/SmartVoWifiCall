@@ -1,0 +1,1119 @@
+package ikev2
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha1"
+	"crypto/subtle"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"net"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/diag"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/ipsec"
+	"github.com/YubaiNya/SmartVoWifiCall/engine/internal/simauth"
+)
+
+// SessionConfig holds parameters for establishing an RFC 7296 + EAP-AKA ePDG tunnel.
+type SessionConfig struct {
+	EPDGAddr       string // host:port (default port 500 or 4500 for NAT-T)
+	NATTAddr       string // optional explicit NAT-T port (default same host port 4500)
+	EAPIdentity    string // 0<IMSI>@nai.epc.mnc<MNC3>.mcc<MCC>.3gppnetwork.org or @wlan...
+	APN            string // usually "ims"
+	IMEI           string // 15-digit IMEI for 3GPP TS 24.302 DEVICE_IDENTITY (41101)
+	ProfileTag     string // non-PII diagnostic tag for NAI/APN profile logging
+	Slot           int
+	ICCID          string
+	SimAuth        simauth.Provider
+	DPDInterval    time.Duration
+	Logger         *diag.Logger
+	PreferIPv6     bool
+	ProxyTransport bool // Isolated proxy TUN may rewrite UDP reply source addresses.
+}
+
+// AuthRejectedError reports an ePDG IKE_AUTH rejection carrying RFC 7296 notify codes (e.g. 24).
+type AuthRejectedError struct {
+	Notifies       []uint16
+	Stage          string
+	RetryAfter     time.Duration
+	RetryDisabled  bool
+	BackoffTrusted bool
+}
+
+func (e *AuthRejectedError) Error() string {
+	if e.Stage == "final" {
+		return fmt.Sprintf("IKE_AUTH_FINAL_REJECTED_NOTIFIES_%v", e.Notifies)
+	}
+	return fmt.Sprintf("IKE_AUTH_MISSING_EAP_NOTIFIES_%v", e.Notifies)
+}
+
+// IsAuthFailed reports whether err is a pre-EAP IKE_AUTH rejection (Notify 24 AUTHENTICATION_FAILED).
+func IsAuthFailed(err error) bool {
+	var re *AuthRejectedError
+	if !errors.As(err, &re) || re.Stage == "final" {
+		return false
+	}
+	for _, n := range re.Notifies {
+		if n == NotifyAuthenticationFailed {
+			return true
+		}
+	}
+	return false
+}
+
+// Client manages an active IKEv2 SA + userspace IPsec ESP Tunnel over NAT-T UDP.
+type Client struct {
+	cfg        SessionConfig
+	conn       *net.UDPConn
+	remoteAddr *net.UDPAddr
+	nattMode   bool
+
+	mu              sync.Mutex
+	spii            uint64
+	spir            uint64
+	msgID           uint32
+	keys            *IKEKeys
+	tunnel          *ipsec.Tunnel
+	cfgResult       *CFGResult
+	pending         map[uint32]chan []byte
+	pendingExchange map[uint32]byte
+	closed          bool
+	stopCh          chan struct{}
+	deadCh          chan struct{}
+	deadOnce        sync.Once
+	lastRecv        atomic.Int64
+	lastSend        atomic.Int64
+	peerRequestSeen bool
+	lastPeerRequest uint32
+	espErrors       atomic.Uint32
+	wg              sync.WaitGroup
+}
+
+func Connect(ctx context.Context, cfg SessionConfig) (*Client, error) {
+	if cfg.SimAuth == nil {
+		return nil, errors.New("IKE_SIM_AUTH_REQUIRED")
+	}
+	if cfg.APN == "" {
+		cfg.APN = "ims"
+	}
+	if cfg.DPDInterval <= 0 {
+		cfg.DPDInterval = 35 * time.Second
+	}
+	raddr, err := net.ResolveUDPAddr("udp4", cfg.EPDGAddr)
+	if err != nil {
+		return nil, fmt.Errorf("IKE_RESOLVE_EPDG: %w", err)
+	}
+	conn, err := openUDP(raddr, cfg.ProxyTransport)
+	if err != nil {
+		return nil, fmt.Errorf("IKE_DIAL_UDP: %w", err)
+	}
+
+	var spib [8]byte
+	_, _ = rand.Read(spib[:])
+	now := time.Now().UnixNano()
+	c := &Client{
+		cfg:             cfg,
+		conn:            conn,
+		remoteAddr:      raddr,
+		nattMode:        raddr.Port == 4500,
+		spii:            binary.BigEndian.Uint64(spib[:]),
+		pending:         make(map[uint32]chan []byte),
+		pendingExchange: make(map[uint32]byte),
+		stopCh:          make(chan struct{}),
+		deadCh:          make(chan struct{}),
+	}
+	c.lastRecv.Store(now)
+	c.lastSend.Store(now)
+
+	c.wg.Add(1)
+	go c.readLoop(conn)
+
+	if err := c.handshake(ctx); err != nil {
+		if cfg.Logger != nil {
+			cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "failed", "error": diag.Sanitize(err.Error()), "profile": cfg.ProfileTag})
+		}
+		_ = c.Close()
+		return nil, err
+	}
+
+	c.wg.Add(1)
+	go c.dpdLoop()
+	return c, nil
+}
+
+func openUDP(remote *net.UDPAddr, proxy bool) (*net.UDPConn, error) {
+	if !proxy {
+		return net.DialUDP("udp4", nil, remote)
+	}
+	// Select the route's local address, but leave the receiving socket unconnected.
+	// Some UDP proxy relays return their own endpoint as the packet source.
+	route, err := net.DialUDP("udp4", nil, remote)
+	if err != nil {
+		return nil, err
+	}
+	ip := append(net.IP(nil), route.LocalAddr().(*net.UDPAddr).IP...)
+	_ = route.Close()
+	return net.ListenUDP("udp4", &net.UDPAddr{IP: ip})
+}
+
+func writeUDP(conn *net.UDPConn, remote *net.UDPAddr, packet []byte) (int, error) {
+	if conn.RemoteAddr() != nil {
+		return conn.Write(packet)
+	}
+	return conn.WriteToUDP(packet, remote)
+}
+
+func (c *Client) Tunnel() *ipsec.Tunnel { return c.tunnel }
+func (c *Client) Config() *CFGResult    { return c.cfgResult }
+func (c *Client) Dead() <-chan struct{} { return c.deadCh }
+
+func (c *Client) markDead(reason string) {
+	c.deadOnce.Do(func() {
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Warn("ikev2", "IKEv2 session dead: "+reason, nil)
+		}
+		close(c.deadCh)
+	})
+}
+
+func (c *Client) SendESP(esp []byte) error {
+	c.mu.Lock()
+	closed := c.closed
+	conn := c.conn
+	remote := c.remoteAddr
+	c.mu.Unlock()
+	if closed || conn == nil {
+		return net.ErrClosed
+	}
+	_, err := writeUDP(conn, remote, esp)
+	if err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
+	return err
+}
+
+func (c *Client) sendNATKeepalive() {
+	c.mu.Lock()
+	closed := c.closed
+	natt := c.nattMode
+	conn := c.conn
+	remote := c.remoteAddr
+	c.mu.Unlock()
+	if closed || !natt || conn == nil {
+		return
+	}
+	// RFC 3948 §4: single 0xFF byte keeps NAT/proxy UDP mapping alive without touching IKE msgID.
+	if _, err := writeUDP(conn, remote, []byte{0xFF}); err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
+}
+
+func (c *Client) sendIKE(pkt []byte) error {
+	c.mu.Lock()
+	natt := c.nattMode
+	conn := c.conn
+	remote := c.remoteAddr
+	c.mu.Unlock()
+	var err error
+	if natt {
+		framed := make([]byte, 4+len(pkt))
+		copy(framed[4:], pkt)
+		_, err = writeUDP(conn, remote, framed)
+	} else {
+		_, err = writeUDP(conn, remote, pkt)
+	}
+	if err == nil {
+		c.lastSend.Store(time.Now().UnixNano())
+	}
+	return err
+}
+
+func (c *Client) exchange(ctx context.Context, msgID uint32, pkt []byte) ([]byte, error) {
+	ch := make(chan []byte, 1)
+	c.mu.Lock()
+	c.pending[msgID] = ch
+	c.pendingExchange[msgID] = pkt[18]
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, msgID)
+		delete(c.pendingExchange, msgID)
+		c.mu.Unlock()
+	}()
+
+	for attempt := 0; attempt < 3; attempt++ {
+		c.traceIKE("out", pkt, attempt+1)
+		if err := c.sendIKE(pkt); err != nil {
+			return nil, err
+		}
+		timer := time.NewTimer(3 * time.Second)
+		select {
+		case resp := <-ch:
+			timer.Stop()
+			return resp, nil
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-c.stopCh:
+			timer.Stop()
+			return nil, net.ErrClosed
+		case <-timer.C:
+		}
+	}
+	return nil, errors.New("IKE_EXCHANGE_TIMEOUT")
+}
+
+func (c *Client) readLoop(conn *net.UDPConn) {
+	defer c.wg.Done()
+	buf := make([]byte, 4096)
+	for {
+		n, err := conn.Read(buf)
+		if err != nil {
+			c.mu.Lock()
+			isCurrent := c.conn == conn && !c.closed
+			c.mu.Unlock()
+			if isCurrent {
+				c.markDead("UDP_READ_ERROR")
+			}
+			return
+		}
+		if n < 4 {
+			continue
+		}
+		data := make([]byte, n)
+		copy(data, buf[:n])
+
+		c.mu.Lock()
+		natt := c.nattMode
+		tun := c.tunnel
+		spir := c.spir
+		keys := c.keys
+		c.mu.Unlock()
+
+		// NAT-T demux (RFC 3948): 4 zero bytes = IKE packet; non-zero SPI = ESP packet.
+		if natt && binary.BigEndian.Uint32(data[0:4]) != 0 {
+			if tun != nil {
+				if err := tun.HandleESP(data); err == nil {
+					c.lastRecv.Store(time.Now().UnixNano())
+				} else if c.cfg.Logger != nil && c.espErrors.Add(1) <= 8 {
+					c.cfg.Logger.Warn("ipsec", "ESP receive rejected: "+err.Error(), nil)
+				}
+			}
+			continue
+		}
+		if natt && binary.BigEndian.Uint32(data[0:4]) == 0 {
+			data = data[4:]
+		}
+		if len(data) < 28 {
+			continue
+		}
+		// A proxy source address is not an IKE identity. Correlate both SPIs before
+		// accepting a packet; encrypted exchanges still require integrity and AUTH.
+		if binary.BigEndian.Uint64(data[:8]) != c.spii || (spir != 0 && binary.BigEndian.Uint64(data[8:16]) != spir) {
+			continue
+		}
+		if data[17] != Version20 || int(binary.BigEndian.Uint32(data[24:28])) != len(data) {
+			continue
+		}
+		// SPIs are public correlation values, not proof of liveness. An invalid
+		// integrity tag or a replay must not suppress DPD (RFC 7296 section 2.4).
+		if keys != nil {
+			h, _, err := DecodeEncryptedPacket(data, keys, false)
+			if err != nil || h.Flags&FlagInitiator != 0 {
+				continue
+			}
+		}
+		c.traceIKE("in", data, 0)
+		msgID := binary.BigEndian.Uint32(data[20:24])
+		flags := data[19]
+		if (flags & FlagResponse) != 0 {
+			c.mu.Lock()
+			ch := c.pending[msgID]
+			expected := c.pendingExchange[msgID]
+			c.mu.Unlock()
+			if ch != nil && data[18] == expected {
+				select {
+				case ch <- data:
+					if keys != nil {
+						c.lastRecv.Store(time.Now().UnixNano())
+					}
+				default:
+				}
+			}
+		} else if data[18] == ExchangeInformational {
+			if keys == nil {
+				continue
+			}
+			c.mu.Lock()
+			if !c.peerRequestSeen || msgID > c.lastPeerRequest {
+				c.peerRequestSeen, c.lastPeerRequest = true, msgID
+				c.lastRecv.Store(time.Now().UnixNano())
+			}
+			c.mu.Unlock()
+			// Reply to peer DPD / INFORMATIONAL request.
+			go c.replyInformational(data)
+		}
+	}
+}
+
+func (c *Client) replyInformational(req []byte) {
+	c.mu.Lock()
+	keys := c.keys
+	spii, spir := c.spii, c.spir
+	c.mu.Unlock()
+	if keys == nil {
+		return
+	}
+	h, inner, err := DecodeEncryptedPacket(req, keys, false)
+	if err != nil {
+		return
+	}
+	resp, err := EncodeEncryptedPacket(Header{
+		SPIi:      spii,
+		SPIr:      spir,
+		Exchange:  ExchangeInformational,
+		Flags:     FlagInitiator | FlagResponse,
+		MessageID: h.MessageID,
+	}, nil, keys, true)
+	if err == nil {
+		_ = c.sendIKE(resp)
+	}
+	if FindPayload(inner, PayloadDelete) != nil {
+		c.markDead("PEER_DELETE")
+	}
+}
+
+func (c *Client) handshake(ctx context.Context) error {
+	// 1. IKE_SA_INIT (handles COOKIE=16390 and INVALID_KE_PAYLOAD=17 automatic retries)
+	dhGroup := DHGroupMODP2048
+	var cookie []byte
+	var ni, nr, initReq, initResponse []byte
+	var respHdr Header
+	var respPayloads []Payload
+	dh, err := GenerateDH(dhGroup)
+	if err != nil {
+		return err
+	}
+	ni = make([]byte, 32)
+	if _, err := rand.Read(ni); err != nil {
+		return err
+	}
+	// RFC 7296 2.6: COOKIE retries preserve every other payload byte. The
+	// nonce and offered algorithms also survive INVALID_KE_PAYLOAD (2.6.1).
+	basePayloads := []Payload{
+		{Type: PayloadSA, Body: BuildMultiIKESAProposal(dhGroup)},
+		{Type: PayloadKE, Body: BuildKEPayload(dhGroup, dh.Public)},
+		{Type: PayloadNonce, Body: ni},
+		{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionSourceIP, natHash(c.spii, 0, c.conn.LocalAddr().(*net.UDPAddr)))},
+		{Type: PayloadNotify, Body: buildNotify(NotifyNATDetectionDestIP, natHash(c.spii, 0, c.remoteAddr))},
+	}
+	cookieRetries, dhRetries := 0, 0
+	initComplete := false
+
+	// At most two COOKIE retries and one group correction; this allows the
+	// COOKIE -> INVALID_KE -> new COOKIE sequence without extending cookie loops.
+	for initTry := 0; initTry < 4; initTry++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		initPayloads := make([]Payload, 0, 6)
+		if len(cookie) > 0 {
+			initPayloads = append(initPayloads, Payload{Type: PayloadNotify, Body: buildNotify(16390, cookie)})
+		}
+		initPayloads = append(initPayloads, basePayloads...)
+		initReq = EncodePacket(Header{
+			SPIi:      c.spii,
+			Exchange:  ExchangeIKESAInit,
+			Flags:     FlagInitiator,
+			MessageID: 0,
+		}, initPayloads)
+
+		initRespRaw, err := c.exchange(ctx, 0, initReq)
+		if err != nil {
+			return fmt.Errorf("IKE_SA_INIT_FAILED: %w", err)
+		}
+		initResponse = append([]byte(nil), initRespRaw...)
+		respHdr, respPayloads, err = DecodePacket(initRespRaw)
+		if err != nil {
+			return fmt.Errorf("IKE_SA_INIT_DECODE: %w", err)
+		}
+		if FindPayload(respPayloads, PayloadKE) != nil && FindPayload(respPayloads, PayloadNonce) != nil {
+			initComplete = true
+			break
+		}
+		var notifies []uint16
+		var nextCookie []byte
+		var requestedGroup uint16
+		for _, p := range respPayloads {
+			if p.Type == PayloadNotify {
+				if nt, ndata, ok := ParseNotify(p.Body); ok {
+					notifies = append(notifies, nt)
+					if nt == 16390 {
+						if nextCookie != nil || p.Body[0] != 0 || p.Body[1] != 0 || len(ndata) < 1 || len(ndata) > 64 {
+							return errors.New("IKE_COOKIE_INVALID")
+						}
+						nextCookie = append([]byte(nil), ndata...)
+					} else if nt == 17 {
+						if requestedGroup != 0 || p.Body[0] != 0 || p.Body[1] != 0 || len(ndata) != 2 {
+							return errors.New("IKE_DH_HINT_INVALID")
+						}
+						requestedGroup = binary.BigEndian.Uint16(ndata)
+						if requestedGroup == 0 {
+							return errors.New("IKE_DH_GROUP_NOT_OFFERED")
+						}
+					}
+				}
+			}
+		}
+		if nextCookie != nil {
+			if cookieRetries >= 2 {
+				return errors.New("IKE_COOKIE_RETRY_EXHAUSTED")
+			}
+			cookieRetries++
+			cookie = nextCookie
+		} else if requestedGroup != 0 {
+			if dhRetries >= 1 {
+				return errors.New("IKE_DH_RETRY_EXHAUSTED")
+			}
+			if requestedGroup == dhGroup {
+				return errors.New("IKE_DH_RETRY_UNCHANGED")
+			}
+			switch requestedGroup {
+			case DHGroupMODP2048, DHGroupMODP1536, DHGroupMODP1024, DHGroupECP256:
+			default:
+				return errors.New("IKE_DH_GROUP_NOT_OFFERED")
+			}
+			dh, err = GenerateDH(requestedGroup)
+			if err != nil {
+				return err
+			}
+			dhGroup = requestedGroup
+			dhRetries++
+			basePayloads[1] = Payload{Type: PayloadKE, Body: BuildKEPayload(dhGroup, dh.Public)}
+		} else {
+			return fmt.Errorf("IKE_SA_INIT_REJECTED_NOTIFIES_%v", notifies)
+		}
+		if nextCookie != nil || requestedGroup != 0 {
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Info("ikev2", fmt.Sprintf("IKE_SA_INIT retrying dh=%d cookieLen=%d notifies=%v", dhGroup, len(cookie), notifies), nil)
+			}
+			continue
+		}
+	}
+	if !initComplete {
+		return errors.New("IKE_SA_INIT_RETRY_EXHAUSTED")
+	}
+
+	c.mu.Lock()
+	c.spir = respHdr.SPIr
+	c.mu.Unlock()
+	saRespP := FindPayload(respPayloads, PayloadSA)
+	keP := FindPayload(respPayloads, PayloadKE)
+	nrP := FindPayload(respPayloads, PayloadNonce)
+	if keP == nil || len(keP.Body) < 4 || nrP == nil || len(nrP.Body) < 16 {
+		return errors.New("IKE_SA_INIT_MISSING_KE_OR_NONCE")
+	}
+	ikeSuite := DefaultIKESuite()
+	if saRespP != nil {
+		ikeSuite = ParseSelectedIKESuite(saRespP.Body)
+	}
+	nr = nrP.Body
+	secret, err := dh.SharedSecret(keP.Body[4:])
+	if err != nil {
+		return fmt.Errorf("IKE_DH_FAILED: %w", err)
+	}
+	c.mu.Lock()
+	c.keys = DeriveIKEKeysWithSuite(ni, nr, secret, c.spii, c.spir, ikeSuite)
+	c.mu.Unlock()
+	if c.cfg.Logger != nil {
+		c.cfg.Logger.Info("ikev2", fmt.Sprintf("IKE_SA_INIT established dh=%d encBytes=%d prf=%d auth=%d",
+			dhGroup, ikeSuite.EncKeyLen, ikeSuite.PRFID, ikeSuite.AuthID), nil)
+	}
+
+	// Switch to UDP 4500 NAT-T if configured or responder sent NAT notifications while on port 500.
+	if !c.nattMode && c.cfg.NATTAddr != "" {
+		if nattAddr, err := net.ResolveUDPAddr("udp4", c.cfg.NATTAddr); err == nil {
+			if nattConn, err := openUDP(nattAddr, c.cfg.ProxyTransport); err == nil {
+				c.mu.Lock()
+				old := c.conn
+				c.conn = nattConn
+				c.remoteAddr = nattAddr
+				c.nattMode = true
+				c.mu.Unlock()
+				_ = old.Close()
+				c.wg.Add(1)
+				go c.readLoop(nattConn)
+			}
+		}
+	}
+
+	// 2. IKE_AUTH #1 (no AUTH -> triggers EAP-AKA / EAP-AKA' per RFC 7296 §2.16)
+	var childSPIBuf [4]byte
+	_, _ = rand.Read(childSPIBuf[:])
+	localChildSPI := binary.BigEndian.Uint32(childSPIBuf[:])
+	if localChildSPI == 0 {
+		localChildSPI = 0x10203040
+	}
+	idiBody := BuildIDPayload(3, c.cfg.EAPIdentity) // ID_RFC822_ADDR = 3
+	idrBody := BuildIDPayload(2, c.cfg.APN)         // ID_FQDN = 2
+
+	auth1Payloads := []Payload{
+		{Type: PayloadIDi, Body: idiBody},
+		{Type: PayloadNotify, Body: buildNotify(16417, nil)},
+		{Type: PayloadNotify, Body: buildNotify(NotifyInitialContact, nil)},
+		{Type: PayloadIDr, Body: idrBody},
+		{Type: PayloadCP, Body: BuildCFGRequestForFamily(c.cfg.PreferIPv6)},
+		{Type: PayloadSA, Body: BuildMultiChildESPProposal(localChildSPI)},
+		{Type: PayloadTSi, Body: BuildTSAll(c.cfg.PreferIPv6)},
+		{Type: PayloadTSr, Body: BuildTSAll(c.cfg.PreferIPv6)},
+	}
+	c.msgID = 1
+	auth1Req, err := EncodeEncryptedPacket(Header{
+		SPIi:      c.spii,
+		SPIr:      c.spir,
+		Exchange:  ExchangeIKEAuth,
+		Flags:     FlagInitiator,
+		MessageID: c.msgID,
+	}, auth1Payloads, c.keys, true)
+	if err != nil {
+		return err
+	}
+	respRaw, err := c.exchange(ctx, c.msgID, auth1Req)
+	if err != nil {
+		return fmt.Errorf("IKE_AUTH_1_FAILED: %w", err)
+	}
+	_, respInner, err := DecodeEncryptedPacket(respRaw, c.keys, false)
+	if err != nil {
+		return fmt.Errorf("IKE_AUTH_1_DECRYPT: %w", err)
+	}
+
+	// 3. EAP-AKA / EAP-AKA' loop (supports AT_AUTS resync retries & 3GPP DEVICE_IDENTITY 41101)
+	var msk, responderID []byte
+	deviceIDSent, eapSucceeded, serverAuthenticated := false, false, false
+	var deviceIDReqType byte
+	for round := 0; round < 16; round++ {
+		if id := FindPayload(respInner, PayloadIDr); id != nil {
+			responderID = append([]byte(nil), id.Body...)
+		}
+		for _, p := range respInner {
+			if p.Type == PayloadNotify {
+				if nt, ndata, ok := ParseNotify(p.Body); ok && nt == NotifyDeviceIdentity {
+					deviceIDReqType = ParseDeviceIdentityRequest(ndata)
+				}
+			}
+		}
+		eapP := FindPayload(respInner, PayloadEAP)
+		if eapP == nil {
+			return authRejection(respInner, "", false)
+		}
+		if len(eapP.Body) < 4 || int(binary.BigEndian.Uint16(eapP.Body[2:4])) != len(eapP.Body) {
+			return errors.New("IKE_EAP_SHORT")
+		}
+		code := eapP.Body[0]
+		eapID := eapP.Body[1]
+		if code == EAPCodeSuccess {
+			if !serverAuthenticated || len(msk) != 64 || len(eapP.Body) != 4 {
+				return errors.New("IKE_EAP_SUCCESS_BEFORE_AUTHENTICATED_CHALLENGE")
+			}
+			eapSucceeded = true
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": c.cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "eap_success", "round": round + 1, "mskLength": len(msk)})
+			}
+			break
+		}
+		if code == EAPCodeFailure {
+			return errors.New("IKE_EAP_FAILURE")
+		}
+		if code != EAPCodeRequest || len(eapP.Body) < 5 {
+			return fmt.Errorf("IKE_EAP_UNEXPECTED_CODE_%d", code)
+		}
+		eapType := eapP.Body[4]
+		var eapReply []byte
+		if eapType == 1 {
+			// Standard RFC 3748 EAP-Request/Identity
+			idBytes := []byte(c.cfg.EAPIdentity)
+			eapReply = make([]byte, 5+len(idBytes))
+			eapReply[0] = EAPCodeResponse
+			eapReply[1] = eapID
+			binary.BigEndian.PutUint16(eapReply[2:4], uint16(len(eapReply)))
+			eapReply[4] = 1
+			copy(eapReply[5:], idBytes)
+			if c.cfg.Logger != nil {
+				c.cfg.Logger.Info("ikev2", "answered EAP-Identity request", nil)
+			}
+		} else {
+			if len(eapP.Body) < 8 {
+				return fmt.Errorf("IKE_EAP_SHORT_TYPE_%d", eapType)
+			}
+			subtype := eapP.Body[5]
+			if eapType != EAPTypeAKA && eapType != EAPTypeAKAPrime {
+				return fmt.Errorf("IKE_EAP_UNSUPPORTED_TYPE_%d_%d", eapType, subtype)
+			}
+			switch subtype {
+			case 5: // RFC 4187 AKA-Identity
+				idBytes := []byte(c.cfg.EAPIdentity)
+				pad := (4 - ((4 + len(idBytes)) % 4)) % 4
+				attrLenBytes := 4 + len(idBytes) + pad
+				var buf bytes.Buffer
+				buf.Write([]byte{EAPCodeResponse, eapID, 0, 0, eapType, 5, 0, 0})
+				buf.WriteByte(14) // AT_IDENTITY
+				buf.WriteByte(byte(attrLenBytes / 4))
+				var idLen [2]byte
+				binary.BigEndian.PutUint16(idLen[:], uint16(len(idBytes)))
+				buf.Write(idLen[:])
+				buf.Write(idBytes)
+				if pad > 0 {
+					buf.Write(make([]byte, pad))
+				}
+				eapReply = buf.Bytes()
+				binary.BigEndian.PutUint16(eapReply[2:4], uint16(len(eapReply)))
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("answered EAP-AKA Identity (type=%d)", eapType), nil)
+				}
+			case AKAChallenge:
+				var derivedMSK []byte
+				eapReply, derivedMSK, err = c.handleEAPAKAChallenge(ctx, eapID, eapType, eapP.Body)
+				if err != nil {
+					return err
+				}
+				if len(derivedMSK) > 0 {
+					msk = derivedMSK
+					serverAuthenticated = true
+				}
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("answered EAP-AKA Challenge (type=%d mskLen=%d)", eapType, len(msk)), nil)
+				}
+			case 12: // AKA-Notification
+				notifCode := uint16(0)
+				off := 8
+				for off+4 <= len(eapP.Body) {
+					alen := int(eapP.Body[off+1]) * 4
+					if alen < 4 || off+alen > len(eapP.Body) {
+						break
+					}
+					if eapP.Body[off] == 12 { // AT_NOTIFICATION
+						notifCode = binary.BigEndian.Uint16(eapP.Body[off+2 : off+4])
+					}
+					off += alen
+				}
+				return fmt.Errorf("IKE_EAP_AKA_NOTIFICATION_%d", notifCode)
+			default:
+				return fmt.Errorf("IKE_EAP_UNSUPPORTED_TYPE_%d_%d", eapType, subtype)
+			}
+		}
+
+		nextPayloads := []Payload{{Type: PayloadEAP, Body: eapReply}}
+		if deviceIDReqType != 0 && serverAuthenticated && !deviceIDSent && c.cfg.IMEI != "" {
+			if devNotify, ok := BuildDeviceIdentityNotify(c.cfg.IMEI, deviceIDReqType); ok {
+				nextPayloads = append(nextPayloads, Payload{Type: PayloadNotify, Body: devNotify})
+				deviceIDSent = true
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ikev2", fmt.Sprintf("attached 3GPP DEVICE_IDENTITY notify (type=%d)", deviceIDReqType), nil)
+				}
+			}
+		}
+
+		c.msgID++
+		nextReq, err := EncodeEncryptedPacket(Header{
+			SPIi:      c.spii,
+			SPIr:      c.spir,
+			Exchange:  ExchangeIKEAuth,
+			Flags:     FlagInitiator,
+			MessageID: c.msgID,
+		}, nextPayloads, c.keys, true)
+		if err != nil {
+			return err
+		}
+		respRaw, err = c.exchange(ctx, c.msgID, nextReq)
+		if err != nil {
+			return fmt.Errorf("IKE_AUTH_EAP_FAILED: %w", err)
+		}
+		_, respInner, err = DecodeEncryptedPacket(respRaw, c.keys, false)
+		if err != nil {
+			return fmt.Errorf("IKE_AUTH_EAP_DECRYPT: %w", err)
+		}
+	}
+	if !eapSucceeded {
+		return errors.New("IKE_EAP_ROUND_LIMIT_WITHOUT_SUCCESS")
+	}
+	if len(msk) != 64 {
+		return errors.New("IKE_EAP_INVALID_MSK_LENGTH")
+	}
+
+	// 4. Final IKE_AUTH with AUTH signed by full 64-byte MSK (RFC 7296 §2.16)
+	authData := ComputeAuthPayloadWithPRF(c.keys.Suite.PRFID, msk, initReq, nr, idiBody, c.keys.SKpi)
+	authBody := append([]byte{2, 0, 0, 0}, authData...) // Auth Method 2 = Shared Key MIC
+	c.msgID++
+	finalReq, err := EncodeEncryptedPacket(Header{
+		SPIi:      c.spii,
+		SPIr:      c.spir,
+		Exchange:  ExchangeIKEAuth,
+		Flags:     FlagInitiator,
+		MessageID: c.msgID,
+	}, []Payload{{Type: PayloadAUTH, Body: authBody}}, c.keys, true)
+	if err != nil {
+		return err
+	}
+	finalRespRaw, err := c.exchange(ctx, c.msgID, finalReq)
+	if err != nil {
+		return fmt.Errorf("IKE_AUTH_FINAL_FAILED: %w", err)
+	}
+	_, finalInner, err := DecodeEncryptedPacket(finalRespRaw, c.keys, false)
+	if err != nil {
+		return fmt.Errorf("IKE_AUTH_FINAL_DECRYPT: %w", err)
+	}
+
+	cpP := FindPayload(finalInner, PayloadCP)
+	saP := FindPayload(finalInner, PayloadSA)
+	if id := FindPayload(finalInner, PayloadIDr); id != nil {
+		responderID = append([]byte(nil), id.Body...)
+	}
+	peerAuth := FindPayload(finalInner, PayloadAUTH)
+	if peerAuth == nil || len(peerAuth.Body) < 4 || peerAuth.Body[0] != 2 || len(responderID) < 4 {
+		if cpP == nil || saP == nil {
+			return authRejection(finalInner, "final", false)
+		}
+		return errors.New("IKE_AUTH_RESPONDER_PROOF_MISSING")
+	}
+	expectedAuth := ComputeAuthPayloadWithPRF(c.keys.Suite.PRFID, msk, initResponse, ni, responderID, c.keys.SKpr)
+	if subtle.ConstantTimeCompare(expectedAuth, peerAuth.Body[4:]) != 1 {
+		return errors.New("IKE_AUTH_RESPONDER_PROOF_INVALID")
+	}
+	if cpP == nil || saP == nil || hasErrorNotify(finalInner) {
+		return authRejection(finalInner, "final", true)
+	}
+	if c.cfg.Logger != nil {
+		c.cfg.Logger.Auth(map[string]any{"protocol": "ikev2", "slot": c.cfg.Slot, "session": fmt.Sprintf("ike%016x", c.spii), "stage": "responder_authenticated"})
+	}
+	cfgRes, err := ParseCFGReply(cpP.Body)
+	if err != nil || cfgRes.LocalIP == nil {
+		return errors.New("IKE_AUTH_NO_LOCAL_IP")
+	}
+	remoteChildSPI, childEncLen, childAuthID, ok := ParseSelectedChildSA(saP.Body)
+	if !ok {
+		return errors.New("IKE_AUTH_NO_CHILD_SPI")
+	}
+	childAuthLen := 32
+	childSuite := ipsec.SuiteAESCBC128HMACSHA256
+	if childAuthID == AuthAlgHMACSHA196 {
+		childAuthLen = 20
+		if childEncLen == 32 {
+			childSuite = ipsec.SuiteAESCBC256HMACSHA1
+		} else {
+			childSuite = ipsec.SuiteAESCBC128HMACSHA1
+		}
+	} else if childEncLen == 32 {
+		childSuite = ipsec.SuiteAESCBC256HMACSHA256
+	}
+
+	// Derive Child SA KEYMAT: Enc_i || Auth_i || Enc_r || Auth_r using negotiated IKE PRF
+	km := c.keys.DeriveChildKeymat(ni, nr, 2*(childEncLen+childAuthLen))
+	off := 0
+	encI := km[off : off+childEncLen]
+	off += childEncLen
+	authI := km[off : off+childAuthLen]
+	off += childAuthLen
+	encR := km[off : off+childEncLen]
+	off += childEncLen
+	authR := km[off : off+childAuthLen]
+	outSA, err := ipsec.NewSA(remoteChildSPI, childSuite, encI, authI, nil)
+	if err != nil {
+		return err
+	}
+	inSA, err := ipsec.NewSA(localChildSPI, childSuite, encR, authR, nil)
+	if err != nil {
+		return err
+	}
+	tun, err := ipsec.NewTunnel(cfgRes.LocalIP, outSA, inSA, c)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.cfgResult = cfgRes
+	c.tunnel = tun
+	c.mu.Unlock()
+	if c.cfg.Logger != nil {
+		c.cfg.Logger.Info("ikev2", "IKE_AUTH established ESP tunnel", map[string]any{
+			"pcscfCount": len(cfgRes.PCSCF),
+		})
+	}
+	return nil
+}
+
+func (c *Client) handleEAPAKAChallenge(ctx context.Context, eapID, eapType byte, pkt []byte) ([]byte, []byte, error) {
+	// Parse EAP-AKA attributes starting at byte 8 (code[1] id[1] len[2] type[1] subtype[1] reserved[2])
+	var rand16, autn16, recvMAC []byte
+	var kdfInput string
+	macOffset := -1
+	off := 8
+	for off+2 <= len(pkt) {
+		atype := pkt[off]
+		alen := int(pkt[off+1]) * 4
+		if alen < 4 || off+alen > len(pkt) {
+			break
+		}
+		val := pkt[off+2 : off+alen]
+		switch atype {
+		case ATRand:
+			if len(val) >= 18 {
+				rand16 = append([]byte(nil), val[2:18]...)
+			}
+		case ATAutn:
+			if len(val) >= 18 {
+				autn16 = append([]byte(nil), val[2:18]...)
+			}
+		case ATMac:
+			if len(val) >= 18 {
+				recvMAC = append([]byte(nil), val[2:18]...)
+				macOffset = off + 4
+			}
+		case ATKdfInput:
+			if len(val) >= 2 {
+				nlen := int(binary.BigEndian.Uint16(val[0:2]))
+				if 2+nlen <= len(val) {
+					kdfInput = string(val[2 : 2+nlen])
+				}
+			}
+		}
+		off += alen
+	}
+	if len(rand16) != 16 || len(autn16) != 16 {
+		return nil, nil, errors.New("EAP_AKA_MISSING_RAND_AUTN")
+	}
+
+	authResp, err := c.cfg.SimAuth.Authenticate(ctx, simauth.AuthRequest{
+		Slot:    c.cfg.Slot,
+		ICCID:   c.cfg.ICCID,
+		AppType: simauth.AppUSIM,
+		RAND:    rand16,
+		AUTN:    autn16,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("SIM_AKA_AUTH_ERROR: %w", err)
+	}
+
+	// Synchronization Failure -> send EAP-Response/AKA-Synchronization-Failure with AT_AUTS
+	if authResp.Status == simauth.StatusSyncFailure {
+		var buf bytes.Buffer
+		buf.Write([]byte{EAPCodeResponse, eapID, 0, 0, eapType, AKASyncFailure, 0, 0})
+		buf.Write([]byte{ATAuts, 4})
+		buf.Write(authResp.AUTS[:14])
+		out := buf.Bytes()
+		binary.BigEndian.PutUint16(out[2:4], uint16(len(out)))
+		return out, nil, nil
+	}
+
+	prime := eapType == EAPTypeAKAPrime
+	var akaKeys *EAPAKAKeys
+	if prime {
+		if kdfInput == "" {
+			kdfInput = "WLAN"
+		}
+		akaKeys = DeriveEAPAKAPrimeKeys(c.cfg.EAPIdentity, kdfInput, authResp.IK, authResp.CK, autn16)
+	} else {
+		akaKeys = DeriveEAPAKAKeys(c.cfg.EAPIdentity, authResp.IK, authResp.CK)
+	}
+
+	if macOffset < 0 || len(recvMAC) != 16 {
+		return nil, nil, errors.New("EAP_AKA_SERVER_MAC_MISSING")
+	}
+	// Verify the server before returning MSK.
+	if macOffset >= 0 && len(recvMAC) == 16 {
+		zeroed := append([]byte(nil), pkt...)
+		for i := 0; i < 16; i++ {
+			zeroed[macOffset+i] = 0
+		}
+		expected := ComputeEAPATMAC(akaKeys.Kaut, zeroed, prime)
+		if subtle.ConstantTimeCompare(recvMAC, expected) != 1 {
+			return nil, nil, errors.New("EAP_AKA_SERVER_MAC_MISMATCH")
+		}
+	}
+
+	// Build EAP-Response/AKA-Challenge with AT_RES + AT_MAC
+	resPad := (4 - ((4 + len(authResp.RES)) % 4)) % 4
+	resAttrLen := 4 + len(authResp.RES) + resPad
+	var buf bytes.Buffer
+	buf.Write([]byte{EAPCodeResponse, eapID, 0, 0, eapType, AKAChallenge, 0, 0})
+	buf.WriteByte(ATRes)
+	buf.WriteByte(byte(resAttrLen / 4))
+	var resBits [2]byte
+	binary.BigEndian.PutUint16(resBits[:], uint16(len(authResp.RES)*8))
+	buf.Write(resBits[:])
+	buf.Write(authResp.RES)
+	for i := 0; i < resPad; i++ {
+		buf.WriteByte(0)
+	}
+	replyMacPos := buf.Len() + 4
+	buf.Write([]byte{ATMac, 5, 0, 0})
+	buf.Write(make([]byte, 16))
+	out := buf.Bytes()
+	binary.BigEndian.PutUint16(out[2:4], uint16(len(out)))
+	mac := ComputeEAPATMAC(akaKeys.Kaut, out, prime)
+	copy(out[replyMacPos:replyMacPos+16], mac)
+	return out, akaKeys.MSK, nil
+}
+
+func (c *Client) dpdLoop() {
+	defer c.wg.Done()
+	// Lightweight 15s tick handles RFC 3948 NAT-T keepalives and RFC 7296 §2.4 idle-only DPD.
+	tickInterval := 15 * time.Second
+	if c.cfg.DPDInterval < tickInterval {
+		tickInterval = c.cfg.DPDInterval
+	}
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-c.stopCh:
+			return
+		case <-c.deadCh:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			// Keep NAT/proxy UDP binding warm without consuming an IKE MessageID.
+			if now.Sub(time.Unix(0, c.lastSend.Load())) >= 12*time.Second {
+				c.sendNATKeepalive()
+			}
+			// RFC 7296 §2.4: If authenticated, fresh ESP or IKE arrived recently,
+			// the tunnel is proven alive — never fire DPD or disrupt an active call.
+			if now.Sub(time.Unix(0, c.lastRecv.Load())) < c.cfg.DPDInterval {
+				continue
+			}
+
+			c.mu.Lock()
+			c.msgID++
+			id := c.msgID
+			keys := c.keys
+			spii, spir := c.spii, c.spir
+			c.mu.Unlock()
+			if keys == nil {
+				continue
+			}
+			dpd, err := EncodeEncryptedPacket(Header{
+				SPIi:      spii,
+				SPIr:      spir,
+				Exchange:  ExchangeInformational,
+				Flags:     FlagInitiator,
+				MessageID: id,
+			}, nil, keys, true)
+			if err != nil {
+				continue
+			}
+
+			// RFC 7296 §2.3 (window size = 1): retransmit the EXACT SAME msgID packet
+			// with exponential backoff; NEVER increment msgID on retry.
+			if !c.runDPDExchange(id, dpd) {
+				select {
+				case <-c.stopCh:
+					return
+				default:
+				}
+				c.markDead("DPD_TIMEOUT")
+				return
+			}
+		}
+	}
+}
+
+func (c *Client) runDPDExchange(msgID uint32, pkt []byte) bool {
+	ch := make(chan []byte, 1)
+	c.mu.Lock()
+	c.pending[msgID] = ch
+	c.pendingExchange[msgID] = ExchangeInformational
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		delete(c.pending, msgID)
+		delete(c.pendingExchange, msgID)
+		c.mu.Unlock()
+	}()
+
+	startRecv := c.lastRecv.Load()
+	waits := []time.Duration{2 * time.Second, 3 * time.Second, 4 * time.Second, 6 * time.Second}
+	for _, w := range waits {
+		if err := c.sendIKE(pkt); err != nil {
+			return false
+		}
+		timer := time.NewTimer(w)
+		select {
+		case response := <-ch:
+			timer.Stop()
+			c.mu.Lock()
+			keys := c.keys
+			c.mu.Unlock()
+			h, _, err := DecodeEncryptedPacket(response, keys, false)
+			if err == nil && h.Exchange == ExchangeInformational && h.MessageID == msgID && h.Flags == FlagResponse {
+				return true
+			}
+		case <-c.stopCh:
+			timer.Stop()
+			return true
+		case <-c.deadCh:
+			timer.Stop()
+			return false
+		case <-timer.C:
+			// If ESP/IKE traffic resumed while probing, peer is alive; keep waiting cleanly on next tick
+			// ONLY if the DPD response also arrives, otherwise keep retransmitting same msgID to keep window synced.
+			if c.lastRecv.Load() > startRecv {
+				// Peer is still sending ESP; try one more retransmit of same msgID or continue loop.
+			}
+		}
+	}
+	return c.lastRecv.Load() > startRecv
+}
+
+func (c *Client) Close() error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	keys := c.keys
+	spii, spir := c.spii, c.spir
+	c.msgID++
+	delID := c.msgID
+	close(c.stopCh)
+	c.mu.Unlock()
+
+	if keys != nil {
+		// Best-effort IKE_SA DELETE notification
+		delBody := []byte{1, 0, 0, 0} // Protocol=IKE(1), SPISize=0, NumSPIs=0
+		if pkt, err := EncodeEncryptedPacket(Header{
+			SPIi:      spii,
+			SPIr:      spir,
+			Exchange:  ExchangeInformational,
+			Flags:     FlagInitiator,
+			MessageID: delID,
+		}, []Payload{{Type: PayloadDelete, Body: delBody}}, keys, true); err == nil {
+			_ = c.sendIKE(pkt)
+		}
+	}
+	err := c.conn.Close()
+	c.wg.Wait()
+	return err
+}
+
+func natHash(spii, spir uint64, addr *net.UDPAddr) []byte {
+	h := sha1.New()
+	var b [18]byte
+	binary.BigEndian.PutUint64(b[0:8], spii)
+	binary.BigEndian.PutUint64(b[8:16], spir)
+	binary.BigEndian.PutUint16(b[16:18], uint16(addr.Port))
+	h.Write(b[0:16])
+	h.Write(addr.IP.To4())
+	h.Write(b[16:18])
+	return h.Sum(nil)
+}
+
+func buildNotify(ntype uint16, data []byte) []byte {
+	out := make([]byte, 4+len(data))
+	binary.BigEndian.PutUint16(out[2:4], ntype)
+	copy(out[4:], data)
+	return out
+}

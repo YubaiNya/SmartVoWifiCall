@@ -1,0 +1,50 @@
+# Local firmware research, raw device dumps, and private evidence
+/analysis/
+/evidence/
+/tools/
+device-private/
+
+# Signing keys, private credentials, secrets, and user proxy profiles
+*.p12
+*.jks
+*.keystore
+*.key
+*.pem
+.env
+.env.*
+*profile.yaml
+*runtime.yaml
+subscription.url
+controller.secret
+
+# Android / Gradle / Kotlin / IDE build outputs & caches
+.gradle/
+.kotlin/
+.idea/
+.vscode/
+*.iml
+build/
+*/build/
+local.properties
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+
+# Test & Python temporary outputs
+__pycache__/
+*.py[cod]
+*.class
+**/.build/
+**/.android-build/
+service/tests/sms/classes/
+service/tests/sms/adapter-classes/
+
+# OS & temporary logs
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+build_out.txt

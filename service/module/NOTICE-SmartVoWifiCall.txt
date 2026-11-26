@@ -1,0 +1,10 @@
+SmartVoWifiCall is an Android IMS integration licensed under GPL-3.0.
+The bundled VoWiFi engine is built from this project's engine/ Go source tree.
+SoftVoWiFi and VoWiFiX are research references, not bundled binary dependencies.
+Third-party notices are preserved in licenses/.
+It also bundles the official MetaCubeX/mihomo Android arm64 binary (GPL-3.0,
+see licenses/MIHOMO-GPL-3.0.txt) solely to proxy Wi-Fi Calling traffic over an
+isolated Linux TUN interface (wfctun0) without starting an Android VPN.
+No SIM configuration, subscriber identifier, or runtime log is packaged here.
+Distributing binaries also requires the corresponding source and applicable
+license notices; acknowledgements alone do not satisfy those obligations.

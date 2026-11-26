@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "updatedAt": "2026-11-24",
+  "carriers": [
+    {"plmn": "45403", "name": "3HK (Three Hong Kong)", "region": "香港 (HK)", "strictHomeIp": true, "epdgFqdn": "wlan.three.com.hk", "paniPolicy": "sanitize", "note": "香港节点直通，ePDG 为 wlan.three.com.hk（标准 3GPP 域名指向 127.0.0.1），严格校验香港原生/住宅 IP"},
+    {"plmn": "45400", "name": "CSL / 1010 / Club SIM", "region": "香港 (HK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc000.mcc454.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用香港节点"},
+    {"plmn": "45419", "name": "CSL / Club SIM", "region": "香港 (HK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc019.mcc454.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用香港节点"},
+    {"plmn": "45412", "name": "CMHK (中国移动香港)", "region": "香港 (HK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc012.mcc454.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用香港节点"},
+    {"plmn": "45406", "name": "SmarTone 数码通", "region": "香港 (HK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc006.mcc454.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用香港节点"},
+    {"plmn": "45501", "name": "CTM 澳门电讯", "region": "澳门 / 香港 (MO/HK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc001.mcc455.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用澳门或香港节点"},
+    {"plmn": "23420", "name": "Three UK", "region": "英国 (UK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc020.mcc234.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "强校验英国 IP，建议选择低延迟英国节点"},
+    {"plmn": "23415", "name": "Vodafone UK", "region": "英国 (UK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc015.mcc234.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "强校验英国 IP，推荐使用英国节点"},
+    {"plmn": "23430", "name": "EE UK", "region": "英国 (UK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc030.mcc234.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用英国节点"},
+    {"plmn": "23410", "name": "O2 UK / Giffgaff", "region": "英国 (UK)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc010.mcc234.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用英国节点"},
+    {"plmn": "310260", "name": "T-Mobile US", "region": "美国 (US)", "strictHomeIp": false, "epdgFqdn": "epdg.epc.mnc260.mcc310.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用美国节点，部分地区支持全球节点"},
+    {"plmn": "310240", "name": "T-Mobile / Ultra / Mint", "region": "美国 (US)", "strictHomeIp": false, "epdgFqdn": "epdg.epc.mnc240.mcc310.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用美国节点"},
+    {"plmn": "310410", "name": "AT&T US", "region": "美国 (US)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.att.net", "paniPolicy": "sanitize", "note": "强校验美国 IP"},
+    {"plmn": "311480", "name": "Verizon US", "region": "美国 (US)", "strictHomeIp": true, "epdgFqdn": "wo.vzwwo.com", "paniPolicy": "sanitize", "note": "强校验美国 IP"},
+    {"plmn": "44010", "name": "NTT Docomo", "region": "日本 (JP)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc010.mcc440.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用日本节点"},
+    {"plmn": "44011", "name": "Rakuten Mobile", "region": "日本 (JP)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc011.mcc440.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用日本节点"},
+    {"plmn": "44020", "name": "SoftBank", "region": "日本 (JP)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc020.mcc440.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用日本节点"},
+    {"plmn": "52501", "name": "Singtel", "region": "新加坡 (SG)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc001.mcc525.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用新加坡节点"},
+    {"plmn": "52505", "name": "StarHub", "region": "新加坡 (SG)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc005.mcc525.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用新加坡节点"},
+    {"plmn": "50501", "name": "Telstra", "region": "澳大利亚 (AU)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc001.mcc505.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用澳大利亚节点"},
+    {"plmn": "50502", "name": "Optus", "region": "澳大利亚 (AU)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc002.mcc505.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用澳大利亚节点"},
+    {"plmn": "46692", "name": "中华电信", "region": "台湾 (TW)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc092.mcc466.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用台湾节点"},
+    {"plmn": "52003", "name": "AIS Thailand", "region": "泰国 (TH)", "strictHomeIp": false, "epdgFqdn": "epdg.epc.mnc003.mcc520.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用泰国节点"},
+    {"plmn": "26201", "name": "Telekom Germany", "region": "德国 (DE)", "strictHomeIp": true, "epdgFqdn": "epdg.epc.mnc001.mcc262.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用德国节点"},
+    {"plmn": "302720", "name": "Rogers Canada", "region": "加拿大 (CA)", "strictHomeIp": false, "epdgFqdn": "epdg.epc.mnc720.mcc302.pub.3gppnetwork.org", "paniPolicy": "sanitize", "note": "推荐使用加拿大节点"}
+  ],
+  "oemQuirks": [
+    {"manufacturer": "xiaomi", "radioPolicy": "enableModemForSlot", "imsOverride": "feature1_only", "note": "HyperOS/MIUI 高通机型实测通过，必须使用 enableModemForSlot 避免双卡连带飞行"},
+    {"manufacturer": "google", "radioPolicy": "enableModemForSlot", "imsOverride": "feature1_only", "note": "Pixel Tensor 优先走通用 Root Binder AKA + APDU 逻辑通道"},
+    {"manufacturer": "samsung", "radioPolicy": "enableModemForSlot", "imsOverride": "feature1_only", "note": "OneUI Exynos/骁龙自动区分 Binder/QRTR，注意开启自检核对单卡射频"},
+    {"manufacturer": "oneplus", "radioPolicy": "enableModemForSlot", "imsOverride": "feature1_only", "note": "ColorOS/OxygenOS 需保持后台自启动与无限制省电策略"},
+    {"manufacturer": "oppo", "radioPolicy": "enableModemForSlot", "imsOverride": "feature1_only", "note": "ColorOS 建议允许自启动并关闭电池深度优化"}
+  ]
+}

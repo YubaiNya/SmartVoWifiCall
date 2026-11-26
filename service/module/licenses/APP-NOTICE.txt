@@ -1,0 +1,18 @@
+SmartVoWifiCall application & VoWiFi engine source, attribution and third-party notices
+
+SmartVoWifiCall application and self-owned Go VoWiFi protocol stack engine (engine/) are licensed under GPL-3.0 (see APP-GPL-3.0.txt).
+
+Third-party libraries and components used by SmartVoWifiCall:
+- AndroidX (Activity, Core, CameraX and transitive libraries): Apache-2.0.
+- Kotlin standard library and Compose compiler/runtime components: Apache-2.0.
+- ZXing core 3.5.3: Apache-2.0.
+- Miuix Compose UI library (top.yukonga.miuix.kmp:miuix-*:0.9.4): Apache-2.0.
+- AndroidLiquidGlass / Backdrop (io.github.kyant0:backdrop-android:2.0.1): Apache-2.0.
+- MetaCubeX/mihomo Android arm64 core (v1.19.34): GPL-3.0 (see MIHOMO-GPL-3.0.txt).
+- Go standard library toolchain used to compile the self-owned VoWiFi engine (vowifi-engine-arm64): BSD-3-Clause (see Go-BSD-3-Clause.txt).
+
+Apache-2.0 license text: Apache-2.0.txt. Module license files are also packaged
+in the APK assets/licenses directory. Component-specific notices remain applicable.
+SoftVoWiFi, VoWiFiX, AOSP IWLAN and AOSP IPsec informed behavior/lifecycle
+research; this recovery implementation introduces no dependency or copied code
+from those projects. See README References & Acknowledgements for source links.

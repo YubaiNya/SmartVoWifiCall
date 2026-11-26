@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Phone handset glyph (borderless) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M33.2,43.8C31.7,46.9 32.4,53.9 38.5,61.4C44.6,68.9 51.8,71.4 55.6,70.7C58.5,70.1 62.4,66.6 62.9,64.3C63.3,62.3 59.0,58.6 57.0,58.2C54.9,57.8 52.8,60.5 51.1,60.1C48.6,59.5 44.4,55.8 42.6,52.5C41.6,50.7 43.9,48.3 43.4,46.2C42.8,43.8 39.2,39.9 37.2,40.2C35.2,40.4 34.2,42.0 33.2,43.8Z" />
+    <!-- Concentric VoWiFi signal waves -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.3"
+        android:strokeLineCap="round"
+        android:pathData="M53.0,45.5 A10.0,10.0 0 0,1 63.0,55.5" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="4.3"
+        android:strokeLineCap="round"
+        android:pathData="M53.0,37.3 A18.2,18.2 0 0,1 71.2,55.5" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#E6A8F8FF"
+        android:strokeWidth="4.3"
+        android:strokeLineCap="round"
+        android:pathData="M53.0,29.1 A26.4,26.4 0 0,1 79.4,55.5" />
+    <path
+        android:fillColor="#FF82FAFF"
+        android:pathData="M53.0,55.5m-2.8,0a2.8,2.8 0,1 1,5.6 0a2.8,2.8 0,1 1,-5.6 0" />
+</vector>
