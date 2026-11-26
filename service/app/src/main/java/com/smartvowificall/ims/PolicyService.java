@@ -126,6 +126,7 @@ public final class PolicyService extends Service {
     applicationContext = getApplicationContext();
     synchronized (AUDIO_LOCK) { running = this; }
     RuntimeController rt = RuntimeController.get(this);
+    rt.noteServiceLifecycle(true);
     rt.start();
     phoneState = new BroadcastReceiver() {
       @Override public void onReceive(Context context, Intent intent) {
@@ -170,6 +171,7 @@ public final class PolicyService extends Service {
     return null;
   }
   public void onDestroy() {
+    RuntimeController.get(this).noteServiceLifecycle(false);
     Set<AudioLease> lost;
     synchronized (AUDIO_LOCK) {
       if (running == this) running = null;

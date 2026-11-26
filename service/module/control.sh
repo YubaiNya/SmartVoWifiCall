@@ -30,6 +30,34 @@ proc_start() {
  shift 19
  printf '%s' "$1"
 }
+lifecycle_reason=UNSPECIFIED
+lifecycle_slot=-1
+case "$action" in
+ start) lifecycle_reason=${4:-UNSPECIFIED};lifecycle_slot=${5:--1};;
+ stop) lifecycle_reason=${3:-UNSPECIFIED};lifecycle_slot=${4:--1};;
+esac
+case "$lifecycle_reason" in ''|*[!A-Z_]*) lifecycle_reason=UNSPECIFIED;; esac
+[ ${#lifecycle_reason} -le 64 ] || lifecycle_reason=UNSPECIFIED
+case "$lifecycle_slot" in 0|1|2|3|4|5|6|7) :;; *) lifecycle_slot=-1;; esac
+# Mutating lifecycle only; status/repair remain quiet and read-only. Each SIM's
+# existing controller lock also serializes this bounded journal's rotation.
+trace_control() {
+ (
+  set +e
+  umask 077
+  trace_dir="$BASE/logs/$iccid"
+  mkdir -p "$trace_dir" || exit 0
+  chmod 0700 "$trace_dir" || exit 0
+  trace_file="$trace_dir/control-lifecycle.jsonl"
+  if [ -f "$trace_file" ]; then
+   trace_size=$(wc -c < "$trace_file")
+   if [ "$trace_size" -ge 65536 ]; then mv -f "$trace_file" "$trace_file.1" || exit 0;fi
+  fi
+  trace_time=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
+  printf '{"schema":"smartvowificall.lifecycle.v1","ts":"%s","component":"control","event":"%s","reason":"%s","slot":%s,"pid":%s,"startTicks":%s}\n' \
+   "$trace_time" "$1" "$lifecycle_reason" "$lifecycle_slot" "${2:-0}" "${3:-0}" >> "$trace_file"
+ ) || :
+}
 locked=0
 release_lock() {
  if [ "$locked" = 1 ]; then rm -f "$lock/owner"; rmdir "$lock" 2>/dev/null || :; fi
@@ -163,11 +191,13 @@ record_and_grant() {
 }
 stop_owned() {
  if owned_pid; then
+  trace_control STOP_TERM "$pid" "$ownerstart"
   kill -TERM "$pid"
   i=0
   while owned_pid && [ "$i" -lt 8 ]; do sleep 1;i=$((i+1));done
-  if owned_pid; then kill -KILL "$pid";sleep 1;fi
+  if owned_pid; then trace_control STOP_KILL "$pid" "$ownerstart";kill -KILL "$pid";sleep 1;fi
   owned_pid && return 1
+  trace_control STOPPED "$pid" "$ownerstart"
  fi
  cleanup_recorded_sockets || return 1
  rm -f "$pidfile" "$ownerfile" "$socketfile" "$uidfile"
@@ -226,6 +256,7 @@ case "$action" in
   [ ! -e "$MODDIR/disable" ] && [ ! -e "$MODDIR/remove" ] && [ ! -e "$BASE/rollback-pending" ] || fail MODULE_DISABLED
   uid=${3:-};case "$uid" in ''|*[!0-9]*) fail INVALID_UID 64;; esac
   check_tun_egress || fail TUN_EGRESS_UNAVAILABLE
+  trace_control START_REQUEST
   if ! owned_pid; then
    cleanup_recorded_sockets || fail SOCKET_OWNERSHIP_UNKNOWN
    # Do not adopt a live or unrecorded socket belonging to the original application.
@@ -258,7 +289,10 @@ case "$action" in
   i=0
   while [ "$i" -lt 15 ]; do
    if owned_pid && [ -S "/data/local/tmp/vowifi/$iccid.sock" ]; then
-    if record_and_grant "$uid"; then printf '{"ok":true,"code":"ENGINE_READY"}\n';exit 0;fi
+    if record_and_grant "$uid"; then
+     [ "$launched" != 1 ] || trace_control START_READY "$pid" "$ownerstart"
+     printf '{"ok":true,"code":"ENGINE_READY"}\n';exit 0
+    fi
     break
    fi
    i=$((i+1));sleep 1
@@ -274,6 +308,7 @@ case "$action" in
   record_and_grant "$uid" || fail SOCKET_OWNERSHIP_UNKNOWN
   ;;
  stop)
+  trace_control STOP_REQUEST
   stop_owned || fail ENGINE_STOP_FAILED
   ;;
  *) fail INVALID_ACTION 64;;

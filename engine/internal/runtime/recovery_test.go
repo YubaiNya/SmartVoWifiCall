@@ -95,3 +95,19 @@ func TestFailureClassificationUsesAttemptEvidence(t *testing.T) {
 		t.Fatal("COOKIE challenge misclassified as credential failure")
 	}
 }
+
+func TestLivenessCauseSurvivesClassification(t *testing.T) {
+	for cause, want := range map[string]string{
+		"DPD_TIMEOUT": "IKE_DPD_TIMEOUT", "PEER_DELETE": "IKE_PEER_DELETED",
+		"UDP_READ_ERROR": "IKE_UDP_READ_ERROR", "UDP_WRITE_ERROR": "IKE_UDP_WRITE_ERROR",
+		"TUNNEL_LOST": "IKE_TUNNEL_LOST",
+	} {
+		got := diagnose(behavior.IMSRegistered, errors.New(cause))
+		if got.Cause != want || got.ManualOnly || got.RetryDisabled {
+			t.Fatalf("lost liveness evidence: %+v", got)
+		}
+		if cause == "DPD_TIMEOUT" && got.State != behavior.IKETimeout {
+			t.Fatal("DPD timeout state lost")
+		}
+	}
+}

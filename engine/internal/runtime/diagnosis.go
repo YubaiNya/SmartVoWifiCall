@@ -43,6 +43,14 @@ func diagnose(stage behavior.State, err error) behavior.Failure {
 	}
 	for current := err; current != nil; current = errors.Unwrap(current) {
 		switch current.Error() {
+		case "DPD_TIMEOUT":
+			return behavior.Failure{State: behavior.IKETimeout, Cause: "IKE_DPD_TIMEOUT"}
+		case "PEER_DELETE":
+			return behavior.Failure{State: behavior.Unknown, Cause: "IKE_PEER_DELETED"}
+		case "UDP_READ_ERROR", "UDP_WRITE_ERROR":
+			return behavior.Failure{State: behavior.Unknown, Cause: "IKE_" + current.Error()}
+		case "TUNNEL_LOST":
+			return behavior.Failure{State: behavior.Unknown, Cause: "IKE_TUNNEL_LOST"}
 		case "IKE_EAP_FAILURE", "IKE_AUTH_RESPONDER_PROOF_MISSING", "IKE_AUTH_RESPONDER_PROOF_INVALID", "EAP_AKA_SERVER_MAC_MISSING", "EAP_AKA_SERVER_MAC_MISMATCH":
 			return behavior.Failure{State: behavior.IKEAuthFailure, Cause: "AUTHENTICATION_FAILED", ManualOnly: true}
 		case "IKE_EXCHANGE_TIMEOUT":

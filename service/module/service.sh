@@ -176,7 +176,7 @@ restore_owned() {
   [ -f "$p" ] || continue
   id=${p##*/};id=${id%.pid}
   [ "$id" != "sim-auth" ] && [ "$id" != "root-daemon" ] || continue
-  sh "$MODDIR/control.sh" stop "$id" >/dev/null 2>&1 || return 1
+  sh "$MODDIR/control.sh" stop "$id" SERVICE_RESTORE >/dev/null 2>&1 || return 1
  done
  stop_sim_auth
  stop_root_daemon

@@ -107,6 +107,21 @@ public final class TelemetrySanitizerTest {
     check(dumped.contains(LogSanitizer.HIDDEN), "ring buffer uses [Hidden]");
     check(dumped.contains("registered"), "non-sensitive message kept");
 
+    // Lifecycle attribution survives the actual sanitizer without needing SIM identifiers.
+    Map<String, Object> lifecycle = new LinkedHashMap<>();
+    lifecycle.put("radioLeaseMethod", "radio_sub");
+    lifecycle.put("engineProcessId", 1234L);
+    lifecycle.put("appProcessStartedAtMs", 1763890000000L);
+    lifecycle.put("recentProcessExits", Collections.singletonList(Collections.singletonMap("reason", 3)));
+    lifecycle.put("iccid", "8900000000000000019");
+    Map<String, Object> cleanLifecycle = (Map<String, Object>) LogSanitizer.sanitizeStructure(lifecycle);
+    eq("radio_sub", cleanLifecycle.get("radioLeaseMethod"), "radio path retained");
+    eq(1234L, cleanLifecycle.get("engineProcessId"), "process correlation retained");
+    eq(1763890000000L, cleanLifecycle.get("appProcessStartedAtMs"), "process timestamp retained");
+    eq(LogSanitizer.HIDDEN, cleanLifecycle.get("iccid"), "lifecycle identity redacted");
+    check(LogSanitizer.sanitizeText("STOP_REQUEST reason=RADIO_NOT_CONFIRMED_OFF slot=1 pid=1234")
+        .contains("RADIO_NOT_CONFIRMED_OFF"), "stop cause retained");
+
     // 4. Full v2 telemetry payload with logId, SIM country/carrier, network logs & rawLogs
     String logId = LogSanitizer.generateLogId(1763890000000L);
     check(logId.matches("SVW-\\d{8}-[0-9A-F]{6}"), "logId format: " + logId);

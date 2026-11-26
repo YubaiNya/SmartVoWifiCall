@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = Path(__file__).resolve().parent
@@ -9,6 +10,8 @@ JDK = Path(os.environ.get("JAVA_HOME", r"C:\Program Files\Eclipse Adoptium\jdk-2
 SOURCE = ROOT / "app/src/main/java/com/smartvowificall/ims"
 OUT = HERE / ".build"
 OUT.mkdir(exist_ok=True)
+subprocess.run([sys.executable, str(HERE / "test_radio_state.py")], check=True)
+subprocess.run([sys.executable, str(HERE / "test_control_lifecycle.py")], check=True)
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                 str(SOURCE / "policy/BehaviorSummary.java"), str(HERE / "BehaviorSummaryTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "BehaviorSummaryTest"], check=True)
@@ -98,7 +101,8 @@ ANDROID_OUT = HERE / ".android-build"
 ANDROID_OUT.mkdir(exist_ok=True)
 android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java", SOURCE / "root/SimCredentials.java",
                    SOURCE / "policy/ExclusiveRadio.java", SOURCE / "policy/ChipsetStrategy.java", SOURCE / "clash/ClashConfig.java", HERE / "RootIdentityValidationTest.java"]
-classpath = os.pathsep.join([str(ANDROID), str(ROOT / "deps/android-system.jar")])
+# Match app/build.gradle.kts: system APIs must precede the public SDK stubs.
+classpath = os.pathsep.join([str(ROOT / "deps/android-system.jar"), str(ANDROID)])
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "-source", "8", "-target", "8",
                 "-Xlint:-options", "-classpath", classpath, "-d", str(ANDROID_OUT),
                 *map(str, sources[:4]), *map(str, android_sources)], check=True)

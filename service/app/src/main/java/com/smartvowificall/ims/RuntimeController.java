@@ -63,6 +63,8 @@ final class RuntimeController {
   volatile ClashState clash1 = ClashState.EMPTY_1;
   volatile String status = "等待启动";
   volatile boolean shutdownComplete, lastFullSyncSucceeded;
+  final long processStartedAtMs = System.currentTimeMillis();
+  volatile List<Map<String, Object>> recentProcessExits = Collections.emptyList();
   private final boolean[] clashRestartPending = new boolean[] { false, false };
   private final String[] lastAutoClashSimKeys = new String[] { "", "" };
   private final java.util.concurrent.atomic.AtomicBoolean telemetryInFlight =
@@ -74,6 +76,29 @@ final class RuntimeController {
     root = new RootSupervisor(c);
     prefs = c.createDeviceProtectedStorageContext().getSharedPreferences("policy", 0);
     loadJournal();
+    events.record("I", "lifecycle", "APP_START pid=" + android.os.Process.myPid());
+    io.execute(() -> recentProcessExits = readRecentProcessExits());
+  }
+  private List<Map<String, Object>> readRecentProcessExits() {
+    List<Map<String, Object>> result = new ArrayList<>();
+    try {
+      android.app.ActivityManager manager = context.getSystemService(android.app.ActivityManager.class);
+      if (manager == null) return result;
+      for (android.app.ApplicationExitInfo exit : manager.getHistoricalProcessExitReasons(null, 0, 4)) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("timestampMs", exit.getTimestamp());
+        row.put("pid", exit.getPid());
+        row.put("reason", exit.getReason());
+        row.put("status", exit.getStatus());
+        row.put("importance", exit.getImportance());
+        // No process descriptions, traces, paths or identity data.
+        result.add(row);
+      }
+    } catch (RuntimeException ignored) { }
+    return Collections.unmodifiableList(result);
+  }
+  void noteServiceLifecycle(boolean created) {
+    events.record("I", "lifecycle", created ? "SERVICE_CREATE" : "SERVICE_DESTROY");
   }
   boolean enabled() {
     return prefs.getBoolean("enabled", false);
@@ -885,7 +910,7 @@ final class RuntimeController {
             if (tunDev.equals(b.iface)) {
               fallback.resetSlot(b.slot());
               fallbackReleasedSlots.remove(b.slot());
-              try { clearSlot(b.slot()); } catch (Exception ignored) {}
+              try { clearSlot(b.slot(), "USER_PROXY_NODE_CHANGE"); } catch (Exception ignored) {}
             }
           }
         }
@@ -1139,7 +1164,7 @@ final class RuntimeController {
               public void clearSessions() throws Exception {
                 Set<Integer> slots = new HashSet<>(applied.keySet());
                 slots.addAll(bindings.keySet());
-                for (int slot : slots) clearSlot(slot);
+                for (int slot : slots) clearSlot(slot, "MASTER_DISABLED");
               }
               public void restoreIms() throws Exception { root.restoreAll(); }
               public void releaseRadios() throws Exception { root.releaseRadios(); }
@@ -1196,7 +1221,8 @@ final class RuntimeController {
           if (cid >= 0) {
             ClashState cs = clashState(cid);
             if (!cs.tunUp || cs.netnsId.isEmpty() || !cs.netnsId.equals(b.clashNetnsId)) {
-              clearSlot(b.slot());
+              clearSlot(b.slot(), !cs.tunUp ? "PROXY_TUN_DOWN"
+                  : cs.netnsId.isEmpty() ? "PROXY_NAMESPACE_UNKNOWN" : "PROXY_NAMESPACE_CHANGED");
             }
           }
         }
@@ -1220,7 +1246,7 @@ final class RuntimeController {
             fallbackReleasedSlots.remove(slotId);
             lastRebindNanos.remove(slotId);
             if (existing != null || prevApplied != null) {
-              clearSlot(slotId, true);
+              clearSlot(slotId, true, "SIM_PROFILE_CHANGED");
             }
           }
         }
@@ -1237,7 +1263,7 @@ final class RuntimeController {
               || snapshot.heldRadioSlots.contains(slotId);
           if (hasAnyState && !calls) {
             if (bindings.containsKey(slotId) || applied.containsKey(slotId)) {
-              clearSlot(slotId, false);
+              clearSlot(slotId, false, "SLOT_DISABLED");
             }
             deregisterAndRestoreSlot(sim);
             try { root.releaseRadio(slotId); } catch (Exception ignored) {}
@@ -1289,7 +1315,7 @@ final class RuntimeController {
           if (blocked.containsKey(slotId)) {
             if (!calls) {
               if (bindings.containsKey(slotId) || applied.containsKey(slotId)) {
-                clearSlot(slotId);
+                clearSlot(slotId, "FALLBACK_" + blocked.get(slotId));
               }
               deregisterAndRestoreSlot(sim);
             }
@@ -1374,7 +1400,7 @@ final class RuntimeController {
           connect(sim, action.interfaceName, cid >= 0 ? clashState(cid).netnsId : "");
           candidateStarted = true;
         } catch (Exception failure) {
-          clear(action);
+          clearSlot(action.slotId, "START_FAILED");
           throw failure;
         }
       }
@@ -1394,7 +1420,7 @@ final class RuntimeController {
             connect(sim, x.interfaceName, cid >= 0 ? clashState(cid).netnsId : "");
             candidateStarted = true;
           } catch (Exception failure) {
-            clearSlot(x.slotId);
+            clearSlot(x.slotId, "REATTACH_FAILED");
             throw failure;
           }
         }
@@ -1506,7 +1532,7 @@ final class RuntimeController {
         fallbackReleasedSlots.remove(target.policy.slotId);
         Binding existing = bindings.get(target.policy.slotId);
         if (existing != null && tunDev.equals(existing.iface)) {
-          clearSlot(target.policy.slotId, true);
+          clearSlot(target.policy.slotId, true, "SAVED_PROXY_NODE_CHANGE");
         }
       } catch (Exception ignored) {
       }
@@ -1533,7 +1559,7 @@ final class RuntimeController {
       Long since = staleSlotSince.putIfAbsent(slot, now);
       if (since == null || now - since < TimeUnit.SECONDS.toNanos(6)) continue;
       try {
-        if (bindings.containsKey(slot) || applied.containsKey(slot)) clearSlot(slot, false);
+        if (bindings.containsKey(slot) || applied.containsKey(slot)) clearSlot(slot, false, "STALE_SUBSCRIPTION");
         if (RegistrationRouting.OWN_PACKAGE.equals(root.currentOverride(slot)))
           root.restore(slot, prefs.getString("previous." + slot, ""));
         root.releaseRadio(slot);
@@ -1573,7 +1599,20 @@ final class RuntimeController {
     return s != null && s.matches("[A-Z0-9_]{3,80}") ? s : e.getClass().getSimpleName();
   }
   void clear(PolicyEngine.Action a) throws Exception {
-    clearSlot(a.slotId);
+    String reason = "POLICY_SUBSCRIPTION_REMOVED";
+    RootSupervisor.Snapshot current = snapshot;
+    if (current != null) for (RootSupervisor.Sim sim : current.sims) {
+      if (sim.policy.slotId != a.slotId) continue;
+      if (!slotEnabled(a.slotId)) reason = "SLOT_DISABLED";
+      else if (PolicyEngine.eligibility(sim.policy) != PolicyEngine.Reason.ELIGIBLE)
+        reason = "POLICY_" + PolicyEngine.eligibility(sim.policy).name();
+      else if (!Boolean.TRUE.equals(radioOff.get(a.slotId))) reason = "RADIO_NOT_CONFIRMED_OFF";
+      else if (interfaces == null || !interfaces.selection(selection(sim.policy.simKey)).available())
+        reason = "POLICY_EGRESS_UNAVAILABLE";
+      else reason = "POLICY_SELECTION_CHANGED";
+      break;
+    }
+    clearSlot(a.slotId, reason);
   }
   FallbackPolicy.Egress egressOf(RootSupervisor.Sim sim) {
     InterfaceSnapshot inventory = interfaces;
@@ -1598,13 +1637,18 @@ final class RuntimeController {
       }
     } catch (Exception ignored) {}
   }
-  void clearSlot(int slot) throws Exception {
+  void clearSlot(int slot, String reason) throws Exception {
     boolean keepProvider = enabled() && Boolean.TRUE.equals(radioOff.get(slot))
         && !fallbackReasons.containsKey(slot);
-    clearSlot(slot, keepProvider);
+    clearSlot(slot, keepProvider, reason);
   }
-  void clearSlot(int slot, boolean keepProvider) throws Exception {
+  void clearSlot(int slot, boolean keepProvider, String reason) throws Exception {
+    if (reason == null || !reason.matches("[A-Z_]{3,64}")) reason = "UNSPECIFIED";
     Binding old = bindings.remove(slot);
+    events.record("I", "lifecycle", "STOP_REQUEST slot=" + slot + " reason=" + reason
+        + " registered=" + (old != null && old.registered)
+        + " pid=" + (old == null ? 0 : old.enginePid)
+        + " uptimeSec=" + (old == null ? 0 : old.engineUptimeSec));
     if (old != null) {
       syncVoiceServiceOverride(old, false);
       old.close();
@@ -1618,13 +1662,14 @@ final class RuntimeController {
     if (!keepProvider) root.restore(slot, prefs.getString("previous." + slot, ""));
     String savedIccid = prefs.getString("iccid." + slot, "");
     if (old != null && !old.sim.iccid.isEmpty()) {
-      root.stop(old.sim.iccid);
+      root.stop(old.sim.iccid, slot, reason);
     }
     if (!savedIccid.isEmpty() && (old == null || !savedIccid.equals(old.sim.iccid))) {
-      root.stop(savedIccid);
+      root.stop(savedIccid, slot, reason);
     }
     applied.remove(slot);
     saveJournal();
+    events.record("I", "lifecycle", "STOP_COMPLETED slot=" + slot + " reason=" + reason);
   }
   void connect(RootSupervisor.Sim sim, String iface, String clashNetnsId) throws Exception {
     Binding b = new Binding(sim, iface, clashNetnsId);
@@ -1642,6 +1687,10 @@ final class RuntimeController {
         if (!b.engine.isConnected())
           b.engine.connect();
         Map<String, Object> state = b.engine.getStatus();
+        Long enginePid = EngineState.integer(state.get("processId"));
+        Long uptimeSec = EngineState.integer(state.get("uptimeSec"));
+        if (enginePid != null) b.enginePid = enginePid;
+        if (uptimeSec != null) b.engineUptimeSec = uptimeSec;
         Object behavior = state.get("behavior");
         if (behavior instanceof Map) b.behavior = EngineState.immutableMap((Map<String, Object>) behavior);
         b.ims = String.valueOf(state.get("ims"));
@@ -1710,7 +1759,7 @@ final class RuntimeController {
             if (f != null)
               worker.execute(f::engineDied);
             if (snapshot != null && !snapshot.callsActive)
-              clearSlot(b.slot());
+              clearSlot(b.slot(), "ENGINE_PROCESS_EXITED");
           }
         } catch (Exception recoveryError) {
           status = "待处理：" + safeCode(recoveryError);
@@ -1768,7 +1817,9 @@ final class RuntimeController {
     JSONObject out = new JSONObject();
     try {
       out.put("enabled", enabled()).put("billableAllowed", billable()).put("status", status)
-          .put("shutdownComplete", shutdownComplete).put("rootCommandCount", root.commandCount.get());
+          .put("shutdownComplete", shutdownComplete).put("rootCommandCount", root.commandCount.get())
+          .put("appProcessId", android.os.Process.myPid()).put("appProcessStartedAtMs", processStartedAtMs)
+          .put("recentProcessExits", new JSONArray(recentProcessExits));
       JSONArray sims = new JSONArray();
       RootSupervisor.Snapshot snap = snapshot;
       if (snap != null) for (RootSupervisor.Sim s : snap.sims) {
@@ -1787,6 +1838,7 @@ final class RuntimeController {
             .put("selectedInterface", selIface)
             .put("preferredClashNode", preferredClashNode(s.policy.simKey, Math.max(0, selCid)))
             .put("radioOff", Boolean.TRUE.equals(radioOff.get(s.policy.slotId)))
+            .put("radioLeaseMethod", root.radioLeaseMethods.getOrDefault(s.policy.slotId, "UNKNOWN"))
             .put("featureAttached", featureMatches(s));
         String fb = fallbackReasons.get(s.policy.slotId);
         if (fb != null) row.put("fallbackReason", fb);
@@ -1801,6 +1853,7 @@ final class RuntimeController {
         if (!bindingMatches(b, s)) b = null;
         if (b != null) row.put("engineCallStage", b.engine.getState().callSnapshot.get("stage"));
         if (b != null) row.put("ims", b.ims).put("registered", b.registered)
+            .put("engineProcessId", b.enginePid).put("engineUptimeSec", b.engineUptimeSec)
             .put("behavior", new JSONObject(b.behavior))
             .put("tunnel", b.tunnel).put("callActive", b.callActive)
             .put("callSnapshotError", b.callSnapshotError)
@@ -1846,6 +1899,7 @@ final class RuntimeController {
     volatile String ims = "CONNECTING";
     volatile String tunnel = "UNKNOWN";
     volatile long callSnapshotError;
+    volatile long enginePid, engineUptimeSec;
     volatile Map<String, Object> behavior = Collections.emptyMap();
     Binding(RootSupervisor.Sim sim, String iface, String clashNetnsId) {
       this.sim = sim;
@@ -1909,6 +1963,8 @@ final class RuntimeController {
     public void onDisconnected(EngineSession.Identity identity, Throwable why) {
       worker.execute(() -> {
         if (bindings.get(slot()) == this) {
+          events.record("W", "lifecycle", "ENGINE_CHANNEL_CLOSED slot=" + slot()
+              + " pid=" + enginePid + " uptimeSec=" + engineUptimeSec);
           registered = false;
           behavior = Collections.emptyMap();
           reported = false;
@@ -2060,7 +2116,7 @@ final class RuntimeController {
             .putBoolean("clash_enabled", false)
             .putBoolean("clash_enabled.1", false).commit();
         for (Integer slot : new ArrayList<>(bindings.keySet())) {
-          try { clearSlot(slot, true); } catch (Throwable ignored) {}
+          try { clearSlot(slot, true, "RESTORE_NATIVE_REQUEST"); } catch (Throwable ignored) {}
         }
         try { root.restoreAll(); } catch (Throwable ignored) {}
         try { root.releaseRadios(); } catch (Throwable ignored) {}

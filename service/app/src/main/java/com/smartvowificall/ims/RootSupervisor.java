@@ -18,6 +18,7 @@ final class RootSupervisor {
   final Context context;
   final AtomicLong commandCount = new AtomicLong();
   final AtomicLong daemonCallCount = new AtomicLong();
+  final Map<Integer, String> radioLeaseMethods = new ConcurrentHashMap<>();
   RootSupervisor(Context context) {
     this.context = context;
   }
@@ -370,6 +371,9 @@ final class RootSupervisor {
   boolean holdRadio(Sim sim) throws Exception {
     JSONObject result = identityCall("radio-hold", String.valueOf(sim.policy.subId),
         String.valueOf(sim.policy.slotId), sim.policy.simKey, sim.policy.homePlmn);
+    String method = result.optString("radioLeaseMethod", "UNKNOWN");
+    radioLeaseMethods.put(sim.policy.slotId,
+        "radio_sub".equals(method) || "modem".equals(method) ? method : "UNKNOWN");
     return result.optBoolean("ok") && result.optBoolean("radioOff");
   }
   void verifyRadioOff(Sim sim) throws Exception {
@@ -409,11 +413,13 @@ final class RootSupervisor {
     if (!response.optBoolean("ok"))
       throw new IOException(response.optString("code", "CONFIG_FAILED"));
     run("sh " + MODULE + "/control.sh start " + quote(sim.iccid) + " "
-        + android.os.Process.myUid());
+        + android.os.Process.myUid() + " APP_POLICY " + sim.policy.slotId);
   }
-  void stop(String iccid) throws Exception {
+  void stop(String iccid, int slot, String reason) throws Exception {
+    if (reason == null || !reason.matches("[A-Z_]{3,64}")) reason = "UNSPECIFIED";
+    if (slot < 0 || slot > 7) slot = -1;
     if (iccid.matches("[0-9]{10,32}"))
-      run("sh " + MODULE + "/control.sh stop " + quote(iccid));
+      run("sh " + MODULE + "/control.sh stop " + quote(iccid) + " " + reason + " " + slot);
   }
   boolean engineRunning(String iccid) throws Exception {
     if (iccid == null || !iccid.matches("[0-9]{10,32}"))
@@ -445,7 +451,11 @@ final class RootSupervisor {
         + "for f in /data/adb/smartvowificall_ims/logs/*/*.log /data/adb/smartvowificall_ims/logs/*/diagnostic.jsonl; do "
         + "[ -f \"$f\" ] && { echo \"--- $f ---\"; tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done;"
         + "echo '=== LOGCAT (FILTERED TAIL 400) ===';"
-        + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|RootDaemon|RootSimAuth|ImsResolver|ImsServiceController' | tail -n 400 || true";
+        + "logcat -d -v time 2>/dev/null | grep -iE 'SmartVoWifi|VoWiFiAudio|RootIdentity|RootClash|RootDaemon|RootSimAuth|ImsResolver|ImsServiceController' | tail -n 400 || true;"
+        // Keep stop attribution at the tail so noisy logcat does not displace it.
+        + "echo '=== LIFECYCLE (BOUNDED, NO SUBSCRIBER DATA) ===';"
+        + "for f in /data/adb/smartvowificall_ims/logs/*/control-lifecycle.jsonl.1 /data/adb/smartvowificall_ims/logs/*/control-lifecycle.jsonl; do "
+        + "[ -f \"$f\" ] && { tail -c 65536 \"$f\" 2>/dev/null || true; echo; }; done; true";
     return run(script);
   }
   String collectAuthTrace() throws Exception {

@@ -83,9 +83,14 @@ func main() {
 
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 	go func() {
-		<-sigCh
-		eng.Stop()
+		sig := <-sigCh
+		if sig == syscall.SIGTERM {
+			eng.StopWithReason("SIGTERM")
+		} else {
+			eng.StopWithReason("SIGINT")
+		}
 	}()
 	eng.Wait()
 }

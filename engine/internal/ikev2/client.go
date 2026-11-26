@@ -86,6 +86,7 @@ type Client struct {
 	stopCh          chan struct{}
 	deadCh          chan struct{}
 	deadOnce        sync.Once
+	deathReason     string
 	lastRecv        atomic.Int64
 	lastSend        atomic.Int64
 	peerRequestSeen bool
@@ -172,10 +173,28 @@ func (c *Client) Tunnel() *ipsec.Tunnel { return c.tunnel }
 func (c *Client) Config() *CFGResult    { return c.cfgResult }
 func (c *Client) Dead() <-chan struct{} { return c.deadCh }
 
+// DeadReason preserves the first verified terminal cause across session teardown.
+func (c *Client) DeadReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.deathReason == "" {
+		return "TUNNEL_LOST"
+	}
+	return c.deathReason
+}
+
 func (c *Client) markDead(reason string) {
+	switch reason {
+	case "DPD_TIMEOUT", "UDP_READ_ERROR", "UDP_WRITE_ERROR", "PEER_DELETE":
+	default:
+		reason = "TUNNEL_LOST"
+	}
 	c.deadOnce.Do(func() {
+		c.mu.Lock()
+		c.deathReason = reason
+		c.mu.Unlock()
 		if c.cfg.Logger != nil {
-			c.cfg.Logger.Warn("ikev2", "IKEv2 session dead: "+reason, nil)
+			c.cfg.Logger.Warn("ikev2", "IKEv2 session dead: "+reason, map[string]any{"reason": reason})
 		}
 		close(c.deadCh)
 	})
@@ -1035,9 +1054,15 @@ func (c *Client) runDPDExchange(msgID uint32, pkt []byte) bool {
 
 	startRecv := c.lastRecv.Load()
 	waits := []time.Duration{2 * time.Second, 3 * time.Second, 4 * time.Second, 6 * time.Second}
-	for _, w := range waits {
+	for attempt, w := range waits {
 		if err := c.sendIKE(pkt); err != nil {
+			c.markDead("UDP_WRITE_ERROR")
 			return false
+		}
+		if c.cfg.Logger != nil {
+			c.cfg.Logger.Info("ike_liveness", "DPD probe sent", map[string]any{
+				"messageId": msgID, "attempt": attempt + 1,
+			})
 		}
 		timer := time.NewTimer(w)
 		select {
@@ -1048,6 +1073,9 @@ func (c *Client) runDPDExchange(msgID uint32, pkt []byte) bool {
 			c.mu.Unlock()
 			h, _, err := DecodeEncryptedPacket(response, keys, false)
 			if err == nil && h.Exchange == ExchangeInformational && h.MessageID == msgID && h.Flags == FlagResponse {
+				if c.cfg.Logger != nil {
+					c.cfg.Logger.Info("ike_liveness", "DPD reply authenticated", map[string]any{"messageId": msgID})
+				}
 				return true
 			}
 		case <-c.stopCh:

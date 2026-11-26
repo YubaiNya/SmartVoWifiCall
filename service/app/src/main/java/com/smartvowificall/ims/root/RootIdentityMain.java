@@ -593,27 +593,17 @@ public final class RootIdentityMain {
     if (!(enabled instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
     return (Boolean) enabled;
   }
-  private static boolean isSubRadioOn(int subId) throws Exception {
-    Object on;
-    try {
-      on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnForSubscriberWithFeature",
-          new Class<?>[] {int.class, String.class, String.class}, new Object[] {subId, "root", null});
-    } catch (NoSuchMethodException e1) {
-      try {
-        on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnForSubscriber",
-            new Class<?>[] {int.class, String.class}, new Object[] {subId, "root"});
-      } catch (NoSuchMethodException e2) {
-        try {
-          on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOnWithFeature",
-              new Class<?>[] {String.class, String.class}, new Object[] {"root", null});
-        } catch (NoSuchMethodException e3) {
-          on = binderCall("phone", "com.android.internal.telephony.ITelephony", "isRadioOn",
-              new Class<?>[] {String.class}, new Object[] {"root"});
-        }
-      }
-    }
-    if (!(on instanceof Boolean)) throw new Failure("RADIO_STATE_UNKNOWN");
-    return (Boolean) on;
+  private static int physicalRadioState(int phoneId) throws Exception {
+    // isRadioOn* reads the merged ServiceState in AOSP. Our voice-service
+    // override can make that IN_SERVICE while the modem radio remains OFF.
+    // getRadioPowerState reads the modem instead and takes a phone index, not subId.
+    Object state = binderCall("phone", "com.android.internal.telephony.ITelephony", "getRadioPowerState",
+        new Class<?>[] {int.class, String.class, String.class}, new Object[] {phoneId, "root", null});
+    if (!(state instanceof Integer)) throw new Failure("RADIO_STATE_UNKNOWN");
+    if ((Integer) state == TelephonyManager.RADIO_POWER_OFF) return ExclusiveRadio.OFF;
+    if ((Integer) state == TelephonyManager.RADIO_POWER_ON) return ExclusiveRadio.ON;
+    // UNAVAILABLE is not evidence of OFF. Do not fall back to service state.
+    throw new Failure("RADIO_STATE_UNKNOWN");
   }
   private static String currentLeaseRadioMethod(int slot) {
     try {
@@ -630,12 +620,12 @@ public final class RootIdentityMain {
     if (identity.phoneId < 0) throw new Failure("RADIO_STATE_UNKNOWN");
     String method = currentLeaseRadioMethod(identity.slotId);
     if (RADIO_METHOD_SUB.equals(method)) {
-      return isSubRadioOn(identity.subId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+      return physicalRadioState(identity.phoneId);
     }
     try {
       return isModemEnabledForSlot(identity.phoneId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
     } catch (NoSuchMethodException ignored) {
-      return isSubRadioOn(identity.subId) ? ExclusiveRadio.ON : ExclusiveRadio.OFF;
+      return physicalRadioState(identity.phoneId);
     }
   }
   private static boolean tryEnableModemForSlot(int phoneId, boolean on) throws Exception {
@@ -809,6 +799,7 @@ public final class RootIdentityMain {
       off = true;
     } else off = ExclusiveRadio.hold(radioBackend(context, identity, true));
     return new JSONObject().put("ok", true).put("radioOff", off)
+        .put("radioLeaseMethod", currentLeaseRadioMethod(slot))
         .put("code", off ? "CELLULAR_RADIO_OFF" : "RADIO_OFF_PENDING");
   }
   private static boolean releaseRadio(Context context, int slot) throws Exception {
@@ -1397,8 +1388,11 @@ public final class RootIdentityMain {
     String modemVariant = "";
     String voiceVariant = "";
     boolean iccAuthAvailable = false;
+    boolean radioPowerStateMethodPresent = false;
     try {
       Class<?> tel = Class.forName("com.android.internal.telephony.ITelephony");
+      radioPowerStateMethodPresent = hasMethod(tel, "getRadioPowerState",
+          int.class, String.class, String.class);
       if (hasMethod(tel, "setBoundImsServiceOverride", int.class, int.class, boolean.class, int[].class, String.class)) {
         imsVariant = "api35_5arg";
       } else if (hasMethod(tel, "setBoundImsServiceOverride", int.class, boolean.class, int[].class, String.class)) {
@@ -1450,6 +1444,7 @@ public final class RootIdentityMain {
         .put("engineBinaryReady", engineBinaryReady)
         .put("imsOverrideVariant", imsVariant)
         .put("modemSlotVariant", modemVariant)
+        .put("radioPowerStateMethodPresent", radioPowerStateMethodPresent)
         .put("voiceOverrideVariant", voiceVariant)
         .put("iccAuthAvailable", iccAuthAvailable)
         .put("qrtrAvailable", qrtrAvailable)

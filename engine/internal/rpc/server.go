@@ -333,7 +333,11 @@ func (s *Server) dispatch(method string, params map[string]any) (map[string]any,
 		}
 		return s.handler.SendSMS(s.ctx, number, text)
 	case "stop":
-		go s.handler.Stop()
+		if reporter, ok := s.handler.(interface{ StopWithReason(string) }); ok {
+			go reporter.StopWithReason("RPC_STOP")
+		} else {
+			go s.handler.Stop()
+		}
 		return map[string]any{"ok": true, "stopping": true}, nil
 	default:
 		return nil, &RPCError{Code: 404, Message: "UNKNOWN_METHOD"}

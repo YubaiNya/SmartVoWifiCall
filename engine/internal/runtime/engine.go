@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -129,9 +130,10 @@ func Start(opts Options) (*Engine, error) {
 	e.rpcSrv = rpcSrv
 
 	e.logger.Info("engine", "native SmartVoWifiCall engine started", map[string]any{
-		"simMode": simProvider.Name(),
-		"build":   diag.BuildInfo(),
-		"epdg":    opts.Config.EffectiveEPDG(),
+		"simMode":   simProvider.Name(),
+		"build":     diag.BuildInfo(),
+		"epdg":      opts.Config.EffectiveEPDG(),
+		"processId": os.Getpid(), "processStartedAtMs": e.startedAt.UnixMilli(),
 	})
 
 	e.wg.Add(1)
@@ -385,8 +387,9 @@ func (e *Engine) maintainRegistration() error {
 			return e.ctx.Err()
 		case <-deadCh:
 			e.logger.Warn("engine", "IKEv2 tunnel lost; tearing down IMS session", nil)
+			cause := ic.DeadReason()
 			e.teardownSession()
-			return errors.New("TUNNEL_LOST")
+			return errors.New(cause)
 		case <-e.reconnectCh:
 			if !s.TryBeginRecovery() {
 				e.logger.Info("engine", "reconnect refused: call started before execution", nil)
@@ -408,8 +411,9 @@ func (e *Engine) maintainRegistration() error {
 					select {
 					case <-e.callEndedCh:
 					case <-deadCh:
+						cause := ic.DeadReason()
 						e.teardownSession()
-						return err
+						return errors.New(cause)
 					case <-e.stopCh:
 						return e.ctx.Err()
 					}
@@ -571,6 +575,8 @@ func (e *Engine) GetStatus() map[string]any {
 		"simMode":                 e.simAuth.Name(),
 		"epdg":                    e.opts.Config.EffectiveEPDG(),
 		"uptimeSec":               int64(time.Since(e.startedAt).Seconds()),
+		"processId":               os.Getpid(),
+		"processStartedAtMs":      e.startedAt.UnixMilli(),
 		"behavior":                state,
 		"registrationExpiryKnown": expiryKnown,
 	}
@@ -695,7 +701,26 @@ func (e *Engine) Reconnect() map[string]any {
 }
 
 func (e *Engine) Stop() {
+	e.StopWithReason("STOP_REQUEST")
+}
+
+// Reasons are fixed lifecycle categories, never caller-supplied protocol text.
+func (e *Engine) StopWithReason(reason string) {
+	switch reason {
+	case "SIGTERM", "SIGINT", "RPC_STOP", "STOP_REQUEST":
+	default:
+		reason = "UNSPECIFIED"
+	}
 	e.stopOnce.Do(func() {
+		slot := -1
+		if e.opts.Config != nil {
+			slot = e.opts.Config.Slot
+		}
+		e.logger.Info("lifecycle", "engine stop requested", map[string]any{
+			"event": "STOP_REQUEST", "reason": reason, "slot": slot,
+			"processId": os.Getpid(), "processStartedAtMs": e.startedAt.UnixMilli(),
+			"uptimeSec": int64(time.Since(e.startedAt).Seconds()), "build": diag.BuildInfo(),
+		})
 		e.cancel()
 		close(e.stopCh)
 		e.teardownSession()
