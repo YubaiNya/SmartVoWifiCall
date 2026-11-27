@@ -60,10 +60,17 @@ subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "
                  str(SOURCE / "telemetry/NetworkLogBuffer.java"),
                  str(SOURCE / "telemetry/TelemetryClient.java"),
                  str(SOURCE / "telemetry/TelemetryBatch.java"),
+                 str(SOURCE / "telemetry/TelemetryCleanup.java"),
+                 str(SOURCE / "telemetry/TraceJournal.java"),
                  str(HERE / "TelemetryBatchTest.java"),
                  str(HERE / "TelemetrySanitizerTest.java")], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetrySanitizerTest"], check=True)
 subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetryBatchTest", str(OUT / "telemetry-batch.json")], check=True)
+import tempfile
+with tempfile.TemporaryDirectory(prefix="upload-cleanup-", dir=OUT) as temp:
+    subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "11", "-cp", str(OUT),
+                    "-d", str(OUT), str(HERE / "TelemetryCleanupTest.java")], check=True)
+    subprocess.run([str(JDK / "bin/java.exe"), "-cp", str(OUT), "TelemetryCleanupTest", temp], check=True)
 
 subprocess.run([str(JDK / "bin/javac.exe"), "-encoding", "UTF-8", "--release", "8", "-d", str(OUT),
                  str(SOURCE / "engine/JsonCodec.java"),
@@ -99,7 +106,7 @@ SDK = Path(os.environ.get("VOWIFI_ANDROID_SDK", r"D:\Android\Sdk"))
 ANDROID = SDK / "platforms/android-36/android.jar"
 ANDROID_OUT = HERE / ".android-build"
 ANDROID_OUT.mkdir(exist_ok=True)
-android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java", SOURCE / "root/SimCredentials.java",
+android_sources = [SOURCE / "network/InterfaceInventory.java", SOURCE / "root/RootIdentityMain.java", SOURCE / "root/LpaSlotLock.java", SOURCE / "root/SimCredentials.java",
                    SOURCE / "policy/ExclusiveRadio.java", SOURCE / "policy/ChipsetStrategy.java", SOURCE / "clash/ClashConfig.java", HERE / "RootIdentityValidationTest.java"]
 # Match app/build.gradle.kts: system APIs must precede the public SDK stubs.
 classpath = os.pathsep.join([str(ROOT / "deps/android-system.jar"), str(ANDROID)])

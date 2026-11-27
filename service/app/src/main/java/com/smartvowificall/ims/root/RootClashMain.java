@@ -5,6 +5,7 @@ import android.system.Os;
 import com.smartvowificall.ims.clash.ClashConfig;
 import com.smartvowificall.ims.telemetry.LogSanitizer;
 import com.smartvowificall.ims.telemetry.NetworkLogBuffer;
+import com.smartvowificall.ims.telemetry.TraceJournal;
 import com.smartvowificall.ims.engine.JsonCodec;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -128,6 +129,11 @@ public final class RootClashMain {
         output = closeConnection(id);
       } else if (mode.equals("close-all-connections") && effArgs.length == 1) {
         output = closeAllConnections();
+      } else if (mode.equals("acknowledge-logs") && effArgs.length == 1) {
+        Object value = JsonCodec.decode(new String(readAllLimited(in, 8192), StandardCharsets.UTF_8));
+        if (!(value instanceof List)) throw new Failure("TRACE_ACK_INVALID");
+        int removed = TraceJournal.acknowledge(clashFile("http-trace.jsonl").toPath(), (List<?>) value);
+        output = new JSONObject().put("ok", true).put("removed", removed);
       } else if (mode.equals("sync-uplink") && effArgs.length == 1) {
         output = syncUplink();
       } else {
@@ -817,20 +823,7 @@ public final class RootClashMain {
       entry.put("responseHeaders", LogSanitizer.sanitizeStructure(respHeaders, "responseHeaders"));
       entry.put("responseBody", LogSanitizer.sanitizeStructure(respBody, "responseBody"));
       if (error != null && !error.isEmpty()) entry.put("error", LogSanitizer.sanitizeText(error));
-      String line = JsonCodec.encode(entry);
-      File f = clashFile("http-trace.jsonl");
-      List<String> lines = new ArrayList<>();
-      if (f.isFile()) {
-        String existing = new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
-        for (String l : existing.split("\n")) {
-          if (!l.trim().isEmpty()) lines.add(l.trim());
-        }
-      }
-      lines.add(line);
-      int start = Math.max(0, lines.size() - 50);
-      StringBuilder sb = new StringBuilder();
-      for (int i = start; i < lines.size(); i++) sb.append(lines.get(i)).append('\n');
-      writeAtomic("http-trace.jsonl", sb.toString().getBytes(StandardCharsets.UTF_8));
+      TraceJournal.append(clashFile("http-trace.jsonl").toPath(), entry);
     } catch (Throwable ignored) {
       // Trace logging is strictly best-effort and must never fail Clash operations.
     }

@@ -1,1 +1,1 @@
-<permissions><privapp-permissions package="com.smartvowificall.ims"><permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/><permission name="android.permission.MODIFY_PHONE_STATE"/></privapp-permissions></permissions>
+<permissions><privapp-permissions package="com.smartvowificall.ims"><permission name="android.permission.READ_PRIVILEGED_PHONE_STATE"/><permission name="android.permission.MODIFY_PHONE_STATE"/><permission name="android.permission.SECURE_ELEMENT_PRIVILEGED_OPERATION"/></privapp-permissions></permissions>

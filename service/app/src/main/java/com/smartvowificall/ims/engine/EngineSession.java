@@ -134,6 +134,10 @@ public final class EngineSession implements Closeable {
                 "config.metadata.v1", "rpc.getConfig", "rpc.getStatus", "rpc.ping", "rpc.stop")),
         DEFAULT_TIMEOUT_MS);
   }
+  public Map<String, Object> acknowledgeLogs(java.util.List<String> records) throws IOException {
+    // Keep journal payloads out of the observed call/status RPC stream.
+    return controlRequest("acknowledgeLogs", map("records", records), DEFAULT_TIMEOUT_MS);
+  }
   public Map<String, Object> dial(String number) throws IOException {
     gate();
     if (number == null || !number.matches("\\+?[0-9]{1,20}"))

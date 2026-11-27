@@ -1,0 +1,8 @@
+SmartVoWifiCall removable-eUICC LPA components
+
+OpenEUICC lpac-jni (library only): Copyright (C) 2022-2026 OpenEUICC contributors. LGPL-2.1-only. Revision fc929d76118d60d5e27080043e561d5d30184c43. https://github.com/estkme-group/openeuicc
+libeuicc from lpac: Copyright (C) 2023-2025 ESTKME TECHNOLOGY LIMITED, Hong Kong. Selected license LGPL-2.1-only. Revision 50cdf15ab40942b00f8819a1c2ca19997f1a6d34. https://github.com/estkme-group/lpac
+cjson-ext from that lpac revision: same copyright, MIT.
+cJSON: Copyright (c) 2009-2017 Dave Gamble and cJSON contributors. MIT. Revision 6d9f2443ab071f86e5d9b43025a40929ec41c46c. https://github.com/DaveGamble/cJSON
+
+Only the listed libraries are incorporated. lpac CLI/drivers and the OpenEUICC application/artwork are not bundled. SmartVoWifiCall modifications: standalone CMake build, resource/error handling, and removal of payload logging. Modified source files carry notices. Corresponding sources and build instructions are supplied in the product source archive; native library can be rebuilt with the project's Gradle/NDK configuration. No upstream endorsement is implied. Full license texts accompany this notice.

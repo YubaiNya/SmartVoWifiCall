@@ -47,6 +47,10 @@ type Reconnecter interface {
 	Reconnect() map[string]any
 }
 
+type LogAcknowledger interface {
+	AcknowledgeLogs([]string) (map[string]any, error)
+}
+
 type requestFrame struct {
 	ID     int64          `json:"id"`
 	Method string         `json:"method"`
@@ -257,6 +261,24 @@ func (s *Server) dispatch(method string, params map[string]any) (map[string]any,
 		return s.handler.GetConfig(), nil
 	case "getStatus":
 		return s.handler.GetStatus(), nil
+	case "acknowledgeLogs":
+		h, ok := s.handler.(LogAcknowledger)
+		if !ok {
+			return nil, &RPCError{Code: 400, Message: "LOG_CLEANUP_UNSUPPORTED"}
+		}
+		values, ok := params["records"].([]any)
+		if !ok || len(values) > 8192 {
+			return nil, &RPCError{Code: 400, Message: "LOG_ACK_INVALID"}
+		}
+		keys := make([]string, len(values))
+		for i, value := range values {
+			key, valid := value.(string)
+			if !valid {
+				return nil, &RPCError{Code: 400, Message: "LOG_ACK_INVALID"}
+			}
+			keys[i] = key
+		}
+		return h.AcknowledgeLogs(keys)
 	case "getCallSnapshot":
 		return s.handler.GetCallSnapshot()
 	case "reconnect":

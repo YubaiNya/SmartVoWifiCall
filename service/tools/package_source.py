@@ -15,7 +15,7 @@ def is_product_source(name):
     if name in {"LICENSE", "README.md", ".gitignore", ".gitattributes", "engine/go.mod",
                 "service/.gitignore", "service/build.gradle.kts", "service/settings.gradle.kts",
                 "service/gradle.properties", "service/app/build.gradle.kts",
-                "service/deps/android-system.source.json", "service/deps/mihomo.source.json"}:
+                "service/deps/android-system.source.json", "service/deps/mihomo.source.json", "service/deps/lpa.source.json"}:
         return True
     if any(part.startswith(".") or part in {"build", "dist", "__pycache__", "docs",
             "logs", "research", "knowledge", "agent-memory", "device-private"} for part in path.parts):
@@ -23,6 +23,8 @@ def is_product_source(name):
     if name.startswith("engine/"):
         return path.suffix == ".go" or ("testdata" in path.parts and path.suffix == ".json")
     if name.startswith("service/app/src/main/"):
+        if name.startswith("service/app/src/main/cpp/"):
+            return path.suffix in {".c", ".h", ".txt"} or path.name in {"LICENSE", "REUSE.toml"}
         return path.suffix in {".java", ".kt", ".xml", ".png"} or name == "service/app/src/main/assets/carrier_profiles.json" or name.startswith("service/app/src/main/assets/licenses/")
     if name.startswith("service/tests/"):
         return path.suffix in {".java", ".py", ".ps1", ".xml"}

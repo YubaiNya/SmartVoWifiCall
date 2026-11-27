@@ -13,7 +13,10 @@ class SourcePackageTest(unittest.TestCase):
     def test_required_source_and_licenses(self):
         for name in ["engine/go.mod", "engine/internal/runtime/engine.go", "engine/internal/runtime/recovery_test.go",
                      "engine/internal/ikev2/testdata/auth-aosp-vectors.json", "service/tools/build.py",
-                     "service/module/licenses/go-toolchain/LICENSE", "LICENSE", "service/app/build.gradle.kts"]:
+                     "service/module/licenses/go-toolchain/LICENSE", "LICENSE", "service/app/build.gradle.kts",
+                     "service/app/src/main/cpp/CMakeLists.txt", "service/app/src/main/cpp/lpa/lpac/euicc/es10c.c",
+                     "service/app/src/main/cpp/lpa/lpac/REUSE.toml", "service/app/src/main/cpp/lpa/LICENSE-LGPL-2.1.txt",
+                     "service/deps/lpa.source.json", "service/module/licenses/LPA-NOTICE.txt"]:
             with self.subTest(name=name):
                 self.assertTrue(module.is_product_source(name))
 

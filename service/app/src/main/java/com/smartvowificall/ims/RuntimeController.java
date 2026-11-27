@@ -275,7 +275,7 @@ final class RuntimeController {
     }
     return out;
   }
-  private synchronized void recordTelemetryUpload(TelemetryUploadRecord rec) {
+  private synchronized boolean recordTelemetryUpload(TelemetryUploadRecord rec) {
     List<TelemetryUploadRecord> list = new ArrayList<>();
     list.add(rec);
     for (TelemetryUploadRecord prev : telemetryUploadHistory()) {
@@ -296,7 +296,7 @@ final class RuntimeController {
       } catch (Exception ignored) {
       }
     }
-    prefs.edit().putString("telemetry_history_json", arr.toString()).commit();
+    return prefs.edit().putString("telemetry_history_json", arr.toString()).commit();
   }
   String telemetryLastStatus() {
     return prefs.getString("telemetry_last_status", "");
@@ -331,6 +331,10 @@ final class RuntimeController {
     });
   }
   private List<Map<String, Object>> collectCombinedNetworkLogs(boolean includeRootTrace) {
+    return collectCombinedNetworkLogs(includeRootTrace, networkLogs.snapshot(80));
+  }
+  private List<Map<String, Object>> collectCombinedNetworkLogs(boolean includeRootTrace,
+      List<Map<String, Object>> localLogs) {
     List<Map<String, Object>> merged = new ArrayList<>();
     if (includeRootTrace) {
       try {
@@ -348,7 +352,7 @@ final class RuntimeController {
       } catch (Exception ignored) {
       }
     }
-    merged.addAll(networkLogs.snapshot(80));
+    merged.addAll(localLogs);
     merged.sort(Comparator.comparing(m -> String.valueOf(m.getOrDefault("ts", ""))));
     if (merged.size() > 100) {
       return new ArrayList<>(merged.subList(merged.size() - 100, merged.size()));
@@ -381,6 +385,10 @@ final class RuntimeController {
     return out;
   }
   String buildSanitizedTelemetryJson(String logId, String trigger, boolean includeRootLogs) {
+    return buildSanitizedTelemetryJson(logId, trigger, includeRootLogs, null);
+  }
+  private String buildSanitizedTelemetryJson(String logId, String trigger, boolean includeRootLogs,
+      TelemetryCleanup cleanup) {
     String versionName = "";
     int versionCode = 0;
     try {
@@ -466,7 +474,8 @@ final class RuntimeController {
         ifaceList.add(m);
       }
     }
-    List<Map<String, Object>> netLogs = collectCombinedNetworkLogs(includeRootLogs);
+    List<Map<String, Object>> netLogs = collectCombinedNetworkLogs(includeRootLogs,
+        cleanup == null ? networkLogs.snapshot(80) : cleanup.network);
     List<Map<String, Object>> clashConns =
         includeRootLogs ? collectSanitizedClashConnections() : Collections.emptyList();
     String rootLogsText = "";
@@ -479,7 +488,8 @@ final class RuntimeController {
     }
     String basePayload = buildBoundedTelemetryPayload(
         logId, telemetryInstallId(), trigger, System.currentTimeMillis(), versionName, versionCode,
-        dev, svc, diagMap, ifaceList, events.snapshot(120), netLogs, clashConns, rootLogsText);
+        dev, svc, diagMap, ifaceList, cleanup == null ? events.snapshot(120) : cleanup.events,
+        netLogs, clashConns, rootLogsText);
     String authJournal = "";
     if (includeRootLogs) {
       try { authJournal=root.collectAuthTrace(); }
@@ -536,10 +546,12 @@ final class RuntimeController {
         }
         String route = telemetryRoute();
         String routeLabel = TELEMETRY_ROUTE_WIFICALL.equals(route) ? "Wi-Fi Calling 链路" : "系统路由";
-        String fullPayload = buildSanitizedTelemetryJson(logId, trigger, true);
+        TelemetryCleanup cleanup = new TelemetryCleanup(events, networkLogs);
+        String fullPayload = buildSanitizedTelemetryJson(logId, trigger, true, cleanup);
         Map<?,?> authCapture=(Map<?,?>)JsonCodec.decodeObject(fullPayload).get("authCapture");
         boolean captureIncomplete=Boolean.TRUE.equals(authCapture.get("incomplete"));
         List<String> parts = TelemetryBatch.split(fullPayload);
+        cleanup.prepare(fullPayload, parts);
         TelemetryClient.UploadResult result = null;
         int uploadedParts = 0;
         int totalBytes = 0;
@@ -561,7 +573,7 @@ final class RuntimeController {
             throw new IOException("TELEMETRY_BATCH_PARTIAL_" + uploadedParts + "_OF_" + parts.size() + "_" + safeCode(uploadError), uploadError);
           }
           if (!result.ok) break;
-          if (!TelemetryBatch.receiptMatches(part,result.responseBody))
+          if (!cleanup.acknowledge(part, result))
             throw new IOException("TELEMETRY_RECEIPT_MISMATCH_PART_" + (uploadedParts+1));
           if (uploadedParts == 0) batchRecordPath=result.recordPath;
           uploadedParts++;
@@ -585,9 +597,17 @@ final class RuntimeController {
             .putLong("telemetry_last_upload_ms", System.currentTimeMillis())
             .putString("telemetry_last_status", summary)
             .commit();
-        recordTelemetryUpload(new TelemetryUploadRecord(
+        boolean historySaved = recordTelemetryUpload(new TelemetryUploadRecord(
             finalLogId, System.currentTimeMillis(), trigger, result.ok,
             result.code, result.recordPath, result.payloadBytes));
+        if (result.ok) {
+          // Retain a durable receipt/ID before deleting the corresponding logs.
+          // A cleanup problem must never turn a confirmed upload into a failure.
+          try {
+            summary += historySaved ? clearUploadedLogs(cleanup) : "；日志保留：上传记录未保存";
+          } catch (Exception ignored) { summary += "；上传成功，日志清理未完成"; }
+          prefs.edit().putString("telemetry_last_status", summary).commit();
+        }
         Map<String, Object> reqHdrs = new LinkedHashMap<>();
         reqHdrs.put("Content-Type", "application/json; charset=utf-8");
         reqHdrs.put("X-SmartVoWifiCall-Schema", LogSanitizer.SCHEMA);
@@ -618,6 +638,33 @@ final class RuntimeController {
         telemetryInFlight.set(false);
       }
     });
+  }
+  private String clearUploadedLogs(TelemetryCleanup cleanup) {
+    if (!cleanup.complete()) return "；日志保留：回执不完整";
+    int removed = cleanup.clearMemory(events, networkLogs);
+    int pending = 0;
+    List<String> engineRecords = cleanup.engineRecords();
+    if (!engineRecords.isEmpty()) {
+      List<Binding> targets = new ArrayList<>(bindings.values());
+      if (targets.isEmpty()) pending++;
+      for (Binding binding : targets) {
+        try {
+          Map<String, Object> reply = binding.engine.acknowledgeLogs(engineRecords);
+          if (!Boolean.TRUE.equals(reply.get("ok"))) pending++;
+          else if (reply.get("removed") instanceof Number)
+            removed += ((Number) reply.get("removed")).intValue();
+        } catch (Exception ignored) { pending++; }
+      }
+    }
+    List<String> proxyRecords = cleanup.proxyRecords();
+    if (!proxyRecords.isEmpty()) for (int id = 0; id < ClashConfig.INSTANCE_COUNT; id++) {
+      try {
+        JSONObject reply = root.clash(id, JsonCodec.encode(proxyRecords), "acknowledge-logs");
+        if (!reply.optBoolean("ok")) pending++;
+        else removed += reply.optInt("removed", 0);
+      } catch (Exception ignored) { pending++; }
+    }
+    return "；已清理 " + removed + " 条已上传日志" + (pending > 0 ? "，部分日志未清理" : "");
   }
   private void maybeAutoUploadTelemetry(boolean callsActive) {
     if (callsActive || !telemetryEnabled()) return;

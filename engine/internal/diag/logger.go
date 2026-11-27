@@ -45,6 +45,7 @@ type Logger struct {
 	maxSize      int64
 	path         string
 	authSeq      uint64
+	logSeq       uint64
 	authEpoch    string
 	authFailures uint64
 }
@@ -158,17 +159,19 @@ func (l *Logger) Log(level, component, msg string, fields map[string]any) {
 		}
 		entry["fields"] = clean
 	}
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return
-	}
-	data = append(data, '\n')
-
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file == nil {
 		return
 	}
+	l.logSeq++
+	entry["captureId"] = l.authEpoch
+	entry["sequence"] = l.logSeq
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	data = append(data, '\n')
 	if info, err := l.file.Stat(); err == nil && info.Size() > l.maxSize {
 		_ = l.file.Close()
 		_ = os.Rename(l.path, l.path+".1")

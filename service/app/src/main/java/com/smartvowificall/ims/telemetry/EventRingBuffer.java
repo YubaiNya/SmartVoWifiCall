@@ -86,4 +86,12 @@ public final class EventRingBuffer {
   public synchronized void clear() {
     entries.clear();
   }
+
+  public synchronized int removeUploaded(List<Entry> uploaded) {
+    java.util.Set<Entry> selected = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    selected.addAll(uploaded);
+    int before = entries.size();
+    entries.removeIf(selected::contains);
+    return before - entries.size();
+  }
 }

@@ -81,6 +81,7 @@ class QrScannerActivity : ComponentActivity() {
         const val EXTRA_CLASH_ID = "clash_id"
         const val EXTRA_SCANNED_URL = "scanned_url"
         const val EXTRA_RAW_TEXT = "raw_text"
+        const val EXTRA_LPA = "scan_lpa"
     }
 
     private lateinit var cameraExecutor: ExecutorService
@@ -89,6 +90,8 @@ class QrScannerActivity : ComponentActivity() {
     private var torchEnabled by mutableStateOf(false)
     private var statusHint by mutableStateOf("将 Clash 订阅二维码放入取景框内")
     private var errorBanner by mutableStateOf("")
+    private var lpaMode = false
+    private val scanHint get() = if (lpaMode) "将 eSIM 激活二维码放入取景框内" else "将 Clash 订阅二维码放入取景框内"
 
     private val pickImageLauncher =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -101,11 +104,15 @@ class QrScannerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         cameraExecutor = Executors.newSingleThreadExecutor()
+        lpaMode = intent.getBooleanExtra(EXTRA_LPA, false)
+        statusHint = scanHint
+        if (lpaMode) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         val clashId = intent.getIntExtra(EXTRA_CLASH_ID, 0)
 
         setContent {
             QrScannerScreen(
                 clashId = clashId,
+                lpaMode = lpaMode,
                 torchEnabled = torchEnabled,
                 statusHint = statusHint,
                 errorBanner = errorBanner,
@@ -208,7 +215,7 @@ class QrScannerActivity : ComponentActivity() {
                 if (bitmap == null) {
                     runOnUiThread {
                         errorBanner = "无法读取所选图片"
-                        statusHint = "将 Clash 订阅二维码放入取景框内"
+                        statusHint = scanHint
                     }
                     return@execute
                 }
@@ -224,13 +231,13 @@ class QrScannerActivity : ComponentActivity() {
                 } else {
                     runOnUiThread {
                         errorBanner = "未在图片中识别到二维码"
-                        statusHint = "将 Clash 订阅二维码放入取景框内"
+                        statusHint = scanHint
                     }
                 }
             } catch (e: Exception) {
                 runOnUiThread {
                     errorBanner = "识别图片失败：${e.javaClass.simpleName}"
-                    statusHint = "将 Clash 订阅二维码放入取景框内"
+                    statusHint = scanHint
                 }
             }
         }
@@ -251,6 +258,18 @@ class QrScannerActivity : ComponentActivity() {
     }
 
     private fun handleDecodedText(raw: String) {
+        if (lpaMode) {
+            try { com.smartvowificall.ims.lpa.LpaProtocol.activation(raw) }
+            catch (_: Exception) {
+                runOnUiThread { errorBanner = "二维码不是支持的 LPA:1 激活码" }
+                return
+            }
+            if (delivered.compareAndSet(false, true)) runOnUiThread {
+                setResult(RESULT_OK, Intent().putExtra(EXTRA_RAW_TEXT, raw.trim()))
+                finish()
+            }
+            return
+        }
         val url = SubscriptionQrParser.extractSubscriptionUrl(raw)
         if (url == null) {
             runOnUiThread {
@@ -299,6 +318,7 @@ class QrScannerActivity : ComponentActivity() {
 @Composable
 private fun QrScannerScreen(
     clashId: Int,
+    lpaMode: Boolean,
     torchEnabled: Boolean,
     statusHint: String,
     errorBanner: String,
@@ -383,13 +403,13 @@ private fun QrScannerScreen(
         ) {
             Column {
                 Text(
-                    text = "扫码添加订阅",
+                    text = if (lpaMode) "扫描 eSIM 激活码" else "扫码添加订阅",
                     color = Color.White,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "内核 ${clashId + 1} · $tunName",
+                    text = if (lpaMode) "可插拔 eSIM · LPA" else "内核 ${clashId + 1} · $tunName",
                     color = Color.White.copy(alpha = 0.72f),
                     fontSize = 12.sp
                 )

@@ -1,0 +1,359 @@
+{
+  "components": [
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/base64.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "b08a3ecd4e2ea97cd30e29d2e589bb2fc8151d5fda91e2bed6b558028771a334"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/base64.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "6242d22e3371fed290fe473bac4973a6f3b192dd9037f562ab77c3994bcba29c"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/derutil.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "6558c0da4edc0a2d7ed3e81c3f4fab154bfae5ef67a034be3e20bbb8eb6c882b"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/derutil.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "a8f9b8eca74201dde1e5109d63cf4e456c5b83617b520892da882799f0be9fad"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10a.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "27a48e25a0f6615f840a72d6626d48793140df3ee25942c5135a772626d2e1d1"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10a.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "23ae72600fb465f80e815ca2ea1131d3780b3a5b62ab5d9fc3f77eaddaabe5bd"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10b.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "166002580c4eb0e345e635595f63e223cb9c97949643dd355a42eb9f11d0fe83"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10b.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "4343241133e603b7b88a2f0192488f70bac1d3f4e0b0bf1df92001873917346c"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10c.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "3f558a550f47fe7dd1378831c8b04210f2111deeda9301d118487f3006ad3d85"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10c.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "aec8cbee8a1cbf8c52e4ceea1876bd1c4dc88ec3689712e17108a257c7c08aa4"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10c_ex.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "935263c1d62584163f9ebab83e28f1fdc8c1b66760c7ca95f1d7b5d153e31246"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es10c_ex.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "e5149f4b31252add8a5e83bdce5d7a9b6ab1872b658b173fecae91fc5f0ee52e"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es8p.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "99081153ab51d0bab562c02ff2d59f2d40e3b81b35e744f83c04ae0990d8c5bb"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es8p.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "6bba3dc5600d6228c75f655422fb714eba48845f5d5b9a6ae6ef359564eb1fa8"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es9p.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "cab06b64610b1fc86748972e15fe5f824c9ab574e831a1f5aba47368407c0495"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es9p.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "595749d054416ed232d5ef37cabf1033738238995b0fd9525b8b27b717a74e1a"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es9p_errors.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "6579600f5ba77788850acb5c7b12a6e815d72938d77c34deecf408ae75c2c3c7"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/es9p_errors.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "c2b52fb68c96a4ec5b58fab432c52ec414f100f2ba9f254ed7e84a28e8447eb6"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/euicc.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "9940c0a338c7521427e204bb0dda011c1b8192be5f63b5d580f6f50a4c61645e"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/euicc.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "09363c3b419df9c1de26bc7093e3eda67bc2adbad3ffcdff249701e4b0ec155a"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/euicc.private.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "4e98ee83ac93b41a1ee7c2648cc367402b9c81f7e1dede9dbbb3a0d3a677e12e"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/hexutil.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "2460aa43699517b2600d133610fac44b249f2cb7e6b41ff3fa098b1e3741c0c2"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/hexutil.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "d862950db97fd6c1a9226fa2afc98b172ecdcf1a32ff07412b7a727fc35112bb"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/interface.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "0bb82ea74518524a0a1afd220dfd28ea1fc52af13fb0c34c2a1a9163221ee59f"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/interface.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "9f21d77be5443f0068c03746ee56ba92bb1ebf137fd4a022612578cc1ef6181d"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/interface.private.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "481ef267d1ea333e938b4eb103362bc973053d05aa24e1c7f489a4fb88a15354"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/logger.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "3a2f60dcbd061db11616957259f01effa378c027357615e82b9f9cf214d323ec"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/logger.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "944a471b2c2610de2a512b5fa63b75de0aea72e47fe8ab943f5adde8c2c34bd6"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/sha256.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "4a206307fb52189d308c4c49240f5eabf4fd5c89c72909c4c5fa80720d8d0908"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/sha256.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "3141350368263bcb07351b0fcd1860d02e6fe2fc0f979e1b3afd55b7cb11dbf3"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/tostr.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "9d65b3c35f51428f19598a3dd04ca80001aca728639ea5ea61eab6b0db7f6b5c"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/euicc/tostr.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "f3dea707bacd5615f4e6521cad52ed6b1f547eace761075ce40474a8297b093f"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/cjson-ext/cjson-ext/cJSON_ex.c",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "67b81546839048861aa4e2a86663a51f67e07d733d7c84c08423d7c4ba5b4c7e"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac/cjson-ext/cjson-ext/cJSON_ex.h",
+      "upstream": "https://github.com/estkme-group/lpac",
+      "revision": "50cdf15ab40942b00f8819a1c2ca19997f1a6d34",
+      "sha256_original": "224ff4a0a5a06d70fb38f5203721e0c39fb10aec3a7d443f704a47a763644df1"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/interface-wrapper.c",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "72eb8ae395186a981ece6245724be595a8c9d5c920737ab3352bca4a55d7456f"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/interface-wrapper.h",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "914e98b35a15d81ba96194d4dc810e7de1d245b2b8288e4a1923a6f55fe9bdce"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-download.c",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "b3f210e9ea232531b9409a410340f8cb463ec00b0a0f51f0ad425bcb63f71e41"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-download.h",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "0712cdc4a797fa9bb6efa754a2e92302df1b5aa44915151b14e25074548c93fc"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-jni.c",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "dbaa8846e917b005e53dfbd0f7e7acf9a1fc61562d3977b508e603b01f3eab7a"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-jni.h",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "9d3a1c295dd4357d55581016110959d61ca6f4c68be7a062be4664ebae711ca8"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-notifications.c",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "8f195a9551b2c094325d79fcea0459d63ae7d259c6d9ae32da1f8d8aad0095d4"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/lpac-jni/lpac-notifications.h",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "1b0ff84b9c6b09882a89e8167df512a85902522d257fc291a6dfbec6a9535cca"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/cjson/cjson/cJSON.c",
+      "upstream": "https://github.com/DaveGamble/cJSON",
+      "revision": "6d9f2443ab071f86e5d9b43025a40929ec41c46c",
+      "sha256_original": "48946750eba4a93f0f6ab0ea884eaf8bcca70a6977ec1c1a9ee93881d26f4d4e"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/cjson/cjson/cJSON.h",
+      "upstream": "https://github.com/DaveGamble/cJSON",
+      "revision": "6d9f2443ab071f86e5d9b43025a40929ec41c46c",
+      "sha256_original": "254db291898b17874be2503607afe483ecd80274effb427a88da9029b0a26e6b"
+    },
+    {
+      "file": "service/app/src/main/cpp/lpa/cjson/cjson/LICENSE",
+      "upstream": "https://github.com/DaveGamble/cJSON",
+      "revision": "6d9f2443ab071f86e5d9b43025a40929ec41c46c",
+      "sha256_original": "ca7ea72cf3674a70394b1f377e85dc402a2dfae37385f14da6ccba4296849f9b"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/ApduInterface.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "f23b389916d71e88048e433632fe1668c890ed2f34badf3cdd19f0da804289e8"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/EuiccInfo2.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "f343ab49e4b0e34b10a91b1adcb028cec0672527a23209a68b92f84cae740643"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/HttpInterface.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "53d94404a3b4aa0f7e6c928d2809590fb747cb842c888e49c4aa1cea3f5000ec"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/LocalProfileAssistant.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "e7d741077437917769b850e6c973bd600710742833a003e45019f87bb1bf9d18"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/LocalProfileInfo.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "79d4375f1398f063d7dfb556d2752c238785d81769be506d0ceade5aabcc1976"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/LocalProfileNotification.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "40939dd04288775822d26b0032f5395caa4662672604442055cd536be186598c"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/LpacJni.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "198c6574db9ad955ee5d6d535146f6baf6a779081a28469824a743182b35db21"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/ProfileClass.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "83a53628da276477df87463fb4938eec69620814e959112b096c78d3bfb94268"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/ProfileDownloadCallback.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "45587fa84a8a81cd190bcb4ad0a58b9307b72b69ca524d05560be0739a8f16c1"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/ProfileDownloadInput.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "cb1be46bfc4b4948da41f1b8b3e047222d40f903e5b0764a0e56138ce54beae0"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/ProfileDownloadState.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "b546d8185949b93a5bcf469cb1e91913bbd6be2a0211cf5832beca646296c03e"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/RemoteProfileInfo.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "76c434b36689723d8e0a520623005992bb34d37206c020d32ddd5febd9a2191e"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/impl/LocalProfileAssistantImpl.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "ec330605dfb2db84e868f69f65260da38abfba1255d1e4dd1de83727f5d912af"
+    },
+    {
+      "file": "service/app/src/main/java/net/typeblog/lpac_jni/impl/RootCertificates.kt",
+      "upstream": "https://github.com/estkme-group/openeuicc",
+      "revision": "fc929d76118d60d5e27080043e561d5d30184c43",
+      "sha256_original": "277d3f11bda54307febba648c184143d817a8e402573abb2e7f60e9cf313cc0d"
+    }
+  ],
+  "license_notice": "service/module/licenses/LPA-NOTICE.txt"
+}

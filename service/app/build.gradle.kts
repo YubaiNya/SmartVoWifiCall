@@ -28,13 +28,15 @@ val syncLicenseAssets by tasks.registering(LicenseAssetsTask::class) {
 android {
     namespace = "com.smartvowificall.ims"
     compileSdk = 37
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.smartvowificall.ims"
         minSdk = 33
         targetSdk = 37
-        versionCode = 26
-        versionName = "0.6.6-dev"
+        versionCode = 27
+        versionName = "0.6.7-dev"
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
 
     signingConfigs {
@@ -73,6 +75,7 @@ android {
     }
 
     packaging {
+        jniLibs { useLegacyPackaging = true }
         resources {
             excludes += setOf(
                 "META-INF/AL2.0",
@@ -80,6 +83,9 @@ android {
                 "META-INF/*.kotlin_module"
             )
         }
+    }
+    externalNativeBuild {
+        cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" }
     }
 }
 

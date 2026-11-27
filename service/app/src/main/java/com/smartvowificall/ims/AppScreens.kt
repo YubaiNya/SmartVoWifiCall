@@ -1749,6 +1749,7 @@ fun NetworkPage(
     onExportRawLogs: () -> Unit
 ) {
     val p = LocalApplePalette.current
+    val activityContext = androidx.compose.ui.platform.LocalContext.current
     val scroll = rememberScrollState()
     val tunCount = state.interfaces.count { it.voWifiTun }
     var endpointInput by rememberSaveable(state.telemetryEndpoint) {
@@ -1830,6 +1831,15 @@ fun NetworkPage(
             FeedbackBanner(text = updateFeedback)
         }
 
+        Spacer(Modifier.height(16.dp))
+        AppleSectionTitle("可插拔 eSIM")
+        AppleMiuixCard(insideMargin = PaddingValues(16.dp)) {
+            Text("管理卡内配置、切换配置或扫描激活码下载。", color = p.textSecondary)
+            Spacer(Modifier.height(10.dp))
+            ApplePillButton("打开 LPA 管理", onClick = {
+                activityContext.startActivity(android.content.Intent(activityContext, LpaActivity::class.java))
+            })
+        }
         Spacer(Modifier.height(16.dp))
         AppleSectionTitle("系统接口兼容性自检（Android 14–17）")
         AppleMiuixCard(insideMargin = PaddingValues(16.dp)) {

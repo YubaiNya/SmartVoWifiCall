@@ -105,6 +105,15 @@ public final class NetworkLogBuffer {
     return entries.size();
   }
 
+  public synchronized int removeUploaded(List<Map<String, Object>> uploaded) {
+    java.util.Set<Map<String, Object>> selected =
+        java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    selected.addAll(uploaded);
+    int before = entries.size();
+    entries.removeIf(selected::contains);
+    return before - entries.size();
+  }
+
   public static Object parseJsonOrText(String raw, int maxChars) {
     if (raw == null || raw.isEmpty()) return "";
     String trimmed = raw.trim();

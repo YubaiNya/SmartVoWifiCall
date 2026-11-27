@@ -169,7 +169,7 @@ public final class RootIdentityMain {
     }
   }
 
-  private static synchronized Context rootContext() throws Exception {
+  static synchronized Context rootContext() throws Exception {
     if (cachedRootContext != null) return cachedRootContext;
     if (Looper.myLooper() == null) {
       if (Looper.getMainLooper() == null) Looper.prepareMainLooper();
@@ -783,6 +783,12 @@ public final class RootIdentityMain {
   }
   private static JSONObject radioHold(Context context, int sub, int slot, String key, String home,
       boolean checkOnly) throws Exception {
+    try (LpaSlotLock ignored = new LpaSlotLock(slot)) {
+      return radioHoldUnlocked(context, sub, slot, key, home, checkOnly);
+    }
+  }
+  private static JSONObject radioHoldUnlocked(Context context, int sub, int slot, String key, String home,
+      boolean checkOnly) throws Exception {
     if (!checkOnly && (new File("/data/adb/modules/smartvowificall/disable").exists()
         || new File("/data/adb/modules/smartvowificall/remove").exists()
         || new File("/data/adb/smartvowificall_ims/rollback-pending").exists()))
@@ -801,6 +807,19 @@ public final class RootIdentityMain {
     return new JSONObject().put("ok", true).put("radioOff", off)
         .put("radioLeaseMethod", currentLeaseRadioMethod(slot))
         .put("code", off ? "CELLULAR_RADIO_OFF" : "RADIO_OFF_PENDING");
+  }
+
+  static void requireLpaAccess(Context context, int slot) throws Exception {
+    requireIdle(context);
+    if (radioJournal(slot).exists() || imsJournal(slot).exists()
+        || IMS_PACKAGE.equals(imsPackage(slot, 1)))
+      throw new Failure("LPA_PAUSE_VOWIFI_REQUIRED");
+    for (SubscriptionInfo info : activeSubscriptions(context)) {
+      Object callback = binderCall("phone", "com.android.internal.telephony.ITelephony",
+          "getEmergencyCallbackMode", new Class<?>[] {int.class},
+          new Object[] {info.getSubscriptionId()});
+      if (Boolean.TRUE.equals(callback)) throw new Failure("EMERGENCY_CALLBACK_ACTIVE");
+    }
   }
   private static boolean releaseRadio(Context context, int slot) throws Exception {
     File file = radioJournal(slot);
